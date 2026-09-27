@@ -162,6 +162,11 @@ export async function startBot() {
       // shouts in the logs ([ISOLATION]/[REPLIT]) if it spots orphaned cards, a
       // mass-deleted home roster, or cross-guild collection contamination.
       void runIsolationSelfCheck();
+      // Probe valuevaultx / vaultedvaluesx / mttvalues and snapshot the live feed
+      // so /vaultvalue → Sources can show drift vs last boot.
+      void import("./commands/vault-sources.js")
+        .then((m) => m.runVaultSourceHealthCheck({ persist: true }))
+        .catch((err) => logger.warn({ err }, "vault source health check failed"));
       // Boot-time backfill is no longer needed; sets are managed via the
       // first-class sets + card_set_memberships tables.
       startBattleMaintenance();
@@ -324,7 +329,7 @@ export async function startBot() {
         return;
       }
       if (
-        (interaction.isButton() || interaction.isChannelSelectMenu()) &&
+        (interaction.isButton() || interaction.isChannelSelectMenu() || interaction.isStringSelectMenu()) &&
         interaction.customId.startsWith("vvhub:")
       ) {
         const { handleVaultValueHubComponent } = await import("./commands/vaultvalue-hub.js");

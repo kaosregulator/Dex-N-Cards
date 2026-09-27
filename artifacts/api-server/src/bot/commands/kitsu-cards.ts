@@ -135,6 +135,9 @@ export async function searchKitsu(category: KitsuCategory, query: string): Promi
       };
     });
 
+    // Rank before caching so autocomplete + free-text create share the same order.
+    items.sort((a, b) => matchScore(b, q) - matchScore(a, q));
+
     searchCache.set(key, { at: Date.now(), items });
     return items;
   } catch (err) {
@@ -194,18 +197,46 @@ function createCardRarityDefaults(rarity: Rarity): { worth: number; burn: number
 }
 
 function matchScore(item: KitsuItem, query: string): number {
-  const q = query.toLowerCase().trim();
+  const q = query.toLowerCase().trim().replace(/\s+/g, " ");
   const name = item.name.toLowerCase();
-  if (name === q) return 1000;
-  if (name.startsWith(q)) return 500;
-  if (name.includes(q)) return 100;
-  // acronym match
+  const tokens = q.split(" ").filter(Boolean);
+  let score = 0;
+
+  if (name === q) score = 1000;
+  else if (name.startsWith(q)) score = 500;
+  else if (name.includes(q)) score = 200;
+  else {
+    // Token coverage — "dbz goku" should prefer names that contain goku, not random DBZ movies.
+    let hit = 0;
+    for (const t of tokens) {
+      if (t.length < 2) continue;
+      if (name === t) hit += 120;
+      else if (name.includes(t)) hit += 80;
+      else if (t === "dbz" && (name.includes("dragon ball z") || name.includes("dragonball z"))) hit += 70;
+      else if (t === "dbs" && name.includes("super")) hit += 40;
+    }
+    score = hit;
+  }
+
   const acronym = name
     .split(/\s+/)
     .map((w) => w.replace(/[^a-z0-9]/gi, "").slice(0, 1))
     .join("");
-  if (acronym.includes(q)) return 50;
-  return 0;
+  if (acronym && tokens.some((t) => acronym.includes(t))) score = Math.max(score, 50);
+
+  // Prefer short, canonical character names over obscure lookalikes.
+  if (item.type === "character" && name.length <= 24) score += 25;
+  if (item.type === "anime") {
+    const n = name;
+    if (/\b(movie|special|ova|ona)\b/i.test(n)) score -= 40;
+    if (/^dragon ball z$/i.test(item.name) || /^dragon ball$/i.test(item.name)) score += 80;
+  }
+
+  // Prefer entries that actually have art (create-card needs an image).
+  if (item.imageUrl) score += 15;
+  if (!item.description) score -= 10;
+
+  return score;
 }
 
 export async function handleKitsuAutocomplete(interaction: AutocompleteInteraction): Promise<void> {

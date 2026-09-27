@@ -99,8 +99,9 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
     await refreshPanel(interaction, guildId);
     const settings = await getOrCreateGuildSettings(guildId);
     await interaction.followUp({
-      content: `📦 Loaded the built-in roster — added **${added}** cards` +
+      content: `📦 Loaded the Vault Values default roster — added **${added}** cards` +
         (skipped > 0 ? ` (skipped **${skipped}** already in your roster).` : ".") +
+        `\nImages/descriptions/rarities come from valuevaultx.com. Server rarity nicknames still win.` +
         `\nRemove anytime with **🗑️ Remove Defaults** or \`${settings.commandPrefix}unloaddefaults\` / \`/set_admin\` → unload set:${DEFAULTS_SET_NAME}\`.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
@@ -327,8 +328,8 @@ function buildSetupEmbed(s: GuildSettings, hasDefaults: boolean): EmbedBuilder {
   const tradeOn = s.tradeEnabled;
 
   const defaultsLine = hasDefaults
-    ? `60 built-in cards loaded`
-    : `No defaults — click **Load Defaults**, **Copy Home Set**, or add your own cards`;
+    ? `Vault Values defaults loaded`
+    : `No defaults — click **Load Defaults** (site roster), **Copy Home Set**, or add your own`;
 
   return new EmbedBuilder()
     .setTitle(`🃏 ${BRAND_NAME} — Setup`)
@@ -467,7 +468,7 @@ function buildSetupComponents(s: GuildSettings, hasDefaults: boolean) {
           .setStyle(ButtonStyle.Danger)
       : new ButtonBuilder()
           .setCustomId("setup:loaddefaults")
-          .setLabel("📖 Load Defaults")
+          .setLabel("📖 Load Vault Defaults")
           .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("setup:copytemplate")

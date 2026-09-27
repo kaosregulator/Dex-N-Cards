@@ -162,9 +162,9 @@ export async function handleCardAdminHubComponent(
 
   if (id === "cahub:create_vault" && interaction.isButton()) {
     await interaction.showModal(textModal("cahub:modal:create_vault", "Create from Vault Values", [
-      { id: "item", label: "Vault Values item name", required: true },
-      { id: "rarity", label: "DN rarity", required: true, placeholder: "legendary" },
-      { id: "type", label: "Card type/tag", required: true },
+      { id: "item", label: "Vault Values item name", required: true, placeholder: "Sea Dragon / STM" },
+      { id: "rarity", label: "DN rarity (or auto)", required: false, placeholder: "auto = site rarity" },
+      { id: "type", label: "Card type/tag (blank = site category)", required: false, placeholder: "ground / air / naval" },
       { id: "set", label: "Set (optional)" },
       { id: "description", label: "Description override (optional)", paragraph: true },
     ]));
@@ -355,12 +355,12 @@ export async function handleCardAdminHubModal(interaction: ModalSubmitInteractio
     await runAdmin(interaction, "createcardfrommttv", {
       strings: {
         item: field("item"),
-        rarity: field("rarity").toLowerCase(),
-        type: field("type"),
+        rarity: field("rarity").toLowerCase() || "auto",
+        type: field("type") || null,
         set: field("set") || null,
         description: field("description") || null,
       },
-      booleans: { limited: false, event_exclusive: false },
+      booleans: { limited: null, event_exclusive: false },
       integers: { max_copies: null },
     });
     return;

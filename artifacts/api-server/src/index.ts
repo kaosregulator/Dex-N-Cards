@@ -457,8 +457,8 @@ async function runBootMigrations() {
 
   // One-time: retire the gold_legendary custom tier on production.
   // Cards that had that custom override revert to their base legendary rarity
-  // (Super Raptor, Golden Mi-35, etc. stay "Gold Legendary" as built-ins).
-  // All other legendary cards — event/achievement cards — move to epic (Exotic).
+  // (display label is now "Legendary"; guild nicknames still override).
+  // All other legendary cards — event/achievement cards — move to epic.
   // Guarded on the custom tier still existing so reruns are no-ops.
   {
     const { rows: goldTierRows } = await pool.query(

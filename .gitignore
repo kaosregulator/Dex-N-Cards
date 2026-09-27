@@ -63,6 +63,9 @@ artifacts/api-server/data/world-builder/index.json
 # Per-user /emoji style favorites (runtime)
 artifacts/api-server/data/emoji-style-favorites.json
 
+# Vault Values feed health snapshot (written on bot boot / Sources check)
+artifacts/api-server/data/vault-feed-snapshot.json
+
 # Accidental root world-builder data
 /data/
 
