@@ -103,13 +103,43 @@ function findExistingChromium() {
   return null;
 }
 
+function verifyChromiumLaunch(chromePath) {
+  const { spawnSync: run } = require("node:child_process");
+  const ldd = run("ldd", [chromePath], { encoding: "utf8" });
+  const missing = (ldd.stdout || "")
+    .split("\n")
+    .filter((line) => /not found/i.test(line))
+    .map((line) => line.trim());
+  if (missing.length) {
+    log(`WARNING: Chromium is missing shared libraries (${missing.length}):`);
+    for (const line of missing.slice(0, 12)) log(`  ${line}`);
+    log(
+      "Fix: ensure nixpacks.toml aptPkgs includes Playwright Chromium deps " +
+      "(libgbm1, libnss3, …) and redeploy so Railway rebuilds the image.",
+    );
+    return;
+  }
+  const probe = run(
+    chromePath,
+    ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--dump-dom", "about:blank"],
+    { encoding: "utf8", timeout: 20_000, env: { ...process.env, HOME: process.env.HOME || "/tmp" } },
+  );
+  if (probe.status === 0) {
+    log("Chromium smoke launch OK.");
+  } else {
+    const errText = `${probe.stderr || ""}\n${probe.stdout || ""}`.trim().slice(0, 400);
+    log(`WARNING: Chromium smoke launch failed (exit ${probe.status}). ${errText}`);
+  }
+}
+
 const existing = findExistingChromium();
 if (existing) {
   log(`Chromium is already installed (${existing}).`);
+  verifyChromiumLaunch(existing);
   process.exit(0);
 }
 
-log("installing Chromium for /emoji (this is a one-off download)…");
+log("installing Chromium for /emoji + vault Browse (this is a one-off download)…");
 
 /**
  * Locate playwright's CLI.
@@ -140,16 +170,17 @@ const result = cli
       stdio: "inherit", env: process.env, shell: process.platform === "win32",
     });
 
-if (result.status === 0) {
-  log("Chromium installed.");
+if (result.status !== 0) {
+  // Deliberately exit 0: /emoji + Browse degrade; the rest of the bot still boots.
+  log(
+    "could not install Chromium automatically. /emoji and /vaultvalue Browse will stay " +
+    "unavailable until `pnpm emoji:install-browser` is run on this host.",
+  );
+  if (result.error) log(`reason: ${result.error.message}`);
   process.exit(0);
 }
 
-// Deliberately exit 0: /emoji will report itself unavailable with an actionable
-// message, and every other command keeps working.
-log(
-  "could not install Chromium automatically. /emoji will stay unavailable until " +
-  "`pnpm emoji:install-browser` is run on this host.",
-);
-if (result.error) log(`reason: ${result.error.message}`);
+log("Chromium installed.");
+const chrome = findExistingChromium();
+if (chrome) verifyChromiumLaunch(chrome);
 process.exit(0);
