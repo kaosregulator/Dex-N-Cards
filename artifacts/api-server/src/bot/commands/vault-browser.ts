@@ -1,6 +1,6 @@
 // Discord mini-browser for live value sites.
-// User picks a site → bot opens the real page in Playwright → screenshot embed
-// with numbered click targets, search (types into the site), scroll, and back.
+// Public (webhook) posts branded as each site — screenshot + numbered clicks,
+// search into the site, scroll/back. Auto-cleans ~45s after last touch.
 // Sites: Value Vault X · Vaulted Values X · MTT Values.
 
 import type {
@@ -24,42 +24,24 @@ import {
 } from "discord.js";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { logger } from "../../lib/logger.js";
+import { getVaultBrand } from "./vault-branding.js";
 import {
-  MTTVALUES_SITE_URL,
-  VAULTEDVALUESX_LIST_URL,
-  VALUEVAULTX_MTS_LIST_URL,
-  VALUEVAULTX_SITE_URL,
-} from "./vault-sources.js";
+  ackThenPostVault,
+  applyVaultBrand,
+  editVaultWebhookMessage,
+  postVaultWebhook,
+  refreshVaultCleanup,
+  VAULT_MSG_TTL_MS,
+} from "./vault-webhook.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
-const SESSION_TTL_MS = 12 * 60 * 1000;
+/** Playwright session idle (browser context). Floor message TTL is separate (~45s). */
+const SESSION_TTL_MS = 3 * 60 * 1000;
 const MAX_CLICK_TARGETS = 20;
 const VIEWPORT = { width: 1100, height: 720 };
 const SCROLL_PX = 520;
 
 export type BrowserSite = "valuevaultx" | "vaultedvaluesx" | "mttvalues";
-
-const SITE_HOME: Record<BrowserSite, { label: string; emoji: string; url: string; color: number }> = {
-  valuevaultx: {
-    label: "Value Vault X",
-    emoji: "📦",
-    // Land on Military Tycoon list (homepage is a game picker with no search).
-    url: VALUEVAULTX_MTS_LIST_URL,
-    color: 0x9b59b6,
-  },
-  vaultedvaluesx: {
-    label: "Vaulted Values X",
-    emoji: "🌐",
-    url: VAULTEDVALUESX_LIST_URL,
-    color: 0x3b82f6,
-  },
-  mttvalues: {
-    label: "MTT Values",
-    emoji: "📈",
-    url: MTTVALUES_SITE_URL,
-    color: 0x22c55e,
-  },
-};
 
 type ClickTarget = {
   index: number;
@@ -76,6 +58,9 @@ type MiniSession = {
   targets: ClickTarget[];
   expiresAt: number;
   timer: ReturnType<typeof setTimeout> | null;
+  /** Public floor message (webhook) we keep updating. */
+  floorMessageId: string | null;
+  floorChannelId: string | null;
 };
 
 const sessions = new Map<string, MiniSession>();
@@ -86,25 +71,61 @@ function sessionKey(userId: string, channelId: string): string {
   return `${userId}:${channelId}`;
 }
 
+function siteUrl(site: BrowserSite): string {
+  return getVaultBrand(site).url;
+}
+
+/**
+ * Launch Chromium robustly. Production failures looked like
+ * `browserType.launch: Target page, context or browser has been closed`
+ * when a stale shared browser or a path-less fallback was used.
+ */
 async function getBrowser(): Promise<Browser> {
-  if (sharedBrowser?.isConnected()) return sharedBrowser;
+  if (sharedBrowser) {
+    if (sharedBrowser.isConnected()) return sharedBrowser;
+    try { await sharedBrowser.close(); } catch { /* ignore */ }
+    sharedBrowser = null;
+  }
   if (launching) return launching;
+
   launching = (async () => {
-    try {
-      // Reuse the emoji Chromium launcher when available (correct binary path).
-      const { launchBrowser } = await import("../emoji/providers/makeemoji/runtime.js");
-      sharedBrowser = await launchBrowser();
-    } catch {
-      const pw = await import("playwright");
-      sharedBrowser = await pw.chromium.launch({
-        headless: true,
-        args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-      });
+    const runtime = await import("../emoji/providers/makeemoji/runtime.js");
+    const pw = await runtime.loadPlaywright();
+    if (!pw) {
+      throw new Error("Playwright is not installed on this host");
     }
-    return sharedBrowser!;
+    const executablePath = await runtime.resolveChromiumPath();
+    const base = runtime.launchOptions();
+    const args = [
+      ...(base.args ?? []),
+      "--disable-blink-features=AutomationControlled",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+    ];
+    // Deduplicate args
+    const uniq = [...new Set(args)];
+    logger.info(
+      { executablePath: executablePath ?? "(playwright default)" },
+      "mini-browser launching Chromium",
+    );
+    const browser = await pw.chromium.launch({
+      ...base,
+      headless: true,
+      ...(executablePath ? { executablePath } : {}),
+      args: uniq,
+    });
+    browser.on("disconnected", () => {
+      if (sharedBrowser === browser) sharedBrowser = null;
+    });
+    sharedBrowser = browser;
+    return browser;
   })();
+
   try {
     return await launching;
+  } catch (err) {
+    sharedBrowser = null;
+    throw err;
   } finally {
     launching = null;
   }
@@ -115,7 +136,7 @@ async function destroySession(key: string): Promise<void> {
   if (!s) return;
   sessions.delete(key);
   if (s.timer) clearTimeout(s.timer);
-  try { await s.context.close(); } catch { /* ignore */ }
+  try { await s.context?.close(); } catch { /* ignore */ }
 }
 
 function armTimer(key: string, s: MiniSession): void {
@@ -133,17 +154,52 @@ async function createSession(
   site: BrowserSite,
 ): Promise<MiniSession> {
   const key = sessionKey(userId, channelId);
+  const prior = sessions.get(key);
+  const floorMessageId = prior?.floorMessageId ?? null;
+  const floorChannelId = prior?.floorChannelId ?? null;
   await destroySession(key);
 
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    viewport: VIEWPORT,
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    locale: "en-US",
-  });
+  let browser: Browser;
+  try {
+    browser = await getBrowser();
+  } catch (first) {
+    // One hard reset + retry (covers "browser has been closed" mid-launch races)
+    sharedBrowser = null;
+    logger.warn({ err: (first as Error).message }, "mini-browser launch retry");
+    browser = await getBrowser();
+  }
+
+  let context: BrowserContext;
+  try {
+    context = await browser.newContext({
+      viewport: VIEWPORT,
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      locale: "en-US",
+    });
+  } catch (err) {
+    // Browser died between launch and newContext — reset and try once more
+    sharedBrowser = null;
+    browser = await getBrowser();
+    context = await browser.newContext({
+      viewport: VIEWPORT,
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      locale: "en-US",
+    });
+    void err;
+  }
+
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    // esbuild keepNames shim (same as makeemoji runtime)
+    if (typeof (globalThis as { __name?: unknown }).__name !== "function") {
+      Object.defineProperty(globalThis, "__name", {
+        value: (fn: unknown) => fn,
+        writable: true,
+        configurable: true,
+      });
+    }
   });
   const page = await context.newPage();
   const session: MiniSession = {
@@ -155,6 +211,8 @@ async function createSession(
     targets: [],
     expiresAt: Date.now() + SESSION_TTL_MS,
     timer: null,
+    floorMessageId,
+    floorChannelId,
   };
   sessions.set(key, session);
   armTimer(key, session);
@@ -176,7 +234,6 @@ function getOwnedSession(userId: string, channelId: string): MiniSession | null 
 
 async function gotoSite(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
-  // Cloudflare / slow Wix / Next hydration
   await page.waitForTimeout(2200);
   const title = await page.title().catch(() => "");
   if (/just a moment|checking your browser/i.test(title)) {
@@ -192,6 +249,7 @@ async function stampAndCollect(page: Page): Promise<ClickTarget[]> {
       const badge = el.querySelector(":scope > .dn-click-badge");
       badge?.remove();
     });
+    document.querySelectorAll(".dn-click-badge").forEach((b) => b.remove());
 
     const isVisible = (el: Element) => {
       const r = (el as HTMLElement).getBoundingClientRect();
@@ -216,7 +274,6 @@ async function stampAndCollect(page: Page): Promise<ClickTarget[]> {
         || kind).replace(/\s+/g, " ").trim();
       if (label.length < 1) return;
       if (label.length > 80) label = label.slice(0, 77) + "…";
-      // Skip pure chrome
       if (/^(skip to|cookie|accept all|log in|sign up|menu)$/i.test(label)) return;
       candidates.push({ el, kind, label });
     };
@@ -228,14 +285,12 @@ async function stampAndCollect(page: Page): Promise<ClickTarget[]> {
       if (["hidden", "password", "submit", "checkbox", "radio", "file"].includes(t)) return;
       push(el, "input");
     });
-    // Card-like / pointer targets (Next/Wix often use divs)
     document.querySelectorAll("[onclick], [data-testid], article, [class*='card' i], [class*='item' i]").forEach((el) => {
       if (el.closest("a, button, input, textarea")) return;
       const st = window.getComputedStyle(el as HTMLElement);
       if (st.cursor === "pointer" || el.getAttribute("onclick")) push(el, "button");
     });
 
-    // Prefer in-viewport unique labels; cap count
     const seen = new Set<string>();
     const picked: typeof candidates = [];
     for (const c of candidates) {
@@ -268,11 +323,10 @@ async function stampAndCollect(page: Page): Promise<ClickTarget[]> {
       badge.textContent = String(idx);
       const tag = c.el.tagName.toLowerCase();
       if (tag === "input" || tag === "textarea" || tag === "img") {
-        // Can't put children inside replaced/void elements — float badge near them.
         const r = c.el.getBoundingClientRect();
         badge.style.position = "fixed";
-        badge.style.top = `${Math.max(0, r.top + window.scrollY)}px`;
-        badge.style.left = `${Math.max(0, r.left + window.scrollX)}px`;
+        badge.style.top = `${Math.max(0, r.top)}px`;
+        badge.style.left = `${Math.max(0, r.left)}px`;
         document.body.appendChild(badge);
       } else {
         const pos = window.getComputedStyle(c.el).position;
@@ -288,8 +342,8 @@ async function screenshotPage(page: Page): Promise<Buffer> {
   return page.screenshot({ type: "jpeg", quality: 72, fullPage: false });
 }
 
-function navRows(hasTargets: boolean): ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] {
-  const rows: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [
+function navRows(): ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] {
+  return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("vvbrowse:scroll:up").setLabel("Scroll up").setEmoji("⬆️").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("vvbrowse:scroll:down").setLabel("Scroll down").setEmoji("⬇️").setStyle(ButtonStyle.Secondary),
@@ -302,7 +356,6 @@ function navRows(hasTargets: boolean): ActionRowBuilder<ButtonBuilder | StringSe
       new ButtonBuilder().setCustomId("vvbrowse:close").setLabel("Close").setStyle(ButtonStyle.Danger),
     ),
   ];
-  return rows;
 }
 
 function clickSelect(targets: ClickTarget[]): ActionRowBuilder<StringSelectMenuBuilder> | null {
@@ -324,33 +377,46 @@ function clickSelect(targets: ClickTarget[]): ActionRowBuilder<StringSelectMenuB
 }
 
 function sitePickerEmbed(): EmbedBuilder {
-  return new EmbedBuilder()
-    .setColor(0xf59e0b)
-    .setTitle("🧭 Live mini-browser")
-    .setDescription(
-      [
-        "Open a **real website** inside Discord — photo of the page, numbered clicks, search, scroll.",
-        "",
-        `${SITE_HOME.valuevaultx.emoji} **Value Vault X** — ${VALUEVAULTX_MTS_LIST_URL}`,
-        `${SITE_HOME.vaultedvaluesx.emoji} **Vaulted Values X** — ${VAULTEDVALUESX_LIST_URL}`,
-        `${SITE_HOME.mttvalues.emoji} **MTT Values** — ${MTTVALUES_SITE_URL}`,
-        "",
-        "Yellow numbers on the screenshot match the dropdown. **Search** types into the site’s own search box.",
-        "",
-        "💰 **Price safety net:** every Search also looks up the Value Vault X JSON feed so you still get name · gems · rarity if a site (e.g. MTTV) is loading or redesigning.",
-      ].join("\n"),
-    )
-    .setFooter({ text: "Ephemeral · your session only · closes after ~12 min idle" });
+  const brand = getVaultBrand("valuevaultx");
+  return applyVaultBrand(
+    new EmbedBuilder()
+      .setTitle("🧭 Live mini-browser")
+      .setDescription(
+        [
+          "Open a **real website** in Discord — photo of the page, numbered clicks, search, scroll.",
+          "",
+          `${getVaultBrand("valuevaultx").emoji} **Value Vault X**`,
+          `${getVaultBrand("vaultedvaluesx").emoji} **Vaulted Values X**`,
+          `${getVaultBrand("mttvalues").emoji} **MTT Values**`,
+          "",
+          "Yellow numbers match the dropdown. **Search** types into the site’s own box.",
+          "💰 Search also attaches Value Vault X JSON prices if a site is loading/redesigning.",
+          "",
+          `_Public · site-branded webhook · cleans up ~${Math.round(VAULT_MSG_TTL_MS / 1000)}s after last click_`,
+        ].join("\n"),
+      )
+      .setImage(brand.bannerUrl)
+      .setFooter({ text: `Cleans up in ~${Math.round(VAULT_MSG_TTL_MS / 1000)}s idle` }),
+    "valuevaultx",
+  );
 }
 
-/** Detect MTTV / similar shells stuck on empty Loading rows (no gem prices on page). */
+function sitePickerRows(): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("vvbrowse:site:valuevaultx").setLabel("Value Vault X").setEmoji("📦").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("vvbrowse:site:vaultedvaluesx").setLabel("Vaulted Values X").setEmoji("🌐").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("vvbrowse:site:mttvalues").setLabel("MTT Values").setEmoji("📈").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
 async function pageLooksPriceEmpty(page: Page, site: BrowserSite): Promise<boolean> {
   if (site !== "mttvalues") return false;
   try {
     return await page.evaluate(() => {
       const text = (document.body?.innerText || "").replace(/\s+/g, " ");
       const loadingHeavy = (text.match(/\bLoading\b/gi) || []).length >= 2;
-      // Gem ranges like 1,000 – 2,000 or 7M style rarely appear while App Check blocks data
       const hasGemRange = /\d[\d,]{2,}\s*[-–]\s*\d|\b\d+(\.\d+)?\s*[MmKk]\b/.test(text);
       return loadingHeavy && !hasGemRange;
     });
@@ -369,30 +435,16 @@ async function vaultPriceOverlay(query: string): Promise<string> {
     return ["📦 **Value Vault X prices (JSON):**", ...hits.map((h) => `• ${formatVaultPriceLine(h)}`)].join("\n");
   } catch (err) {
     logger.warn({ err: (err as Error).message }, "mini-browser JSON price overlay failed");
-    return "_Price feed briefly unavailable — try Discord **/vaultvalue** lookup._";
+    return "_Price feed briefly unavailable — try Discord **/vaultvalue** Info._";
   }
 }
 
-function sitePickerRows(): ActionRowBuilder<ButtonBuilder>[] {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("vvbrowse:site:valuevaultx").setLabel("Value Vault X").setEmoji("📦").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("vvbrowse:site:vaultedvaluesx").setLabel("Vaulted Values X").setEmoji("🌐").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("vvbrowse:site:mttvalues").setLabel("MTT Values").setEmoji("📈").setStyle(ButtonStyle.Secondary),
-    ),
-  ];
-}
-
-async function renderView(
-  interaction: ButtonInteraction | StringSelectMenuInteraction | ChatInputCommandInteraction | ModalSubmitInteraction,
-  session: MiniSession,
-  note?: string,
-): Promise<void> {
-  const meta = SITE_HOME[session.site];
+async function buildViewPayload(session: MiniSession, note?: string) {
+  const brand = getVaultBrand(session.site);
   session.targets = await stampAndCollect(session.page);
   const buf = await screenshotPage(session.page);
   const url = session.page.url();
-  const title = (await session.page.title().catch(() => meta.label)).slice(0, 200);
+  const title = (await session.page.title().catch(() => brand.name)).slice(0, 200);
   const file = new AttachmentBuilder(buf, { name: "browse.jpg" });
 
   const lines = session.targets.slice(0, 12).map((t) => {
@@ -400,82 +452,213 @@ async function renderView(
     return `**${t.index}.** ${icon} ${t.label}`;
   });
 
-  const embed = new EmbedBuilder()
-    .setColor(meta.color)
-    .setTitle(`${meta.emoji} ${title}`.slice(0, 256))
-    .setURL(url)
-    .setDescription(
-      [
-        note ? `${note}\n` : "",
-        `📍 \`${url.slice(0, 180)}\``,
-        "",
-        lines.length ? lines.join("\n") : "_No clickable spots in view — scroll or search._",
-        session.targets.length > 12 ? `\n_…+${session.targets.length - 12} more in the menu_` : "",
-      ].join("\n"),
-    )
-    .setImage("attachment://browse.jpg")
-    .setFooter({ text: `${meta.label} · pick a number · Search / Scroll / Back` });
+  const embed = applyVaultBrand(
+    new EmbedBuilder()
+      .setTitle(`${brand.emoji} ${title}`.slice(0, 256))
+      .setURL(url)
+      .setDescription(
+        [
+          note ? `${note}\n` : "",
+          `📍 \`${url.slice(0, 180)}\``,
+          "",
+          lines.length ? lines.join("\n") : "_No clickable spots in view — scroll or search._",
+          session.targets.length > 12 ? `\n_…+${session.targets.length - 12} more in the menu_` : "",
+        ].join("\n"),
+      )
+      .setImage("attachment://browse.jpg")
+      .setFooter({ text: `${brand.name} · ~${Math.round(VAULT_MSG_TTL_MS / 1000)}s cleanup · Search / Scroll` }),
+    session.site,
+  );
 
-  const components = [...navRows(session.targets.length > 0)];
+  const components = [...navRows()];
   const sel = clickSelect(session.targets);
-  if (sel) components.splice(1, 0, sel); // menu under nav actions
+  if (sel) components.splice(1, 0, sel);
 
-  const payload = { embeds: [embed], components, files: [file] };
-  if (interaction.deferred || interaction.replied) {
-    await interaction.editReply(payload);
-  } else if (interaction.isButton() || interaction.isStringSelectMenu()) {
-    await interaction.update(payload);
-  } else {
-    await interaction.reply({ ...payload, ...EPHEMERAL });
+  return { embeds: [embed], components, files: [file] };
+}
+
+/** Push a view to the public floor message (webhook), not ephemeral. */
+async function publishView(
+  interaction: ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
+  session: MiniSession,
+  note?: string,
+): Promise<void> {
+  const payload = await buildViewPayload(session, note);
+  const key = sessionKey(session.ownerUserId, interaction.channelId!);
+
+  // Prefer updating the existing floor webhook message in place
+  if (session.floorMessageId && session.floorChannelId) {
+    const ok = await editVaultWebhookMessage(
+      interaction.client,
+      session.floorChannelId,
+      session.floorMessageId,
+      session.site,
+      payload,
+    );
+    if (ok) {
+      // Acknowledge the button without replacing the floor post
+      if (interaction.deferred || interaction.replied) {
+        /* already deferredUpdate */
+      } else if (interaction.isButton() || interaction.isStringSelectMenu()) {
+        // If the click was ON the floor message, update() already consumed — but
+        // we edited via webhook API, so deferUpdate + empty ack if needed.
+        try {
+          if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+        } catch { /* ignore */ }
+      }
+      armTimer(key, session);
+      return;
+    }
   }
+
+  // First publish or edit failed → new webhook post
+  if (!interaction.deferred && !interaction.replied) {
+    if (interaction.isButton() || interaction.isStringSelectMenu()) {
+      await interaction.deferUpdate().catch(async () => {
+        await interaction.deferReply(EPHEMERAL);
+      });
+    } else {
+      await interaction.deferReply(EPHEMERAL);
+    }
+  }
+
+  const ref = await postVaultWebhook(interaction, session.site, payload);
+  if (ref) {
+    session.floorMessageId = ref.messageId;
+    session.floorChannelId = ref.channelId;
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({
+        content: `✅ Browsing as **${getVaultBrand(session.site).name}** · use the floor message`,
+        embeds: [],
+        components: [],
+        files: [],
+      }).catch(() => {});
+    }
+  } else {
+    // Bot fallback (public)
+    if (interaction.isButton() || interaction.isStringSelectMenu()) {
+      try {
+        await interaction.message.edit(payload);
+        session.floorMessageId = interaction.message.id;
+        session.floorChannelId = interaction.channelId;
+        refreshVaultCleanup(interaction.client, interaction.channelId!, interaction.message.id);
+      } catch {
+        await interaction.followUp({ ...payload });
+      }
+    } else {
+      await interaction.editReply(payload);
+    }
+  }
+  armTimer(key, session);
 }
 
 export async function startVaultBrowser(
   interaction: ButtonInteraction | ChatInputCommandInteraction,
 ): Promise<void> {
   if (!interaction.guildId || !interaction.channelId) {
-    const msg = { content: "Server only.", ...EPHEMERAL };
-    if (interaction.deferred || interaction.replied) await interaction.editReply(msg);
-    else await interaction.reply(msg);
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ content: "Server only." });
+    else await interaction.reply({ content: "Server only.", ...EPHEMERAL });
     return;
   }
-  // Drop any prior session so Sites picker is clean
   await destroySession(sessionKey(interaction.user.id, interaction.channelId));
-  const payload = { embeds: [sitePickerEmbed()], components: sitePickerRows(), files: [] as AttachmentBuilder[] };
-  if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
-  else if (interaction.isButton()) await interaction.update(payload);
-  else await interaction.reply({ ...payload, ...EPHEMERAL });
+
+  const payload = {
+    embeds: [sitePickerEmbed()],
+    components: sitePickerRows(),
+  };
+
+  // Public site-branded webhook (not ephemeral)
+  const ref = await ackThenPostVault(
+    interaction,
+    "valuevaultx",
+    payload,
+    "✅ Pick a site on the floor message (public · ~45s cleanup)",
+  );
+  if (ref) {
+    // Stash floor id so openSite can edit in place — create a stub session without browser yet
+    const key = sessionKey(interaction.user.id, interaction.channelId);
+    sessions.set(key, {
+      ownerUserId: interaction.user.id,
+      site: "valuevaultx",
+      // placeholder context/page filled when a site opens
+      context: null as unknown as BrowserContext,
+      page: null as unknown as Page,
+      history: [],
+      targets: [],
+      expiresAt: Date.now() + SESSION_TTL_MS,
+      timer: null,
+      floorMessageId: ref.messageId,
+      floorChannelId: ref.channelId,
+    });
+    armTimer(key, sessions.get(key)!);
+  }
 }
 
 async function openSite(
   interaction: ButtonInteraction,
   site: BrowserSite,
 ): Promise<void> {
+  const brand = getVaultBrand(site);
   await interaction.deferUpdate();
-  await interaction.editReply({
+
+  // Remember floor message from the picker (this click is on that message)
+  const key = sessionKey(interaction.user.id, interaction.channelId!);
+  const priorFloorId = interaction.message.id;
+  const priorFloorCh = interaction.channelId!;
+
+  // Show loading on the floor message
+  await interaction.message.edit({
     embeds: [
-      new EmbedBuilder()
-        .setColor(SITE_HOME[site].color)
-        .setTitle(`${SITE_HOME[site].emoji} Opening ${SITE_HOME[site].label}…`)
-        .setDescription("Loading the live page — usually a few seconds."),
+      applyVaultBrand(
+        new EmbedBuilder()
+          .setTitle(`${brand.emoji} Opening ${brand.name}…`)
+          .setDescription("Loading the live page — usually a few seconds."),
+        site,
+        { useBanner: true },
+      ),
     ],
     components: [],
     files: [],
-  });
+  }).catch(() => {});
+  refreshVaultCleanup(interaction.client, priorFloorCh, priorFloorId);
 
   try {
     const session = await createSession(interaction.user.id, interaction.channelId!, site);
-    await gotoSite(session.page, SITE_HOME[site].url);
+    session.floorMessageId = priorFloorId;
+    session.floorChannelId = priorFloorCh;
+    await gotoSite(session.page, siteUrl(site));
     session.history = [session.page.url()];
-    await renderView(interaction, session, "Pick a yellow number or use **Search**.");
+    await publishView(interaction, session, "Pick a yellow number or use **Search**.");
   } catch (err) {
     logger.error({ err: (err as Error).message, site }, "mini-browser open failed");
-    await interaction.editReply({
-      content: `❌ Could not open **${SITE_HOME[site].label}**: ${(err as Error).message.slice(0, 120)}`,
-      embeds: [],
-      components: sitePickerRows(),
-      files: [],
-    });
+    const msg = `❌ Could not open **${brand.name}**: ${(err as Error).message.slice(0, 140)}`;
+    try {
+      await interaction.message.edit({
+        content: msg,
+        embeds: [
+          applyVaultBrand(
+            new EmbedBuilder()
+              .setTitle("Browser failed to start")
+              .setDescription(
+                [
+                  msg,
+                  "",
+                  "Use **Info** instead for search → prices (no browser needed), or try Browse again.",
+                  "",
+                  "Admins: ensure Chromium is installed (`pnpm emoji:install-browser`) and the bot has **Manage Webhooks**.",
+                ].join("\n"),
+              ),
+            site,
+            { useBanner: true },
+          ),
+        ],
+        components: sitePickerRows(),
+        files: [],
+      });
+    } catch {
+      await interaction.followUp({ content: msg, ...EPHEMERAL }).catch(() => {});
+    }
+    void destroySession(key);
   }
 }
 
@@ -490,13 +673,37 @@ export async function handleVaultBrowserComponent(
   const id = interaction.customId;
 
   if (id === "vvbrowse:home") {
-    await startVaultBrowser(interaction as ButtonInteraction);
+    // Re-post site picker on the same floor message
+    if (interaction.isButton()) {
+      await interaction.deferUpdate();
+      const key = sessionKey(interaction.user.id, interaction.channelId);
+      await destroySession(key);
+      await interaction.message.edit({
+        embeds: [sitePickerEmbed()],
+        components: sitePickerRows(),
+        files: [],
+      }).catch(() => {});
+      refreshVaultCleanup(interaction.client, interaction.channelId, interaction.message.id);
+      sessions.set(key, {
+        ownerUserId: interaction.user.id,
+        site: "valuevaultx",
+        context: null as unknown as BrowserContext,
+        page: null as unknown as Page,
+        history: [],
+        targets: [],
+        expiresAt: Date.now() + SESSION_TTL_MS,
+        timer: null,
+        floorMessageId: interaction.message.id,
+        floorChannelId: interaction.channelId,
+      });
+      armTimer(key, sessions.get(key)!);
+    }
     return;
   }
 
   if (id.startsWith("vvbrowse:site:") && interaction.isButton()) {
     const site = id.slice("vvbrowse:site:".length) as BrowserSite;
-    if (!SITE_HOME[site]) {
+    if (!getVaultBrand(site)) {
       await interaction.reply({ content: "Unknown site.", ...EPHEMERAL });
       return;
     }
@@ -535,7 +742,7 @@ export async function handleVaultBrowserComponent(
   }
 
   const session = getOwnedSession(interaction.user.id, interaction.channelId);
-  if (!session) {
+  if (!session || !session.page) {
     await interaction.reply({
       content: "Session expired — open **Browse** again and pick a site.",
       ...EPHEMERAL,
@@ -543,12 +750,17 @@ export async function handleVaultBrowserComponent(
     return;
   }
 
+  // Keep floor TTL alive while navigating
+  if (session.floorMessageId && session.floorChannelId) {
+    refreshVaultCleanup(interaction.client, session.floorChannelId, session.floorMessageId);
+  }
+
   try {
     if (id === "vvbrowse:scroll:up" && interaction.isButton()) {
       await interaction.deferUpdate();
       await session.page.evaluate((y) => window.scrollBy(0, -y), SCROLL_PX);
       await session.page.waitForTimeout(200);
-      await renderView(interaction, session);
+      await publishView(interaction, session);
       return;
     }
 
@@ -556,7 +768,7 @@ export async function handleVaultBrowserComponent(
       await interaction.deferUpdate();
       await session.page.evaluate((y) => window.scrollBy(0, y), SCROLL_PX);
       await session.page.waitForTimeout(200);
-      await renderView(interaction, session);
+      await publishView(interaction, session);
       return;
     }
 
@@ -564,7 +776,7 @@ export async function handleVaultBrowserComponent(
       await interaction.deferUpdate();
       await session.page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 });
       await session.page.waitForTimeout(1500);
-      await renderView(interaction, session, "Page refreshed.");
+      await publishView(interaction, session, "Page refreshed.");
       return;
     }
 
@@ -574,14 +786,14 @@ export async function handleVaultBrowserComponent(
         session.history.pop();
         const prev = session.history[session.history.length - 1]!;
         await gotoSite(session.page, prev);
-      } else if (session.page.url() !== SITE_HOME[session.site].url) {
-        await gotoSite(session.page, SITE_HOME[session.site].url);
+      } else if (session.page.url() !== siteUrl(session.site)) {
+        await gotoSite(session.page, siteUrl(session.site));
         session.history = [session.page.url()];
       } else {
         await session.page.goBack({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
         await session.page.waitForTimeout(800);
       }
-      await renderView(interaction, session, "Back.");
+      await publishView(interaction, session, "Back.");
       return;
     }
 
@@ -590,14 +802,13 @@ export async function handleVaultBrowserComponent(
       await interaction.deferUpdate();
       const target = session.targets.find((t) => t.index === idx);
       if (!target) {
-        await renderView(interaction, session, "That spot expired — pick again.");
+        await publishView(interaction, session, "That spot expired — pick again.");
         return;
       }
 
       if (target.kind === "input") {
-        // Focus search-like field and prompt them to use Search modal
         await session.page.locator(`[data-dn-click="${idx}"]`).first().click({ timeout: 5000 }).catch(() => {});
-        await renderView(
+        await publishView(
           interaction,
           session,
           `⌨️ Focused **${target.label}** — press **Search** and type what you want.`,
@@ -616,7 +827,7 @@ export async function handleVaultBrowserComponent(
       await session.page.waitForTimeout(1200);
       const after = session.page.url();
       if (after !== before) session.history.push(after);
-      await renderView(interaction, session, `Opened **${target.label}**.`);
+      await publishView(interaction, session, `Opened **${target.label}**.`);
       return;
     }
   } catch (err) {
@@ -643,7 +854,7 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
   }
 
   const session = getOwnedSession(interaction.user.id, interaction.channelId);
-  if (!session) {
+  if (!session || !session.page) {
     await interaction.reply({
       content: "Session expired — open **Browse** and pick a site first.",
       ...EPHEMERAL,
@@ -653,7 +864,6 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
 
   await interaction.deferReply(EPHEMERAL);
   try {
-    // Prefer Playwright typing (works for Wix/React controlled Search boxes).
     let typedOk = false;
     const searchLoc = session.page.locator(
       "input[data-dn-click], [data-dn-click] input, input[placeholder*='earch' i], input[type='search'], input[name*='earch' i], #searchInput, input[type='text']",
@@ -672,7 +882,6 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
     }
 
     if (!typedOk) {
-      // DOM fallback for odd shells
       const typed = await session.page.evaluate(async (query) => {
         const pick =
           document.querySelector<HTMLInputElement>("input[type='search']")
@@ -718,50 +927,83 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
     const url = session.page.url();
     if (session.history[session.history.length - 1] !== url) session.history.push(url);
 
-    // Always attach durable JSON prices so MTTV redesign / App Check can't strand users.
     const [priceNote, emptyShell] = await Promise.all([
       vaultPriceOverlay(q),
       pageLooksPriceEmpty(session.page, session.site),
     ]);
     const shellWarn = emptyShell
-      ? "⚠️ This site’s item rows look empty/Loading — prices below are from the **Value Vault X JSON** feed (still current). MTTV can be re-pointed later without breaking search."
+      ? "⚠️ This site’s item rows look empty/Loading — prices below are from the **Value Vault X JSON** feed."
       : "";
 
-    // Re-render on the deferred reply (new message) — also refresh the original browse message if possible
+    const brand = getVaultBrand(session.site);
     session.targets = await stampAndCollect(session.page);
     const buf = await screenshotPage(session.page);
-    const meta = SITE_HOME[session.site];
     const file = new AttachmentBuilder(buf, { name: "browse.jpg" });
     const lines = session.targets.slice(0, 8).map((t) => {
       const icon = t.kind === "input" ? "⌨️" : t.kind === "button" ? "🔘" : "🔗";
       return `**${t.index}.** ${icon} ${t.label}`;
     });
-    const embed = new EmbedBuilder()
-      .setColor(meta.color)
-      .setTitle(`${meta.emoji} Search: ${q}`.slice(0, 256))
-      .setURL(session.page.url())
-      .setDescription(
-        [
-          `Typed **${q}** into the live site.`,
-          `📍 \`${session.page.url().slice(0, 160)}\``,
-          shellWarn,
-          "",
-          priceNote,
-          "",
-          lines.length ? lines.join("\n") : "_Page chrome loaded — scroll if needed._",
-        ].filter(Boolean).join("\n"),
-      )
-      .setImage("attachment://browse.jpg")
-      .setFooter({ text: "JSON prices always attached · Scroll / Back still work on Browse" });
+    const embed = applyVaultBrand(
+      new EmbedBuilder()
+        .setTitle(`${brand.emoji} Search: ${q}`.slice(0, 256))
+        .setURL(session.page.url())
+        .setDescription(
+          [
+            `Typed **${q}** into the live site.`,
+            `📍 \`${session.page.url().slice(0, 160)}\``,
+            shellWarn,
+            "",
+            priceNote,
+            "",
+            lines.length ? lines.join("\n") : "_Page chrome loaded — scroll if needed._",
+          ].filter(Boolean).join("\n"),
+        )
+        .setImage("attachment://browse.jpg")
+        .setFooter({ text: `${brand.name} · JSON prices attached · ~45s cleanup` }),
+      session.site,
+    );
 
-    const components = [...navRows(true)];
+    const components = [...navRows()];
     const sel = clickSelect(session.targets);
     if (sel) components.splice(1, 0, sel);
 
-    await interaction.editReply({ embeds: [embed], components, files: [file] });
+    const payload = { embeds: [embed], components, files: [file] };
+
+    // Update floor message when we have one
+    if (session.floorMessageId && session.floorChannelId) {
+      const ok = await editVaultWebhookMessage(
+        interaction.client,
+        session.floorChannelId,
+        session.floorMessageId,
+        session.site,
+        payload,
+      );
+      if (ok) {
+        await interaction.editReply({
+          content: `✅ Search updated on the **${brand.name}** floor message`,
+          embeds: [],
+          components: [],
+          files: [],
+        });
+        return;
+      }
+    }
+
+    const ref = await postVaultWebhook(interaction, session.site, payload);
+    if (ref) {
+      session.floorMessageId = ref.messageId;
+      session.floorChannelId = ref.channelId;
+      await interaction.editReply({
+        content: `✅ Search posted as **${brand.name}**`,
+        embeds: [],
+        components: [],
+        files: [],
+      });
+    } else {
+      await interaction.editReply(payload);
+    }
   } catch (err) {
     logger.error({ err: (err as Error).message }, "mini-browser search failed");
-    // Last resort: still try to return JSON prices even if Playwright typing failed
     const fallback = await vaultPriceOverlay(q).catch(() => "");
     await interaction.editReply({
       content: [

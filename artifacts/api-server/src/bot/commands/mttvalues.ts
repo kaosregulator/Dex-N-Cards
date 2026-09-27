@@ -17,6 +17,7 @@ import {
 import { renderPanel, persistBotImage } from "./edit-card.js";
 import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
 import { VALUEVAULTX_FEED_URL, mapVaultRarityToDn } from "./vault-sources.js";
+import { applyVaultBrand } from "./vault-webhook.js";
 
 // Vault Values data source — public Wix JSON at valuevaultx.com.
 // Replaced the old mttvalues.com Firestore feed (now 403). No API key.
@@ -171,13 +172,12 @@ function tagEmoji(tag: string): string {
   return map[tag] ?? "";
 }
 
-export function buildMTTVItemEmbed(item: MTTVItem): EmbedBuilder {
+export function buildMTTVItemEmbed(item: MTTVItem, siteId: string = "valuevaultx"): EmbedBuilder {
   const valueStr = formatMTTVValue(item);
   const rarityStr = item.rarity.map((r) => `${rarityEmoji(r)} ${r}`).join(" · ") || "—";
   const tagStr = item.tags.map((t) => `${tagEmoji(t)} ${t}`).join(" · ") || "—";
   const embed = new EmbedBuilder()
     .setTitle(item.name)
-    .setColor(0x9b59b6)
     .setDescription(item.description || "No description available.")
     .addFields([
       { name: "💰 Value", value: valueStr, inline: true },
@@ -186,11 +186,12 @@ export function buildMTTVItemEmbed(item: MTTVItem): EmbedBuilder {
       { name: "🛠️ Functionality", value: item.functionality != null ? `${item.functionality}/10` : "—", inline: true },
       { name: "🏷️ Tags", value: tagStr, inline: true },
       { name: "📈 Avg Value", value: getMTTVAverageValue(item).toLocaleString(), inline: true },
-    ]);
+    ])
+    .setFooter({ text: "Live gem prices · cleans up in ~45s" });
   if (item.image) {
     embed.setImage(item.image);
   }
-  return embed;
+  return applyVaultBrand(embed, siteId);
 }
 
 function itemNameAcronym(item: MTTVItem): string {
@@ -256,74 +257,70 @@ export function formatVaultPriceLine(item: MTTVItem): string {
   return `**${item.name}** — ${formatMTTVValue(item)} gems · ${rarity}`;
 }
 
+/** Slash `/vaultvalue item:` and legacy callers — posts as Value Vault X webhook (~45s). */
 export async function handleInfoMTTV(interaction: ChatInputCommandInteraction): Promise<void> {
-  // Ephemeral-friendly linger so mobile users can read the embed.
-  const deleteReplyAfterDelay = () => {
-    const timer = setTimeout(() => {
-      void interaction.deleteReply().catch(() => {});
-    }, 90_000);
-    timer.unref?.();
-  };
-
-  await interaction.deferReply();
   const name = interaction.options.getString("item", true);
-  const items = await fetchMTTVItems();
-  const exact = items.find(
-    (i) => i.name.toLowerCase() === name.trim().toLowerCase(),
-  );
-
-  if (exact) {
-    await interaction.editReply({ embeds: [buildMTTVItemEmbed(exact)] });
-    deleteReplyAfterDelay();
-    return;
+  const { ackThenPostVault, applyVaultBrand: brandEmbed } = await import("./vault-webhook.js");
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   }
-
-  const scored = items
-    .map((i) => ({ i, score: matchScore(i, name) }))
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score);
-
-  if (scored.length === 0) {
-    await interaction.editReply(
-      `❌ Could not find "${name}". Try \`/vaultvalue item:\` with autocomplete, or open the hub and use **Info** / **List**.`,
-    );
-    deleteReplyAfterDelay();
-    return;
-  }
-
-  // Ambiguous fuzzy hit → pick from a select (restores the old "search results" feel).
-  const top = scored.slice(0, 25);
-  const clearWinner = top.length === 1 || (top[0]!.score >= top[1]!.score + 15);
-  if (clearWinner) {
-    await interaction.editReply({ embeds: [buildMTTVItemEmbed(top[0]!.i)] });
-    deleteReplyAfterDelay();
-    return;
-  }
-
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId(`vvhub:pick:${Date.now().toString(36)}`)
-    .setPlaceholder(`Pick a match for "${name.slice(0, 40)}"`)
-    .addOptions(
-      top.slice(0, 25).map(({ i }) =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(i.name.slice(0, 100))
-          .setValue(i.name.slice(0, 100))
-          .setDescription(
-            `${formatMTTVValue(i)} · ${(i.rarity[0] ?? "—").slice(0, 40)}`.slice(0, 100),
+  try {
+    const items = await fetchMTTVItems();
+    const exact = items.find((i) => i.name.toLowerCase() === name.trim().toLowerCase());
+    const scored = exact
+      ? [{ i: exact, score: 999 }]
+      : items
+          .map((i) => ({ i, score: matchScore(i, name) }))
+          .filter(({ score }) => score > 0)
+          .sort((a, b) => b.score - a.score);
+    if (!scored.length) {
+      await ackThenPostVault(interaction, "valuevaultx", {
+        embeds: [
+          brandEmbed(
+            new EmbedBuilder()
+              .setTitle("No matches")
+              .setDescription(`Couldn’t find **${name}**. Try another spelling or **/vaultvalue** → Info.`),
+            "valuevaultx",
+            { useBanner: true },
           ),
-      ),
-    );
-
-  await interaction.editReply({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x9b59b6)
-        .setTitle("🔍 Multiple matches")
-        .setDescription(`Several items match **${name}**. Pick one below (or re-run with autocomplete).`)
-        .setFooter({ text: "Prices from Vault Values · valuevaultx.com" }),
-    ],
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
-  });
+        ],
+      });
+      return;
+    }
+    const top = scored.slice(0, 25);
+    const clearWinner = top.length === 1 || (top[0]!.score >= (top[1]?.score ?? 0) + 15);
+    if (clearWinner) {
+      await ackThenPostVault(interaction, "valuevaultx", {
+        embeds: [buildMTTVItemEmbed(top[0]!.i, "valuevaultx")],
+      });
+      return;
+    }
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId("vvhub:info:pick:valuevaultx")
+      .setPlaceholder(`Pick a match for "${name.slice(0, 40)}"`)
+      .addOptions(
+        top.slice(0, 25).map(({ i }) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(i.name.slice(0, 100))
+            .setValue(i.name.slice(0, 100))
+            .setDescription(`${formatMTTVValue(i)} · ${(i.rarity[0] ?? "—").slice(0, 40)}`.slice(0, 100)),
+        ),
+      );
+    await ackThenPostVault(interaction, "valuevaultx", {
+      embeds: [
+        brandEmbed(
+          new EmbedBuilder()
+            .setTitle(`🔍 Results for “${name.slice(0, 60)}”`)
+            .setDescription(`Several items match — pick one below for **price + description**.`),
+          "valuevaultx",
+          { useBanner: true },
+        ),
+      ],
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+    });
+  } catch {
+    await interaction.editReply("❌ Price feed briefly unavailable.");
+  }
 }
 
 const CREATE_CARD_RARITIES = new Set<string>(["common", "uncommon", "rare", "epic", "legendary", "mythic"]);
