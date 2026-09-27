@@ -55,7 +55,7 @@ const RARITY_FRAMES: Record<Rarity, [Frame, Frame, Frame]> = {
     { id: "legendary_royal", name: "Royal Crest", emoji: "👑", rarity: "legendary", unlockLevel: 100, color: 0xe67e22, wrap: plain("♜", "♜") },
   ],
   mythic: [
-    { id: "mythic_default", name: "Mythic", emoji: "🔴", rarity: "mythic", unlockLevel: 1, color: 0xe74c3c, wrap: plain("⟨", "⟩") },
+    { id: "mythic_default", name: "Limited Edition", emoji: "💎", rarity: "mythic", unlockLevel: 1, color: 0xe74c3c, wrap: plain("⟨", "⟩") },
     { id: "mythic_ember", name: "Ember Rift", emoji: "🔥", rarity: "mythic", unlockLevel: 50, color: 0xc0392b, wrap: plain("❰", "❱") },
     { id: "mythic_celestial", name: "Celestial", emoji: "✨", rarity: "mythic", unlockLevel: 100, color: 0xff5e78, wrap: plain("༺✧", "✧༻") },
   ],

@@ -6,21 +6,21 @@ import type {
 import {
   EmbedBuilder, MessageFlags,
   ButtonBuilder, ButtonStyle, ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
 } from "discord.js";
 import { logger } from "../../lib/logger.js";
 import { getBotClient } from "../client-holder.js";
-import { addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
+import {
+  addCard, addCardToSet, getCardByName, getSetByName,
+  getCustomRarityBySlug, createCustomRarity, assignCardToCustomRarity,
+} from "../db.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
 import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
+import { VALUEVAULTX_FEED_URL, mapVaultRarityToDn } from "./vault-sources.js";
 
-// Vault Values data source — a public, unauthenticated JSON endpoint that
-// backs vaultedvaluesx.com's Military Tycoon trade calculator/value list.
-// This replaced the old mttvalues.com Firestore feed after that project
-// locked down its Firestore security rules (server-side reads started
-// returning 403 PERMISSION_DENIED with any key, public or private).
-// No API key is required — the endpoint is served straight from a public
-// Wix Data collection.
-const VAULT_VALUES_URL = "https://valuevaultx.com/_functions/api/MTSValueList";
+// Vault Values data source — public Wix JSON at valuevaultx.com.
+// Replaced the old mttvalues.com Firestore feed (now 403). No API key.
+const VAULT_VALUES_URL = VALUEVAULTX_FEED_URL;
 
 const CALC_STATE_TTL_MS = 15 * 60 * 1000; // ephemeral /calc state lives up to 15 minutes
 
@@ -235,42 +235,95 @@ export function matchScore(item: MTTVItem, query: string): number {
   return score;
 }
 
+/**
+ * Search the durable valuevaultx JSON feed (not mttvalues.com).
+ * Used by Discord lookup AND the mini-browser price safety net when a live
+ * site fails to show item data (Cloudflare / App Check / redesign).
+ */
+export async function searchVaultPrices(query: string, limit = 6): Promise<MTTVItem[]> {
+  const items = await fetchMTTVItems();
+  return items
+    .map((i) => ({ i, score: matchScore(i, query) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, Math.min(limit, 25)))
+    .map(({ i }) => i);
+}
+
+/** One-line price blurb for embeds / mini-browser notes. */
+export function formatVaultPriceLine(item: MTTVItem): string {
+  const rarity = item.rarity.map((r) => `${rarityEmoji(r)} ${r}`).join(" · ") || "—";
+  return `**${item.name}** — ${formatMTTVValue(item)} gems · ${rarity}`;
+}
+
 export async function handleInfoMTTV(interaction: ChatInputCommandInteraction): Promise<void> {
-  // Discord does not expose a per-message "seen" event. Starting this timer
-  // after editReply resolves means the full result has been accepted by
-  // Discord before the 20-second cleanup window begins.
+  // Ephemeral-friendly linger so mobile users can read the embed.
   const deleteReplyAfterDelay = () => {
     const timer = setTimeout(() => {
-      void interaction.deleteReply().catch(() => {
-        // The message may already be gone or the bot may have restarted.
-      });
-    }, 20_000);
+      void interaction.deleteReply().catch(() => {});
+    }, 90_000);
     timer.unref?.();
   };
 
   await interaction.deferReply();
   const name = interaction.options.getString("item", true);
   const items = await fetchMTTVItems();
-  let item = items.find(
+  const exact = items.find(
     (i) => i.name.toLowerCase() === name.trim().toLowerCase(),
   );
 
-  if (!item) {
-    const scored = items
-      .map((i) => ({ i, score: matchScore(i, name) }))
-      .filter(({ score }) => score > 0)
-      .sort((a, b) => b.score - a.score);
-    item = scored[0]?.i;
-  }
-
-  if (!item) {
-    await interaction.editReply(`❌ Could not find "${name}". Use \`/vaultvalue list\` to browse items or \`/vaultvalue calc\` to compare values.`);
+  if (exact) {
+    await interaction.editReply({ embeds: [buildMTTVItemEmbed(exact)] });
     deleteReplyAfterDelay();
     return;
   }
 
-  await interaction.editReply({ embeds: [buildMTTVItemEmbed(item)] });
-  deleteReplyAfterDelay();
+  const scored = items
+    .map((i) => ({ i, score: matchScore(i, name) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) {
+    await interaction.editReply(
+      `❌ Could not find "${name}". Try \`/vaultvalue item:\` with autocomplete, or open the hub and use **Info** / **List**.`,
+    );
+    deleteReplyAfterDelay();
+    return;
+  }
+
+  // Ambiguous fuzzy hit → pick from a select (restores the old "search results" feel).
+  const top = scored.slice(0, 25);
+  const clearWinner = top.length === 1 || (top[0]!.score >= top[1]!.score + 15);
+  if (clearWinner) {
+    await interaction.editReply({ embeds: [buildMTTVItemEmbed(top[0]!.i)] });
+    deleteReplyAfterDelay();
+    return;
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`vvhub:pick:${Date.now().toString(36)}`)
+    .setPlaceholder(`Pick a match for "${name.slice(0, 40)}"`)
+    .addOptions(
+      top.slice(0, 25).map(({ i }) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(i.name.slice(0, 100))
+          .setValue(i.name.slice(0, 100))
+          .setDescription(
+            `${formatMTTVValue(i)} · ${(i.rarity[0] ?? "—").slice(0, 40)}`.slice(0, 100),
+          ),
+      ),
+    );
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x9b59b6)
+        .setTitle("🔍 Multiple matches")
+        .setDescription(`Several items match **${name}**. Pick one below (or re-run with autocomplete).`)
+        .setFooter({ text: "Prices from Vault Values · valuevaultx.com" }),
+    ],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+  });
 }
 
 const CREATE_CARD_RARITIES = new Set<string>(["common", "uncommon", "rare", "epic", "legendary", "mythic"]);
@@ -287,25 +340,13 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
   // Caller (admin.ts) has already deferred the reply.
   const guildId = interaction.guildId!;
   const itemName = interaction.options.getString("item", true).trim();
-  const rarityInput = interaction.options.getString("rarity", true);
-  const type = interaction.options.getString("type", true).trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40);
+  const rarityInput = (interaction.options.getString("rarity") ?? "auto").trim().toLowerCase();
+  const typeRaw = interaction.options.getString("type")?.trim() ?? "";
   const setName = interaction.options.getString("set")?.trim();
   const descriptionOverride = interaction.options.getString("description") ?? "";
-  const limited = interaction.options.getBoolean("limited") ?? false;
+  const limitedOpt = interaction.options.getBoolean("limited");
   const maxCopies = interaction.options.getInteger("max_copies") ?? undefined;
   const eventExclusive = interaction.options.getBoolean("event_exclusive") ?? false;
-
-  if (!type) {
-    await interaction.editReply("❌ Card type cannot be empty. Enter a type/tag such as `tank`, `aircraft`, or `nuke`.");
-    return;
-  }
-
-  if (!CREATE_CARD_RARITIES.has(rarityInput)) {
-    await interaction.editReply("❌ Pick one of the built-in rarities from autocomplete.");
-    return;
-  }
-  const baseRarity = rarityInput as Rarity;
-  const defs = createCardRarityDefaults(baseRarity);
 
   let item: MTTVItem | undefined;
   try {
@@ -325,7 +366,26 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
   }
 
   if (!item) {
-    await interaction.editReply(`❌ Could not find item "${itemName}". Use \`/vaultvalue info\` to search first.`);
+    await interaction.editReply(`❌ Could not find item "${itemName}". Use \`/vaultvalue item:\` to search first.`);
+    return;
+  }
+
+  const vaultMap = mapVaultRarityToDn(item.rarity[0]);
+  const useAuto = !rarityInput || rarityInput === "auto" || rarityInput === "from site" || rarityInput === "vault";
+  if (!useAuto && !CREATE_CARD_RARITIES.has(rarityInput)) {
+    await interaction.editReply("❌ Pick a built-in rarity, or type `auto` to use the site's suggested rarity.");
+    return;
+  }
+  const baseRarity = (useAuto ? vaultMap.rarity : rarityInput) as Rarity;
+  const limited = limitedOpt ?? vaultMap.isLimitedEdition;
+  const defs = createCardRarityDefaults(baseRarity);
+  const exoticSlug = useAuto ? vaultMap.customRaritySlug : undefined;
+  const type = (typeRaw || item.tags[0] || "vehicle")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .slice(0, 40);
+  if (!type) {
+    await interaction.editReply("❌ Card type cannot be empty. Enter a type/tag such as `tank`, `aircraft`, or `nuke`.");
     return;
   }
 
@@ -382,7 +442,37 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
     }
   }
 
-  await renderPanel(interaction, card.id, false, `✅ Created **${card.name}** from Vault Values (${baseRarity})${setNote} — tweak any field below`);
+  if (exoticSlug === "exotic") {
+    try {
+      let exotic = await getCustomRarityBySlug(guildId, "exotic");
+      if (!exotic) {
+        exotic = await createCustomRarity(guildId, {
+          slug: "exotic",
+          name: "Exotic",
+          emoji: "🔥",
+          position: 55,
+          worthValue: 4000,
+          burnValue: 2000,
+          color: 0xff6b35,
+          dropWeight: 0.5,
+          droppable: true,
+          inPacks: true,
+        });
+      }
+      await assignCardToCustomRarity(guildId, card.id, "exotic");
+      setNote += " · Exotic tier";
+    } catch (err) {
+      logger.warn({ err, cardId: card.id, guildId }, "Could not assign Exotic custom rarity");
+    }
+  }
+
+  const siteRarity = item.rarity[0] ? ` · site ${item.rarity[0]}` : "";
+  await renderPanel(
+    interaction,
+    card.id,
+    false,
+    `✅ Created **${card.name}** from Vault Values (${baseRarity}${useAuto ? " auto" : ""}${siteRarity})${setNote} — tweak any field below`,
+  );
 }
 
 export async function handleValueList(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -417,17 +507,22 @@ export async function handleValueHelp(interaction: ChatInputCommandInteraction):
       "Vault Values tracks community prices for Military Tycoon items.\n\n" +
       "**What the numbers mean:**\n" +
       "• 💰 **Value** — the typical trade value range for the item.\n" +
-      "• ⭐ **Rarity** — how hard the item is to obtain.\n" +
+      "• ⭐ **Rarity** — Common → Uncommon → Rare → Epic → Legendary → Exotic → **Limited Edition** (top).\n" +
       "• 📊 **Demand** — how wanted the item is right now (1–10).\n" +
       "• 🛠️ **Functionality** — how useful the item is in-game (1–10).\n" +
       "• 🏷️ **Tags** — market trends like `rising`, `dropping`, `stable`.\n\n" +
-      "**Commands:**\n" +
-      "• `/vaultvalue info item:<item>` — full details for one item.\n" +
-      "• `/vaultvalue calc` — trade calculator with two offer sides.\n" +
-      "• `/vaultvalue list` — top items by value.\n\n" +
-      "All prices are pulled live from Vault Values.",
+      "**How to use:**\n" +
+      "• `/vaultvalue item:<name>` — autocomplete lookup (fast path).\n" +
+      "• `/vaultvalue` → **Browse** — live mini-browser (Value Vault X / Vaulted Values X / MTT Values):\n" +
+      "  page photo · numbered clicks · Search types into the site · scroll / back.\n" +
+
+      "• `/vaultvalue` → **Info** — type a name / acronym, pick from matches.\n" +
+      "• `/vaultvalue` → **Calc** — private two-sided trade calculator.\n" +
+      "• `/vaultvalue` → **Sources** — live health of value sites.\n\n" +
+      "Primary feed: [valuevaultx.com](https://valuevaultx.com). " +
+      "List UI: [mts.vaultedvaluesx.com](https://mts.vaultedvaluesx.com/value-list).",
     )
-    .setFooter({ text: "Prices from Vault Values" });
+    .setFooter({ text: "Prices from Vault Values · no API key required" });
   await interaction.editReply({ embeds: [embed] });
 }
 
@@ -1063,12 +1158,28 @@ export async function handleMTTVAutocomplete(
   const q = focused.value.trim();
   try {
     const items = await fetchMTTVItems();
+    // Empty query → top items by value so the dropdown is never blank.
+    if (!q) {
+      const top = items
+        .slice()
+        .sort((a, b) => (b.valueMax ?? 0) - (a.valueMax ?? 0) || (b.valueMin ?? 0) - (a.valueMin ?? 0))
+        .slice(0, 25)
+        .map((i) => ({
+          name: `${i.name} · ${formatMTTVValue(i)}`.slice(0, 100),
+          value: i.name.slice(0, 100),
+        }));
+      await interaction.respond(top);
+      return;
+    }
     const matches = items
       .map((i) => ({ i, score: matchScore(i, q) }))
       .filter(({ score }) => score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, 25)
-      .map((i) => ({ name: i.i.name, value: i.i.name }));
+      .map(({ i }) => ({
+        name: `${i.name} · ${formatMTTVValue(i)}`.slice(0, 100),
+        value: i.name.slice(0, 100),
+      }));
     await interaction.respond(matches);
   } catch {
     await interaction.respond([]);

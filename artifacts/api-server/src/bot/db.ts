@@ -220,21 +220,47 @@ export const DEFAULTS_SET_NAME = "defaults";
 export async function loadDefaultCards(actorGuildId: string): Promise<{ added: number; skipped: number }> {
   let added = 0, skipped = 0;
   const defaultsSet = (await getSetByName(DEFAULTS_SET_NAME, actorGuildId)) ?? (await createSet(DEFAULTS_SET_NAME, undefined, actorGuildId));
+
+  // Seed Vault Values "Exotic" as a custom tier between Legendary and Limited Edition.
+  // /rarity remains source of truth — admins can rename/reorder afterward.
+  let exotic = await getCustomRarityBySlug(actorGuildId, "exotic");
+  if (!exotic) {
+    exotic = await createCustomRarity(actorGuildId, {
+      slug: "exotic",
+      name: "Exotic",
+      emoji: "🔥",
+      position: 55, // between legendary (built-in) and Limited Edition (mythic)
+      worthValue: 4000,
+      burnValue: 2000,
+      color: 0xff6b35,
+      dropWeight: 0.5,
+      droppable: true,
+      inPacks: true,
+    });
+  }
+
   for (const card of DEFAULT_CARDS) {
+    const { customRaritySlug, ...cardRow } = card;
     const existing = await getCardByName(card.name, actorGuildId);
     if (existing) {
       // Ensure existing copies are still members of the defaults set.
       await db.insert(cardSetMembershipsTable)
         .values({ setId: defaultsSet.id, cardId: existing.id })
         .onConflictDoNothing();
+      if (customRaritySlug === "exotic") {
+        await assignCardToCustomRarity(actorGuildId, existing.id, "exotic").catch(() => {});
+      }
       skipped++;
       continue;
     }
-    const [inserted] = await db.insert(cardsTable).values({ ...card, guildId: actorGuildId }).onConflictDoNothing().returning({ id: cardsTable.id });
+    const [inserted] = await db.insert(cardsTable).values({ ...cardRow, guildId: actorGuildId }).onConflictDoNothing().returning({ id: cardsTable.id });
     if (inserted) {
       await db.insert(cardSetMembershipsTable)
         .values({ setId: defaultsSet.id, cardId: inserted.id })
         .onConflictDoNothing();
+      if (customRaritySlug === "exotic") {
+        await assignCardToCustomRarity(actorGuildId, inserted.id, "exotic").catch(() => {});
+      }
       added++;
     }
   }

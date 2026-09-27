@@ -11,7 +11,7 @@ import type { GuildSettings } from "@workspace/db";
 import {
   isAdmin, getOrCreateGuildSettings, updateGuildSettings, addCard,
   loadDefaultCards, unloadDefaultCards, listSets, DEFAULTS_SET_NAME,
-  getRarityDisplayOverrides, copyHomeSetTemplate,
+  getRarityDisplayOverrides,
 } from "../db.js";
 import { spawnCard, scheduleNextSpawn, clearSpawnTimer } from "../spawn-manager.js";
 import { DEFAULT_CARDS, RARITY_WEIGHTS, type Rarity } from "../cards-data.js";
@@ -93,15 +93,16 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
     scheduleNextSpawn(guildId);
   } else if (action === "channel" && arg === "trade") {
     await updateGuildSettings(guildId, { tradeChannelId: interaction.channelId });
-  } else if (action === "loaddefaults") {
-    // loadDefaultCards writes to the current server's cards/sets tables only.
+  } else if (action === "loaddefaults" || action === "copytemplate") {
+    // "Use Default Set" — Vault Values roster (replaces the old Copy Home Set flow).
     const { added, skipped } = await loadDefaultCards(guildId);
     await refreshPanel(interaction, guildId);
     const settings = await getOrCreateGuildSettings(guildId);
     await interaction.followUp({
-      content: `📦 Loaded the built-in roster — added **${added}** cards` +
+      content: `📦 **Default set** loaded — added **${added}** cards` +
         (skipped > 0 ? ` (skipped **${skipped}** already in your roster).` : ".") +
-        `\nRemove anytime with **🗑️ Remove Defaults** or \`${settings.commandPrefix}unloaddefaults\` / \`/set_admin\` → unload set:${DEFAULTS_SET_NAME}\`.`,
+        `\nVehicles/soldiers preferred · site rarities (LE at top) · Exotic custom tier seeded.` +
+        `\n\`/rarity\` nicknames & values still win. Remove with **🗑️ Remove Defaults** or \`${settings.commandPrefix}unloaddefaults\`.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     return;
@@ -110,24 +111,9 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
     const { removed } = await unloadDefaultCards(guildId);
     await refreshPanel(interaction, guildId);
     await interaction.followUp({
-      content: `🗑️ Removed **${removed}** built-in default cards. Your custom cards are untouched.`,
+      content: `🗑️ Removed **${removed}** default-set cards. Your custom cards are untouched.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
-    return;
-  } else if (action === "copytemplate") {
-    const { copiedSetName, copiedCards, skipped } = await copyHomeSetTemplate(guildId);
-    await refreshPanel(interaction, guildId);
-    if (skipped) {
-      await interaction.followUp({
-        content: "ℹ️ Home set template is already copied or not available.",
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {});
-    } else {
-      await interaction.followUp({
-        content: `📋 Copied home set **${copiedSetName}** with **${copiedCards}** cards. It is now your active spawn set — drops can start immediately. Any edits, trades, or burns stay in this server and never affect the home server.`,
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {});
-    }
     return;
   } else if (action === "rates") {
     // followUp = new ephemeral message after deferUpdate (can't editReply — that would replace the panel)
@@ -327,8 +313,8 @@ function buildSetupEmbed(s: GuildSettings, hasDefaults: boolean): EmbedBuilder {
   const tradeOn = s.tradeEnabled;
 
   const defaultsLine = hasDefaults
-    ? `60 built-in cards loaded`
-    : `No defaults — click **Load Defaults**, **Copy Home Set**, or add your own cards`;
+    ? `Default set loaded`
+    : `No default set — click **Use Default Set** or add your own cards`;
 
   return new EmbedBuilder()
     .setTitle(`🃏 ${BRAND_NAME} — Setup`)
@@ -463,16 +449,12 @@ function buildSetupComponents(s: GuildSettings, hasDefaults: boolean) {
     hasDefaults
       ? new ButtonBuilder()
           .setCustomId("setup:cleardefaults")
-          .setLabel("🗑️ Remove Defaults")
+          .setLabel("🗑️ Remove Default Set")
           .setStyle(ButtonStyle.Danger)
       : new ButtonBuilder()
           .setCustomId("setup:loaddefaults")
-          .setLabel("📖 Load Defaults")
-          .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("setup:copytemplate")
-      .setLabel("📋 Copy Home Set")
-      .setStyle(ButtonStyle.Secondary),
+          .setLabel("📦 Use Default Set")
+          .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId("setup:testdrop")
       .setLabel("🧪 Test Drop")
