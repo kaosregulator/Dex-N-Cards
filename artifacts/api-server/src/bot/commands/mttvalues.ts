@@ -1,12 +1,14 @@
 import type {
   ChatInputCommandInteraction, AutocompleteInteraction,
-  ButtonInteraction, ModalSubmitInteraction,
+  ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction,
   InteractionReplyOptions, BaseMessageOptions,
 } from "discord.js";
 import {
-  EmbedBuilder, MessageFlags,
+  EmbedBuilder, MessageFlags, AttachmentBuilder,
   ButtonBuilder, ButtonStyle, ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
 } from "discord.js";
+import { renderCalcResultsCanvas, CALC_RESULTS_FILE } from "./calc-results-canvas.js";
 import { logger } from "../../lib/logger.js";
 import { getBotClient } from "../client-holder.js";
 import { addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
@@ -251,25 +253,49 @@ export async function handleInfoMTTV(interaction: ChatInputCommandInteraction): 
   await interaction.deferReply();
   const name = interaction.options.getString("item", true);
   const items = await fetchMTTVItems();
-  let item = items.find(
+  const exact = items.find(
     (i) => i.name.toLowerCase() === name.trim().toLowerCase(),
   );
+
+  let item = exact ?? undefined;
 
   if (!item) {
     const scored = items
       .map((i) => ({ i, score: matchScore(i, name) }))
       .filter(({ score }) => score > 0)
       .sort((a, b) => b.score - a.score);
-    item = scored[0]?.i;
+
+    if (scored.length === 0) {
+      await interaction.editReply(`❌ Could not find "${name}". Use \`/vaultvalue\` Info to search, or try autocomplete on \`/vaultvalue item:\`.`);
+      deleteReplyAfterDelay();
+      return;
+    }
+
+    const top = scored[0]!.score;
+    const close = scored.filter((s) => s.score >= top * 0.85).slice(0, 25);
+    // Ambiguous fuzzy hit → pick menu (exact name always wins above).
+    if (close.length > 1) {
+      const { buildInfoPickMenu } = await import("./vaultvalue-hub.js");
+      await interaction.editReply({
+        content: `🔍 Multiple matches for **${name}** — pick one:`,
+        embeds: [],
+        components: [
+          buildInfoPickMenu(
+            name,
+            close.map((s) => ({
+              name: s.i.name,
+              desc: `💎 ${formatMTTVValue(s.i)} · ${s.i.rarity[0] ?? "—"}`,
+            })),
+          ),
+        ],
+      });
+      return;
+    }
+
+    item = scored[0]!.i;
   }
 
-  if (!item) {
-    await interaction.editReply(`❌ Could not find "${name}". Use \`/vaultvalue list\` to browse items or \`/vaultvalue calc\` to compare values.`);
-    deleteReplyAfterDelay();
-    return;
-  }
-
-  await interaction.editReply({ embeds: [buildMTTVItemEmbed(item)] });
+  await interaction.editReply({ embeds: [buildMTTVItemEmbed(item)], components: [], content: null });
   deleteReplyAfterDelay();
 }
 
@@ -463,7 +489,7 @@ const CALC_CUSTOM_ID_PREFIX = "mtcalc";
 const MAX_CALC_ITEMS = 3;
 const CALC_TIER_CHOICES: CalcTier[] = ["low", "mid", "high"];
 const CALC_STAR_LABELS = ["", "⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"];
-const CALC_EMPTY_SIDE = "*No items yet — press Add Item*";
+const CALC_EMPTY_SIDE = "*No items yet — press **Your Items** / **Their Items***";
 
 export function calcItemValue(c: CalcItem): number {
   const min = c.item.valueMin ?? c.item.valueMax ?? 0;
@@ -543,38 +569,37 @@ function buildCalcPreview(state: CalcState, description?: string): EmbedBuilder 
     .setFooter({ text: "Prices from Vault Values · each user has their own private session" });
 }
 
-function buildCalcMainComponents(): ActionRowBuilder<ButtonBuilder>[] {
-  return [
+function buildCalcMainComponents(state: CalcState): ActionRowBuilder<ButtonBuilder>[] {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:your`).setLabel("🙂 Your Items").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:their`).setLabel("🤝 Their Items").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`${CALC_CUSTOM_ID_PREFIX}:add:your`)
+        .setLabel("🙂 Your Items")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(state.yourItems.length >= MAX_CALC_ITEMS),
+      new ButtonBuilder()
+        .setCustomId(`${CALC_CUSTOM_ID_PREFIX}:add:their`)
+        .setLabel("🤝 Their Items")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(state.theirItems.length >= MAX_CALC_ITEMS),
       new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:calc`).setLabel("🧮 Calculate").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:clear`).setLabel("🗑️ Clear").setStyle(ButtonStyle.Danger),
     ),
   ];
-}
-
-function buildCalcManageComponents(
-  side: "your" | "their",
-  canAdd: boolean,
-  hasItems: boolean,
-): ActionRowBuilder<ButtonBuilder>[] {
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  const main = new ActionRowBuilder<ButtonBuilder>();
-  if (canAdd) {
-    main.addComponents(new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:add:${side}`).setLabel("➕ Add Item").setStyle(ButtonStyle.Primary));
-  }
-  if (hasItems) {
-    main.addComponents(
-      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:remove:${side}`).setLabel("🗑️ Remove").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:edit:${side}`).setLabel("✏️ Edit").setStyle(ButtonStyle.Secondary),
+  const manage = new ActionRowBuilder<ButtonBuilder>();
+  if (state.yourItems.length > 0) {
+    manage.addComponents(
+      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:edit:your`).setLabel("✏️ Edit Yours").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:remove:your`).setLabel("🗑️ Remove Yours").setStyle(ButtonStyle.Secondary),
     );
   }
-  main.addComponents(new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:clear:${side}`).setLabel("🚫 Clear All").setStyle(ButtonStyle.Danger));
-  rows.push(main);
-  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:back`).setLabel("↩️ Back").setStyle(ButtonStyle.Secondary),
-  ));
+  if (state.theirItems.length > 0) {
+    manage.addComponents(
+      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:edit:their`).setLabel("✏️ Edit Theirs").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:remove:their`).setLabel("🗑️ Remove Theirs").setStyle(ButtonStyle.Secondary),
+    );
+  }
+  if (manage.components.length > 0) rows.push(manage);
   return rows;
 }
 
@@ -596,7 +621,7 @@ function buildCalcItemListComponents(
   return [
     row,
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:back:${side}`).setLabel("↩️ Back").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:back`).setLabel("↩️ Done").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -630,37 +655,10 @@ function buildCalcEditComponents(
       ),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:back:${side}`).setLabel("↩️ Done").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:back`).setLabel("↩️ Done").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:remove:${side}:${idx}`).setLabel("🗑️ Delete this item").setStyle(ButtonStyle.Danger),
     ),
   ];
-}
-
-function buildCalcSearchResultComponents(
-  side: "your" | "their",
-  results: MTTVItem[],
-): ActionRowBuilder<ButtonBuilder>[] {
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  let current = new ActionRowBuilder<ButtonBuilder>();
-  results.forEach((item, idx) => {
-    const rarity = item.rarity.map(rarityEmoji).join("") || "—";
-    const label = `${rarity} ${item.name.slice(0, 80)}`.slice(0, 80);
-    if (current.components.length >= 5) {
-      rows.push(current);
-      current = new ActionRowBuilder<ButtonBuilder>();
-    }
-    current.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`${CALC_CUSTOM_ID_PREFIX}:pick:${side}:${idx}`)
-        .setLabel(label)
-        .setStyle(ButtonStyle.Primary),
-    );
-  });
-  if (current.components.length > 0) rows.push(current);
-  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:back:${side}`).setLabel("↩️ Back").setStyle(ButtonStyle.Secondary),
-  ));
-  return rows;
 }
 
 function buildCalcAddModal(side: "your" | "their"): ModalBuilder {
@@ -671,11 +669,11 @@ function buildCalcAddModal(side: "your" | "their"): ModalBuilder {
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
         .setCustomId("name")
-        .setLabel("Item name")
+        .setLabel("Item name (fuzzy / acronym OK)")
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
         .setMaxLength(100)
-        .setPlaceholder("e.g. Super Tiger Mech or Exotic..."),
+        .setPlaceholder("e.g. STM, Sea Dragon, Abrams…"),
     ),
   );
   return modal;
@@ -685,11 +683,65 @@ function calcSideField(state: CalcState, side: "your" | "their") {
   return side === "your" ? state.yourItems : state.theirItems;
 }
 
-function isCalcOwner(interaction: ButtonInteraction | ModalSubmitInteraction, state: CalcState): boolean {
+function isCalcOwner(
+  interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+  state: CalcState,
+): boolean {
   return interaction.user.id === state.ownerUserId;
 }
 
-async function denyUnauthorized(interaction: ButtonInteraction | ModalSubmitInteraction): Promise<void> {
+async function buildCalcSearchView(
+  state: CalcState,
+  side: "your" | "their",
+  query: string,
+  results: MTTVItem[],
+): Promise<BaseMessageOptions> {
+  const slotsLeft = Math.max(0, MAX_CALC_ITEMS - calcSideField(state, side).length);
+  const canvas = await renderCalcResultsCanvas(results);
+  const embed = buildCalcPreview(
+    state,
+    `🔍 Results for **${query}** — pick one or more numbered items below (up to ${slotsLeft}).`,
+  );
+  if (canvas) embed.setImage(`attachment://${CALC_RESULTS_FILE}`);
+
+  const maxPick = Math.min(slotsLeft, results.length, 25);
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`${CALC_CUSTOM_ID_PREFIX}:multipick:${side}`)
+    .setPlaceholder(`Select up to ${maxPick} item(s)…`)
+    .setMinValues(1)
+    .setMaxValues(Math.max(1, maxPick))
+    .addOptions(
+      results.slice(0, 25).map((item, i) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${i + 1}. ${item.name}`.slice(0, 100))
+          .setValue(String(i))
+          .setDescription(`💎 ${formatMTTVValue(item)} · ${item.rarity[0] ?? "—"}`.slice(0, 100)),
+      ),
+    );
+
+  return {
+    embeds: [embed],
+    files: canvas ? [new AttachmentBuilder(canvas, { name: CALC_RESULTS_FILE })] : [],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`${CALC_CUSTOM_ID_PREFIX}:back`).setLabel("↩️ Cancel").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
+}
+
+function mainCalcReply(state: CalcState, description?: string): BaseMessageOptions {
+  return {
+    embeds: [buildCalcPreview(state, description)],
+    components: buildCalcMainComponents(state),
+    files: [],
+  };
+}
+
+async function denyUnauthorized(
+  interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction,
+): Promise<void> {
   const payload: InteractionReplyOptions = {
     content: "❌ This calculator belongs to someone else. Use your own `/vaultvalue calc`.",
     flags: MessageFlags.Ephemeral,
@@ -726,21 +778,12 @@ export async function handleCalc(interaction: ChatInputCommandInteraction): Prom
     channelId: interaction.channel.id,
     messageId: "",
   };
-  const embed = new EmbedBuilder()
-    .setTitle("🧮 Vault Trade Calculator")
-    .setColor(0x74cdd8)
-    .setDescription(
-      "Use the buttons below to build your trade offer.\n\n" +
-      "• **Your Items** — add items you are giving\n" +
-      "• **Their Items** — add items you are receiving\n" +
-      "• **Calculate** — see your result privately\n" +
-      "• **Clear** — reset your session",
-    )
-    .setFooter({ text: "Prices from Vault Values · each user has their own private session" });
   await interaction.reply({
     flags: MessageFlags.Ephemeral,
-    embeds: [embed],
-    components: buildCalcMainComponents(),
+    ...mainCalcReply(
+      state,
+      "One panel for both sides — press **Your Items** or **Their Items** to search. Results show as a numbered canvas; you can pick more than one.",
+    ),
   });
   const messageId = (await interaction.fetchReply()).id;
   state.messageId = messageId;
@@ -758,20 +801,17 @@ export async function handleMTTVCalcButton(interaction: ButtonInteraction): Prom
     return;
   }
 
-  if (action === "your" || action === "their") {
-    const side = action as "your" | "their";
-    const items = calcSideField(state, side);
-    await interaction.update({
-      embeds: [buildCalcPreview(state, `Managing **${side === "your" ? "Your" : "Their"}** items.`)],
-      components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-    }).catch(() => {});
-    resetCalcTimer(state);
-    return;
-  }
-
-  if (action === "add") {
-    const side = parts[2] as "your" | "their";
-    if (!side) return;
+  // Your / Their / Add → search modal on the same main panel (no nested manage embed).
+  if (action === "your" || action === "their" || action === "add") {
+    const side = (action === "add" ? parts[2] : action) as "your" | "their";
+    if (side !== "your" && side !== "their") return;
+    if (calcSideField(state, side).length >= MAX_CALC_ITEMS) {
+      await interaction.reply({
+        content: `❌ Max ${MAX_CALC_ITEMS} items per side.`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return;
+    }
     await interaction.showModal(buildCalcAddModal(side));
     return;
   }
@@ -779,41 +819,17 @@ export async function handleMTTVCalcButton(interaction: ButtonInteraction): Prom
   await interaction.deferUpdate();
 
   if (action === "clear") {
-    const side = parts[2] as "your" | "their" | undefined;
-    if (side) {
-      if (side === "your") state.yourItems = [];
-      else state.theirItems = [];
-      const items = calcSideField(state, side);
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state, `🧹 Cleared **${side === "your" ? "Your" : "Their"}** items.`)],
-        components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-      });
-    } else {
-      state.yourItems = [];
-      state.theirItems = [];
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state, "🧹 Session reset.")],
-        components: buildCalcMainComponents(),
-      });
-    }
+    state.yourItems = [];
+    state.theirItems = [];
+    state.lastSearch = { your: null, their: null };
+    await interaction.editReply(mainCalcReply(state, "🧹 Session reset."));
     resetCalcTimer(state);
     return;
   }
 
   if (action === "back") {
-    const side = parts[2] as "your" | "their" | undefined;
-    if (side) {
-      const items = calcSideField(state, side);
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state, `Managing **${side === "your" ? "Your" : "Their"}** items.`)],
-        components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-      });
-    } else {
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state)],
-        components: buildCalcMainComponents(),
-      });
-    }
+    state.lastSearch = { your: null, their: null };
+    await interaction.editReply(mainCalcReply(state));
     resetCalcTimer(state);
     return;
   }
@@ -855,7 +871,8 @@ export async function handleMTTVCalcButton(interaction: ButtonInteraction): Prom
 
     await interaction.editReply({
       embeds: [resultEmbed],
-      components: buildCalcMainComponents(),
+      components: buildCalcMainComponents(state),
+      files: [],
     });
     resetCalcTimer(state);
     return;
@@ -869,78 +886,41 @@ export async function handleMTTVCalcButton(interaction: ButtonInteraction): Prom
     const idx = parts[3] ? parseInt(parts[3], 10) : NaN;
     if (Number.isNaN(idx)) {
       if (items.length === 0) {
-        await interaction.editReply({
-          embeds: [buildCalcPreview(state, "No items to modify on this side.")],
-          components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-        });
+        await interaction.editReply(mainCalcReply(state, "No items to modify on this side."));
         return;
       }
       await interaction.editReply({
         embeds: [buildCalcPreview(state, `Select an item to **${action === "remove" ? "remove" : "edit"}**.`)],
         components: buildCalcItemListComponents(side, items, action),
+        files: [],
       });
       resetCalcTimer(state);
       return;
     }
     if (idx < 0 || idx >= items.length) {
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state, "⚠️ That item no longer exists. Pick another.")],
-        components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-      });
+      await interaction.editReply(mainCalcReply(state, "⚠️ That item no longer exists."));
       resetCalcTimer(state);
       return;
     }
     if (action === "remove") {
       items.splice(idx, 1);
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state, "🗑️ Item removed.")],
-        components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-      });
+      await interaction.editReply(mainCalcReply(state, "🗑️ Item removed."));
       resetCalcTimer(state);
       return;
     }
-    // edit
     await interaction.editReply({
-      embeds: [buildCalcPreview(state, `Editing **${items[idx].item.name}**.`)],
-      components: buildCalcEditComponents(side, idx, items[idx]),
-    });
-    resetCalcTimer(state);
-    return;
-  }
-
-  if (action === "pick") {
-    const idx = parseInt(parts[3], 10);
-    const result = state.lastSearch[side]?.[idx];
-    if (!result) {
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state, "⚠️ Search result expired. Try again.")],
-        components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-      });
-      resetCalcTimer(state);
-      return;
-    }
-    if (items.length >= MAX_CALC_ITEMS) {
-      await interaction.editReply({
-        embeds: [buildCalcPreview(state, `❌ You can only add up to ${MAX_CALC_ITEMS} items per side.`)],
-        components: buildCalcManageComponents(side, false, items.length > 0),
-      });
-      resetCalcTimer(state);
-      return;
-    }
-    items.push({ item: result, quantity: 1, tier: "mid", stars: 1 });
-    state.lastSearch[side] = null;
-    await interaction.editReply({
-      embeds: [buildCalcPreview(state, `✅ Added **${result.name}**. Adjust quantity/tier/stars below or add another.`)],
-      components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
+      embeds: [buildCalcPreview(state, `Editing **${items[idx]!.item.name}**.`)],
+      components: buildCalcEditComponents(side, idx, items[idx]!),
+      files: [],
     });
     resetCalcTimer(state);
     return;
   }
 
   if (action === "qty" || action === "tier" || action === "stars") {
-    const idx = parseInt(parts[3], 10);
+    const idx = parseInt(parts[3]!, 10);
     if (Number.isNaN(idx) || idx < 0 || idx >= items.length) return;
-    const item = items[idx];
+    const item = items[idx]!;
     if (action === "qty") {
       const delta = parts[4] === "inc" ? 1 : -1;
       item.quantity = Math.max(1, Math.min(99, item.quantity + delta));
@@ -948,16 +928,50 @@ export async function handleMTTVCalcButton(interaction: ButtonInteraction): Prom
       const tier = parts[4] as CalcTier;
       if (CALC_TIER_CHOICES.includes(tier)) item.tier = tier;
     } else if (action === "stars") {
-      const stars = parseInt(parts[4], 10);
+      const stars = parseInt(parts[4]!, 10);
       if (!Number.isNaN(stars) && stars >= 1 && stars <= 5) item.stars = stars;
     }
     await interaction.editReply({
       embeds: [buildCalcPreview(state, `Editing **${item.item.name}**.`)],
       components: buildCalcEditComponents(side, idx, item),
+      files: [],
     });
     resetCalcTimer(state);
     return;
   }
+}
+
+export async function handleMTTVCalcSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const parts = interaction.customId.split(":");
+  // mtcalc:multipick:your|their
+  if (parts[1] !== "multipick") return;
+  const side = parts[2] as "your" | "their";
+  const messageId = interaction.message.id;
+  const state = calcStates.get(messageId);
+  if (!state || !isCalcOwner(interaction, state)) {
+    await denyUnauthorized(interaction);
+    return;
+  }
+  await interaction.deferUpdate();
+
+  const items = calcSideField(state, side);
+  const results = state.lastSearch[side] ?? [];
+  const picked: string[] = [];
+  for (const v of interaction.values) {
+    if (items.length >= MAX_CALC_ITEMS) break;
+    const idx = parseInt(v, 10);
+    const hit = results[idx];
+    if (!hit) continue;
+    if (items.some((c) => c.item.name.toLowerCase() === hit.name.toLowerCase())) continue;
+    items.push({ item: hit, quantity: 1, tier: "mid", stars: 1 });
+    picked.push(hit.name);
+  }
+  state.lastSearch[side] = null;
+  const note = picked.length
+    ? `✅ Added ${picked.map((n) => `**${n}**`).join(", ")}.`
+    : "No new items added.";
+  await interaction.editReply(mainCalcReply(state, note));
+  resetCalcTimer(state);
 }
 
 export async function handleMTTVCalcModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -965,7 +979,7 @@ export async function handleMTTVCalcModal(interaction: ModalSubmitInteraction): 
   const parts = interaction.customId.split(":");
   const side = parts[1] as "your" | "their";
   const messageId = interaction.message?.id;
-  if (!messageId) return;
+  if (!messageId || (side !== "your" && side !== "their")) return;
 
   const state = calcStates.get(messageId);
   if (!state || !isCalcOwner(interaction, state)) {
@@ -976,10 +990,7 @@ export async function handleMTTVCalcModal(interaction: ModalSubmitInteraction): 
   const items = calcSideField(state, side);
 
   if (items.length >= MAX_CALC_ITEMS) {
-    await interaction.editReply({
-      embeds: [buildCalcPreview(state, `❌ You can only add up to ${MAX_CALC_ITEMS} items per side.`)],
-      components: buildCalcManageComponents(side, false, items.length > 0),
-    });
+    await interaction.editReply(mainCalcReply(state, `❌ You can only add up to ${MAX_CALC_ITEMS} items per side.`));
     resetCalcTimer(state);
     return;
   }
@@ -988,10 +999,7 @@ export async function handleMTTVCalcModal(interaction: ModalSubmitInteraction): 
   try {
     allItems = await fetchMTTVItems();
   } catch {
-    await interaction.editReply({
-      embeds: [buildCalcPreview(state, "❌ Could not fetch item values. Please try again.")],
-      components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-    });
+    await interaction.editReply(mainCalcReply(state, "❌ Could not fetch item values. Please try again."));
     resetCalcTimer(state);
     return;
   }
@@ -999,10 +1007,7 @@ export async function handleMTTVCalcModal(interaction: ModalSubmitInteraction): 
   const exact = allItems.find(i => i.name.toLowerCase() === nameRaw.toLowerCase());
   if (exact) {
     items.push({ item: exact, quantity: 1, tier: "mid", stars: 1 });
-    await interaction.editReply({
-      embeds: [buildCalcPreview(state, `✅ Added **${exact.name}**.`)],
-      components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-    });
+    await interaction.editReply(mainCalcReply(state, `✅ Added **${exact.name}**.`));
     resetCalcTimer(state);
     return;
   }
@@ -1014,41 +1019,21 @@ export async function handleMTTVCalcModal(interaction: ModalSubmitInteraction): 
     .slice(0, 10);
 
   if (scored.length === 0) {
-    await interaction.editReply({
-      embeds: [buildCalcPreview(state, `❌ No items matched "${nameRaw}". Try a different name or acronym.`)],
-      components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-    });
+    await interaction.editReply(mainCalcReply(state, `❌ No items matched "${nameRaw}". Try a different name or acronym.`));
     resetCalcTimer(state);
     return;
   }
 
   if (scored.length === 1) {
-    const match = scored[0].i;
+    const match = scored[0]!.i;
     items.push({ item: match, quantity: 1, tier: "mid", stars: 1 });
-    await interaction.editReply({
-      embeds: [buildCalcPreview(state, `✅ Added **${match.name}**.`)],
-      components: buildCalcManageComponents(side, items.length < MAX_CALC_ITEMS, items.length > 0),
-    });
+    await interaction.editReply(mainCalcReply(state, `✅ Added **${match.name}**.`));
     resetCalcTimer(state);
     return;
   }
 
   state.lastSearch[side] = scored.map(s => s.i);
-  const lines = scored.map((s, i) => {
-    const rarity = s.i.rarity.map(rarityEmoji).join("") || "—";
-    return `${i + 1}. ${rarity} **${s.i.name}** · 💰 ${formatMTTVValue(s.i)}`;
-  }).join("\n");
-
-  await interaction.editReply({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("🔍 Select an item")
-        .setColor(0x9b59b6)
-        .setDescription(`Search results for "${nameRaw}":\n${lines}`)
-        .setFooter({ text: "Prices from Vault Values" }),
-    ],
-    components: buildCalcSearchResultComponents(side, scored.map(s => s.i)),
-  });
+  await interaction.editReply(await buildCalcSearchView(state, side, nameRaw, scored.map(s => s.i)));
   resetCalcTimer(state);
 }
 

@@ -1,10 +1,12 @@
-// /vaultvalue — true panel hub (ONE slash). Buttons + modals, no subcommands.
+// /vaultvalue — panel hub + optional autocomplete item lookup.
+// Baseline: PR #170. No mini-browser / webhook site branding.
 
 import type {
   ChatInputCommandInteraction,
   ButtonInteraction,
   ChannelSelectMenuInteraction,
   ModalSubmitInteraction,
+  StringSelectMenuInteraction,
 } from "discord.js";
 import {
   SlashCommandBuilder,
@@ -19,6 +21,8 @@ import {
   TextInputStyle,
   MessageFlags,
   PermissionFlagsBits,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
 } from "discord.js";
 import { withOptionValues } from "./option-proxy.js";
 
@@ -29,6 +33,13 @@ export function buildVaultValueCommandJson() {
     .setName("vaultvalue")
     .setDescription("Vault Values — MT prices, calculator, top list (valuevaultx.com)")
     .setDMPermission(false)
+    .addStringOption((o) =>
+      o
+        .setName("item")
+        .setDescription("Look up an item (type to autocomplete)")
+        .setRequired(false)
+        .setAutocomplete(true),
+    )
     .toJSON();
 }
 
@@ -40,8 +51,10 @@ function hubEmbed(): EmbedBuilder {
       [
         "Military Tycoon prices from [valuevaultx.com](https://valuevaultx.com).",
         "",
-        "**Info** — look up one item",
-        "**Calc** — two-sided trade calculator",
+        "**Quick lookup:** `/vaultvalue item:Sea Dragon` (autocomplete)",
+        "",
+        "**Info** — search / fuzzy lookup",
+        "**Calc** — two-sided trade calculator (one private panel)",
         "**List** — top items by value",
         "**Help** — how pricing works",
         "**Post Calc** — (admin) pin a calculator in a channel",
@@ -74,13 +87,21 @@ export async function handleVaultValueCommand(interaction: ChatInputCommandInter
     await interaction.reply({ content: "Server only.", ...EPHEMERAL });
     return;
   }
+
+  const item = interaction.options.getString("item")?.trim();
+  if (item) {
+    const { handleInfoMTTV } = await import("./mttvalues.js");
+    await handleInfoMTTV(interaction);
+    return;
+  }
+
   await interaction.deferReply(EPHEMERAL);
   const isAdmin = !!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
   await interaction.editReply({ embeds: [hubEmbed()], components: hubRows(isAdmin) });
 }
 
 export async function handleVaultValueHubComponent(
-  interaction: ButtonInteraction | ChannelSelectMenuInteraction,
+  interaction: ButtonInteraction | ChannelSelectMenuInteraction | StringSelectMenuInteraction,
 ): Promise<void> {
   const id = interaction.customId;
 
@@ -90,12 +111,28 @@ export async function handleVaultValueHubComponent(
       .setTitle("Vault Values lookup")
       .addComponents(
         new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("item").setLabel("Item name")
-            .setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(100)
-            .setPlaceholder("e.g. M1 Abrams"),
+          new TextInputBuilder()
+            .setCustomId("item")
+            .setLabel("Item name (fuzzy / acronym OK)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(100)
+            .setPlaceholder("e.g. STM, Sea Dragon, Abrams"),
         ),
       );
     await interaction.showModal(modal);
+    return;
+  }
+
+  if (id.startsWith("vvhub:pick:") && interaction.isStringSelectMenu()) {
+    const name = interaction.values[0];
+    if (!name) {
+      await interaction.reply({ content: "No item selected.", ...EPHEMERAL });
+      return;
+    }
+    const proxied = withOptionValues(interaction, { strings: { item: name } });
+    const { handleInfoMTTV } = await import("./mttvalues.js");
+    await handleInfoMTTV(proxied);
     return;
   }
 
@@ -169,4 +206,21 @@ export async function handleVaultValueHubModal(interaction: ModalSubmitInteracti
   });
   const { handleInfoMTTV } = await import("./mttvalues.js");
   await handleInfoMTTV(proxied);
+}
+
+/** Build a pick-from-matches menu (used by Info when search is ambiguous). */
+export function buildInfoPickMenu(query: string, names: Array<{ name: string; desc: string }>) {
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`vvhub:pick:${Date.now().toString(36)}`)
+      .setPlaceholder(`Pick a match for "${query.slice(0, 40)}"`)
+      .addOptions(
+        names.slice(0, 25).map((n) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(n.name.slice(0, 100))
+            .setValue(n.name.slice(0, 100))
+            .setDescription(n.desc.slice(0, 100)),
+        ),
+      ),
+  );
 }

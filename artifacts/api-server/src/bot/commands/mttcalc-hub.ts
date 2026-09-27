@@ -1,25 +1,25 @@
 import {
   ChatInputCommandInteraction, ButtonInteraction, ModalSubmitInteraction,
+  StringSelectMenuInteraction,
   EmbedBuilder, MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits,
-  GuildMember,
-  type GuildTextBasedChannel, type TextBasedChannel,
+  AttachmentBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
+  type GuildTextBasedChannel, type BaseMessageOptions,
 } from "discord.js";
 import {
-  fetchMTTVItems, formatMTTVValue, getMTTVAverageValue, matchScore,
+  fetchMTTVItems, formatMTTVValue, matchScore,
   calcItemValue, calcWeightedDemand, calcSideValue, shortValue,
   type MTTVItem, type CalcItem, type CalcTier,
 } from "./mttvalues.js";
+import { renderCalcResultsCanvas, CALC_RESULTS_FILE } from "./calc-results-canvas.js";
 import { createCalculatorMessage, getCalculatorMessage, isAdmin } from "../db.js";
 import type { CalculatorMessage } from "@workspace/db";
 import { logger } from "../../lib/logger.js";
 
 // ── Persistent MTTV Trade Calculator Hub ─────────────────────────────────────
-// Admins post a hub message with /postcalculator. The hub has four buttons:
-// Your Items, Their Items, Calculate, Clear. Every user gets their own ephemeral
-// session keyed by (messageId, userId), so unlimited users can use the same hub
-// simultaneously without interfering. Item lookup uses the same MTTV fuzzy
-// search as /info_mttv and /calc.
+// One private session panel per user (ephemeral). Your/Their open a search
+// modal; ambiguous results render a numbered canvas + multi-select on that
+// same panel — no nested manage embeds / Back hopping between sides.
 
 const MAX_ITEMS = 3;
 const PREFIX = "mttcalc_hub";
@@ -28,10 +28,8 @@ const TIER_CHOICES: CalcTier[] = ["low", "mid", "high"];
 
 const STAR_LABELS = ["", "⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"];
 
-const EMPTY_SIDE = "*No items yet — press Add Item*";
+const EMPTY_SIDE = "*No items yet — press **Your Items** / **Their Items***";
 
-// Ephemeral per-user sessions. Lost on restart, which is fine: a user simply
-// starts a new session the next time they press a hub button.
 type UserSession = {
   yourItems: CalcItem[];
   theirItems: CalcItem[];
@@ -113,41 +111,48 @@ function buildPreview(session: UserSession, description?: string): EmbedBuilder 
     .setFooter({ text: "Prices from Vault Values" });
 }
 
-function buildMainComponents(messageId: string): ActionRowBuilder<ButtonBuilder>[] {
-  return [
+function buildMainComponents(messageId: string, userId: string, session: UserSession): ActionRowBuilder<ButtonBuilder>[] {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${PREFIX}:your:${messageId}`).setLabel("🙂 Your Items").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`${PREFIX}:their:${messageId}`).setLabel("🤝 Their Items").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`${PREFIX}:calc:${messageId}`).setLabel("🧮 Calculate").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`${PREFIX}:clear:${messageId}`).setLabel("🗑️ Clear").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`${PREFIX}:add:${messageId}:your:${userId}`)
+        .setLabel("🙂 Your Items")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(session.yourItems.length >= MAX_ITEMS),
+      new ButtonBuilder()
+        .setCustomId(`${PREFIX}:add:${messageId}:their:${userId}`)
+        .setLabel("🤝 Their Items")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(session.theirItems.length >= MAX_ITEMS),
+      new ButtonBuilder().setCustomId(`${PREFIX}:calc:${messageId}:${userId}`).setLabel("🧮 Calculate").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`${PREFIX}:clear:${messageId}:${userId}`).setLabel("🗑️ Clear").setStyle(ButtonStyle.Danger),
     ),
   ];
-}
-
-function buildManageComponents(
-  messageId: string,
-  side: "your" | "their",
-  userId: string,
-  canAdd: boolean,
-  hasItems: boolean,
-): ActionRowBuilder<ButtonBuilder>[] {
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  const main = new ActionRowBuilder<ButtonBuilder>();
-  if (canAdd) {
-    main.addComponents(new ButtonBuilder().setCustomId(`${PREFIX}:add:${messageId}:${side}:${userId}`).setLabel("➕ Add Item").setStyle(ButtonStyle.Primary));
-  }
-  if (hasItems) {
-    main.addComponents(
-      new ButtonBuilder().setCustomId(`${PREFIX}:remove:${messageId}:${side}:${userId}`).setLabel("🗑️ Remove").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`${PREFIX}:edit:${messageId}:${side}:${userId}`).setLabel("✏️ Edit").setStyle(ButtonStyle.Secondary),
+  const manage = new ActionRowBuilder<ButtonBuilder>();
+  if (session.yourItems.length > 0) {
+    manage.addComponents(
+      new ButtonBuilder().setCustomId(`${PREFIX}:edit:${messageId}:your:${userId}`).setLabel("✏️ Edit Yours").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${PREFIX}:remove:${messageId}:your:${userId}`).setLabel("🗑️ Remove Yours").setStyle(ButtonStyle.Secondary),
     );
   }
-  main.addComponents(new ButtonBuilder().setCustomId(`${PREFIX}:clear:${messageId}:${userId}`).setLabel("🚫 Clear All").setStyle(ButtonStyle.Danger));
-  rows.push(main);
-  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`${PREFIX}:back:${messageId}:${side}:${userId}`).setLabel("↩️ Back").setStyle(ButtonStyle.Secondary),
-  ));
+  if (session.theirItems.length > 0) {
+    manage.addComponents(
+      new ButtonBuilder().setCustomId(`${PREFIX}:edit:${messageId}:their:${userId}`).setLabel("✏️ Edit Theirs").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${PREFIX}:remove:${messageId}:their:${userId}`).setLabel("🗑️ Remove Theirs").setStyle(ButtonStyle.Secondary),
+    );
+  }
+  if (manage.components.length > 0) rows.push(manage);
   return rows;
+}
+
+/** Public hub buttons posted in-channel (opens each user's private session). */
+function buildHubLaunchComponents(messageId: string): ActionRowBuilder<ButtonBuilder>[] {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`${PREFIX}:open:${messageId}`).setLabel("🧮 Open my calculator").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`${PREFIX}:resetsession:${messageId}`).setLabel("🗑️ Clear my session").setStyle(ButtonStyle.Danger),
+    ),
+  ];
 }
 
 function buildItemListComponents(
@@ -170,7 +175,7 @@ function buildItemListComponents(
   return [
     row,
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${PREFIX}:back:${messageId}:${side}:${userId}`).setLabel("↩️ Back").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${PREFIX}:back:${messageId}:${userId}`).setLabel("↩️ Done").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -206,39 +211,10 @@ function buildEditComponents(
       ),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${PREFIX}:back:${messageId}:${side}:${userId}`).setLabel("↩️ Done").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${PREFIX}:back:${messageId}:${userId}`).setLabel("↩️ Done").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`${PREFIX}:remove:${messageId}:${side}:${userId}:${idx}`).setLabel("🗑️ Delete this item").setStyle(ButtonStyle.Danger),
     ),
   ];
-}
-
-function buildSearchResultComponents(
-  messageId: string,
-  side: "your" | "their",
-  userId: string,
-  results: MTTVItem[],
-): ActionRowBuilder<ButtonBuilder>[] {
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  let current = new ActionRowBuilder<ButtonBuilder>();
-  results.forEach((item, idx) => {
-    const rarity = item.rarity.map(rarityEmoji).join("") || "—";
-    const label = `${rarity} ${item.name.slice(0, 80)}`.slice(0, 80);
-    if (current.components.length >= 5) {
-      rows.push(current);
-      current = new ActionRowBuilder<ButtonBuilder>();
-    }
-    current.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`${PREFIX}:pick:${messageId}:${side}:${userId}:${idx}`)
-        .setLabel(label)
-        .setStyle(ButtonStyle.Primary),
-    );
-  });
-  if (current.components.length > 0) rows.push(current);
-  rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`${PREFIX}:back:${messageId}:${side}:${userId}`).setLabel("↩️ Back").setStyle(ButtonStyle.Secondary),
-  ));
-  return rows;
 }
 
 function buildAddModal(messageId: string, side: "your" | "their", userId: string): ModalBuilder {
@@ -249,14 +225,70 @@ function buildAddModal(messageId: string, side: "your" | "their", userId: string
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
         .setCustomId("name")
-        .setLabel("Item name")
+        .setLabel("Item name (fuzzy / acronym OK)")
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
         .setMaxLength(100)
-        .setPlaceholder("e.g. Super Tiger Mech or Exotic..."),
+        .setPlaceholder("e.g. STM, Sea Dragon, Abrams…"),
     ),
   );
   return modal;
+}
+
+function mainSessionReply(
+  messageId: string,
+  userId: string,
+  session: UserSession,
+  description?: string,
+): BaseMessageOptions {
+  return {
+    embeds: [buildPreview(session, description)],
+    components: buildMainComponents(messageId, userId, session),
+    files: [],
+  };
+}
+
+async function buildSearchView(
+  messageId: string,
+  session: UserSession,
+  side: "your" | "their",
+  userId: string,
+  query: string,
+  results: MTTVItem[],
+): Promise<BaseMessageOptions> {
+  const slotsLeft = Math.max(0, MAX_ITEMS - sideField(session, side).length);
+  const canvas = await renderCalcResultsCanvas(results);
+  const embed = buildPreview(
+    session,
+    `🔍 Results for **${query}** — pick one or more numbered items below (up to ${slotsLeft}).`,
+  );
+  if (canvas) embed.setImage(`attachment://${CALC_RESULTS_FILE}`);
+
+  const maxPick = Math.min(slotsLeft, results.length, 25);
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`${PREFIX}:multipick:${messageId}:${side}:${userId}`)
+    .setPlaceholder(`Select up to ${maxPick} item(s)…`)
+    .setMinValues(1)
+    .setMaxValues(Math.max(1, maxPick))
+    .addOptions(
+      results.slice(0, 25).map((item, i) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${i + 1}. ${item.name}`.slice(0, 100))
+          .setValue(String(i))
+          .setDescription(`💎 ${formatMTTVValue(item)} · ${item.rarity[0] ?? "—"}`.slice(0, 100)),
+      ),
+    );
+
+  return {
+    embeds: [embed],
+    files: canvas ? [new AttachmentBuilder(canvas, { name: CALC_RESULTS_FILE })] : [],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`${PREFIX}:back:${messageId}:${userId}`).setLabel("↩️ Cancel").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
 }
 
 function parseCustomId(customId: string): { action: string; parts: string[] } {
@@ -271,9 +303,7 @@ async function getRegisteredHub(messageId: string): Promise<CalculatorMessage | 
 // ── /postcalculator ───────────────────────────────────────────────────────────
 export async function handlePostCalculator(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.guild) return;
-  // Note: caller (handleAdminCommand) already deferred the interaction ephemerally.
 
-  // Server-side admin guard (slash default permissions are not enough).
   const isAuthorized =
     interaction.guild.ownerId === interaction.user.id ||
     interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
@@ -310,18 +340,17 @@ export async function handlePostCalculator(interaction: ChatInputCommandInteract
     .setTitle("🧮 Vault Trade Calculator")
     .setColor(0x74cdd8)
     .setDescription(
-      "Use the buttons below to build your trade offer.\n\n" +
-      "• **Your Items** — add items you are giving\n" +
-      "• **Their Items** — add items you are receiving\n" +
-      "• **Calculate** — post the trade result publicly\n" +
-      "• **Clear** — reset your session",
+      "Open your **private** calculator panel — both offer sides stay on one embed.\n\n" +
+      "• Search → numbered results canvas → multi-pick\n" +
+      "• **Calculate** posts the trade result publicly\n" +
+      "• **Clear** resets only your session",
     )
     .setFooter({ text: "Prices from Vault Values · each user has their own private session" });
 
   try {
-    const message = await textChannel.send({ embeds: [embed], components: buildMainComponents("placeholder") });
+    const message = await textChannel.send({ embeds: [embed], components: buildHubLaunchComponents("placeholder") });
     const messageId = message.id;
-    await message.edit({ components: buildMainComponents(messageId) });
+    await message.edit({ components: buildHubLaunchComponents(messageId) });
     await createCalculatorMessage(interaction.guild.id, textChannel.id, messageId, interaction.user.id, resultChannel?.id ?? null);
     await interaction.editReply(`✅ Posted the calculator in ${textChannel.toString()}${resultChannel ? `; results will go to ${resultChannel.toString()}` : ""}.`);
   } catch (err) {
@@ -341,7 +370,7 @@ export async function handleMttvHubButton(interaction: ButtonInteraction): Promi
   const hub = await getRegisteredHub(messageId);
   if (!hub) {
     await interaction.reply({
-      content: "❌ This calculator hub is no longer registered. Ask an admin to post a new one with `/vaultvalue postcalc`.",
+      content: "❌ This calculator hub is no longer registered. Ask an admin to post a new one with `/vaultvalue` → Post calculator.",
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     return;
@@ -350,61 +379,64 @@ export async function handleMttvHubButton(interaction: ButtonInteraction): Promi
   const userId = interaction.user.id;
   const session = getSession(messageId, userId);
 
-  // Top-level hub buttons don't have the userId in the custom ID, so the side
-  // and userId are derived differently.
-  if (["your", "their", "calc", "clear"].includes(action)) {
-    const side = action as "your" | "their" | "calc" | "clear";
+  const denyOther = async () => {
+    await interaction.reply({
+      content: "❌ This panel belongs to another user. Press **Open my calculator** on the hub.",
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+  };
 
-    if (side === "calc") {
+  // Public hub launch row
+  if (action === "open" || action === "your" || action === "their") {
+    await interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      ...mainSessionReply(
+        messageId,
+        userId,
+        session,
+        "One panel for both sides — press **Your Items** or **Their Items** to search. Results show as a numbered canvas; multi-pick OK.",
+      ),
+    }).catch(() => {});
+    return;
+  }
+
+  if (action === "resetsession") {
+    clearSession(messageId, userId);
+    const fresh = getSession(messageId, userId);
+    await interaction.reply({
+      flags: MessageFlags.Ephemeral,
+      ...mainSessionReply(messageId, userId, fresh, "🧹 Your session has been reset."),
+    }).catch(() => {});
+    return;
+  }
+
+  // Legacy public hub buttons (pre one-panel redesign): calc/clear with no userId.
+  if ((action === "calc" || action === "clear") && parts[3] == null) {
+    if (action === "calc") {
       await handleCalculate(interaction, session, hub);
       return;
     }
-
-    if (side === "clear") {
-      clearSession(messageId, userId);
-      const fresh = getSession(messageId, userId);
-      await interaction.reply({
-        flags: MessageFlags.Ephemeral,
-        embeds: [buildPreview(fresh, "🧹 Your session has been reset.")],
-        components: [],
-      }).catch(() => {});
-      return;
-    }
-
-    // your/their — open manage menu for that side.
-    const items = sideField(session, side);
+    clearSession(messageId, userId);
+    const fresh = getSession(messageId, userId);
     await interaction.reply({
       flags: MessageFlags.Ephemeral,
-      embeds: [buildPreview(session, `Managing **${side === "your" ? "Your" : "Their"}** items.`)],
-      components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
+      ...mainSessionReply(messageId, userId, fresh, "🧹 Your session has been reset."),
     }).catch(() => {});
     return;
   }
 
-  // Deep-link buttons include userId at parts[4] (or parts[3] for back).
-  const side = parts[3] as "your" | "their";
-  if (!side) return;
-  const deepUserId = parts[4];
-  if (deepUserId && deepUserId !== userId) {
-    await interaction.reply({
-      content: "❌ This panel belongs to another user. Press a button on the main hub to start your own session.",
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
-    return;
-  }
-
-  const items = sideField(session, side);
-
-  if (action === "back") {
-    await interaction.update({
-      embeds: [buildPreview(session, `Managing **${side === "your" ? "Your" : "Their"}** items.`)],
-      components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-    }).catch(() => {});
-    return;
-  }
+  // Session panel — owner is always encoded after messageId for mutating actions.
+  // add:messageId:side:userId
+  // edit|remove:messageId:side:userId[:idx]
+  // back|calc|clear:messageId:userId
+  // qty|tier|stars:messageId:side:userId:idx:…
 
   if (action === "add") {
-    if (items.length >= MAX_ITEMS) {
+    const side = parts[3] as "your" | "their";
+    const owner = parts[4];
+    if (owner !== userId) { await denyOther(); return; }
+    if (side !== "your" && side !== "their") return;
+    if (sideField(session, side).length >= MAX_ITEMS) {
       await interaction.reply({
         content: `❌ You can only add up to ${MAX_ITEMS} items per side.`,
         flags: MessageFlags.Ephemeral,
@@ -415,76 +447,73 @@ export async function handleMttvHubButton(interaction: ButtonInteraction): Promi
     return;
   }
 
-  if (action === "remove" || action === "edit") {
-    const idx = parts[5] ? parseInt(parts[5], 10) : NaN;
+  if (action === "back") {
+    if (parts[3] !== userId) { await denyOther(); return; }
+    session.lastSearch = { your: null, their: null };
+    await interaction.update(mainSessionReply(messageId, userId, session)).catch(() => {});
+    return;
+  }
+
+  if (action === "calc") {
+    if (parts[3] !== userId) { await denyOther(); return; }
+    await handleCalculate(interaction, session, hub);
+    return;
+  }
+
+  if (action === "clear") {
+    if (parts[3] !== userId) { await denyOther(); return; }
+    clearSession(messageId, userId);
+    const fresh = getSession(messageId, userId);
+    await interaction.update(mainSessionReply(messageId, userId, fresh, "🧹 Session reset.")).catch(() => {});
+    return;
+  }
+
+  if (action === "edit" || action === "remove") {
+    const side = parts[3] as "your" | "their";
+    const owner = parts[4];
+    if (owner !== userId) { await denyOther(); return; }
+    if (side !== "your" && side !== "their") return;
+    const items = sideField(session, side);
+    const idx = parts[5] !== undefined ? parseInt(parts[5], 10) : NaN;
+
     if (Number.isNaN(idx)) {
-      // First click: show indexed item list so the user picks which item.
       if (items.length === 0) {
-        await interaction.update({
-          embeds: [buildPreview(session, "No items to modify on this side.")],
-          components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-        }).catch(() => {});
+        await interaction.update(mainSessionReply(messageId, userId, session, "No items to modify on this side.")).catch(() => {});
         return;
       }
       await interaction.update({
         embeds: [buildPreview(session, `Select an item to **${action === "remove" ? "remove" : "edit"}**.`)],
         components: buildItemListComponents(messageId, side, userId, items, action),
+        files: [],
       }).catch(() => {});
       return;
     }
     if (idx < 0 || idx >= items.length) {
-      await interaction.update({
-        embeds: [buildPreview(session, "⚠️ That item no longer exists. Pick another.")],
-        components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-      }).catch(() => {});
+      await interaction.update(mainSessionReply(messageId, userId, session, "⚠️ That item no longer exists.")).catch(() => {});
       return;
     }
     if (action === "remove") {
       items.splice(idx, 1);
-      await interaction.update({
-        embeds: [buildPreview(session, "🗑️ Item removed.")],
-        components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-      }).catch(() => {});
+      await interaction.update(mainSessionReply(messageId, userId, session, "🗑️ Item removed.")).catch(() => {});
       return;
     }
-    // edit
     await interaction.update({
-      embeds: [buildPreview(session, `Editing **${items[idx].item.name}**.`)],
-      components: buildEditComponents(messageId, side, userId, idx, items[idx]),
-    }).catch(() => {});
-    return;
-  }
-
-  if (action === "pick") {
-    const idx = parseInt(parts[5], 10);
-    const result = session.lastSearch[side]?.[idx];
-    if (!result) {
-      await interaction.update({
-        embeds: [buildPreview(session, "⚠️ Search result expired. Try again.")],
-        components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-      }).catch(() => {});
-      return;
-    }
-    if (items.length >= MAX_ITEMS) {
-      await interaction.update({
-        embeds: [buildPreview(session, `❌ You can only add up to ${MAX_ITEMS} items per side.`)],
-        components: buildManageComponents(messageId, side, userId, false, items.length > 0),
-      }).catch(() => {});
-      return;
-    }
-    items.push({ item: result, quantity: 1, tier: "mid", stars: 1 });
-    session.lastSearch[side] = null;
-    await interaction.update({
-      embeds: [buildPreview(session, `✅ Added **${result.name}**. Adjust quantity/tier/stars below or add another.`)],
-      components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
+      embeds: [buildPreview(session, `Editing **${items[idx]!.item.name}**.`)],
+      components: buildEditComponents(messageId, side, userId, idx, items[idx]!),
+      files: [],
     }).catch(() => {});
     return;
   }
 
   if (action === "qty" || action === "tier" || action === "stars") {
-    const idx = parseInt(parts[5], 10);
+    const editSide = parts[3] as "your" | "their";
+    const editUser = parts[4];
+    const idx = parseInt(parts[5] ?? "", 10);
+    if (editUser !== userId) { await denyOther(); return; }
+    if (editSide !== "your" && editSide !== "their") return;
+    const items = sideField(session, editSide);
     if (Number.isNaN(idx) || idx < 0 || idx >= items.length) return;
-    const item = items[idx];
+    const item = items[idx]!;
     if (action === "qty") {
       const delta = parts[6] === "inc" ? 1 : -1;
       item.quantity = Math.max(1, Math.min(99, item.quantity + delta));
@@ -492,15 +521,61 @@ export async function handleMttvHubButton(interaction: ButtonInteraction): Promi
       const tier = parts[6] as CalcTier;
       if (TIER_CHOICES.includes(tier)) item.tier = tier;
     } else if (action === "stars") {
-      const stars = parseInt(parts[6], 10);
+      const stars = parseInt(parts[6] ?? "", 10);
       if (!Number.isNaN(stars) && stars >= 1 && stars <= 5) item.stars = stars;
     }
     await interaction.update({
       embeds: [buildPreview(session, `Editing **${item.item.name}**.`)],
-      components: buildEditComponents(messageId, side, userId, idx, item),
+      components: buildEditComponents(messageId, editSide, userId, idx, item),
+      files: [],
+    }).catch(() => {});
+  }
+}
+
+export async function handleMttvHubSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const { action, parts } = parseCustomId(interaction.customId);
+  if (action !== "multipick") return;
+  const messageId = parts[2];
+  const side = parts[3] as "your" | "their";
+  const ownerId = parts[4];
+  if (!messageId || (side !== "your" && side !== "their")) return;
+  if (ownerId !== interaction.user.id) {
+    await interaction.reply({
+      content: "❌ This panel belongs to another user.",
+      flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     return;
   }
+
+  evictStaleSessions();
+  const hub = await getRegisteredHub(messageId);
+  if (!hub) {
+    await interaction.reply({
+      content: "❌ This calculator hub is no longer registered.",
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    return;
+  }
+
+  await interaction.deferUpdate();
+  const session = getSession(messageId, interaction.user.id);
+  const items = sideField(session, side);
+  const results = session.lastSearch[side] ?? [];
+  const picked: string[] = [];
+  for (const v of interaction.values) {
+    if (items.length >= MAX_ITEMS) break;
+    const idx = parseInt(v, 10);
+    const hit = results[idx];
+    if (!hit) continue;
+    if (items.some((c) => c.item.name.toLowerCase() === hit.name.toLowerCase())) continue;
+    items.push({ item: hit, quantity: 1, tier: "mid", stars: 1 });
+    picked.push(hit.name);
+  }
+  session.lastSearch[side] = null;
+  const note = picked.length
+    ? `✅ Added ${picked.map((n) => `**${n}**`).join(", ")}.`
+    : "No new items added.";
+  await interaction.editReply(mainSessionReply(messageId, interaction.user.id, session, note)).catch(() => {});
 }
 
 async function canUserPostIn(
@@ -527,7 +602,6 @@ async function handleCalculate(
     return;
   }
 
-  // Refresh latest MTTV data before calculating.
   let items: MTTVItem[];
   try {
     items = await fetchMTTVItems();
@@ -634,8 +708,6 @@ export async function handleMttvHubModal(interaction: ModalSubmitInteraction): P
   const userId = parts[4];
   if (!messageId || !side || !userId || userId !== interaction.user.id) return;
 
-  // Acknowledge the modal submission immediately before doing any DB or
-  // network work. Discord only gives us a 3-second window to respond.
   await interaction.deferUpdate().catch(() => {});
 
   evictStaleSessions();
@@ -643,7 +715,7 @@ export async function handleMttvHubModal(interaction: ModalSubmitInteraction): P
   const hub = await getRegisteredHub(messageId);
   if (!hub) {
     await interaction.editReply({
-      content: "❌ This calculator hub is no longer registered. Ask an admin to post a new one with `/vaultvalue postcalc`.",
+      content: "❌ This calculator hub is no longer registered. Ask an admin to post a new one with `/vaultvalue` → Post calculator.",
       embeds: [],
       components: [],
     }).catch(() => {});
@@ -655,10 +727,7 @@ export async function handleMttvHubModal(interaction: ModalSubmitInteraction): P
   const nameRaw = interaction.fields.getTextInputValue("name").trim();
 
   if (items.length >= MAX_ITEMS) {
-    await interaction.editReply({
-      embeds: [buildPreview(session, `❌ You can only add up to ${MAX_ITEMS} items per side.`)],
-      components: buildManageComponents(messageId, side, userId, false, items.length > 0),
-    }).catch(() => {});
+    await interaction.editReply(mainSessionReply(messageId, userId, session, `❌ You can only add up to ${MAX_ITEMS} items per side.`)).catch(() => {});
     return;
   }
 
@@ -666,20 +735,14 @@ export async function handleMttvHubModal(interaction: ModalSubmitInteraction): P
   try {
     allItems = await fetchMTTVItems();
   } catch {
-    await interaction.editReply({
-      embeds: [buildPreview(session, "❌ Could not fetch item values. Please try again.")],
-      components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-    }).catch(() => {});
+    await interaction.editReply(mainSessionReply(messageId, userId, session, "❌ Could not fetch item values. Please try again.")).catch(() => {});
     return;
   }
 
   const exact = allItems.find(i => i.name.toLowerCase() === nameRaw.toLowerCase());
   if (exact) {
     items.push({ item: exact, quantity: 1, tier: "mid", stars: 1 });
-    await interaction.editReply({
-      embeds: [buildPreview(session, `✅ Added **${exact.name}**.`)],
-      components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-    }).catch(() => {});
+    await interaction.editReply(mainSessionReply(messageId, userId, session, `✅ Added **${exact.name}**.`)).catch(() => {});
     return;
   }
 
@@ -690,37 +753,19 @@ export async function handleMttvHubModal(interaction: ModalSubmitInteraction): P
     .slice(0, 10);
 
   if (scored.length === 0) {
-    await interaction.editReply({
-      embeds: [buildPreview(session, `❌ No items matched "${nameRaw}". Try a different name or acronym.`)],
-      components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-    }).catch(() => {});
+    await interaction.editReply(mainSessionReply(messageId, userId, session, `❌ No items matched "${nameRaw}". Try a different name or acronym.`)).catch(() => {});
     return;
   }
 
   if (scored.length === 1) {
-    const match = scored[0].i;
+    const match = scored[0]!.i;
     items.push({ item: match, quantity: 1, tier: "mid", stars: 1 });
-    await interaction.editReply({
-      embeds: [buildPreview(session, `✅ Added **${match.name}**.`)],
-      components: buildManageComponents(messageId, side, userId, items.length < MAX_ITEMS, items.length > 0),
-    }).catch(() => {});
+    await interaction.editReply(mainSessionReply(messageId, userId, session, `✅ Added **${match.name}**.`)).catch(() => {});
     return;
   }
 
   session.lastSearch[side] = scored.map(s => s.i);
-  const lines = scored.map((s, i) => {
-    const rarity = s.i.rarity.map(rarityEmoji).join("") || "—";
-    return `${i + 1}. ${rarity} **${s.i.name}** · 💰 ${formatMTTVValue(s.i)}`;
-  }).join("\n");
-
-  await interaction.editReply({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("🔍 Select an item")
-        .setColor(0x9b59b6)
-        .setDescription(`Search results for "${nameRaw}":\n${lines}`)
-        .setFooter({ text: "Prices from Vault Values" }),
-    ],
-    components: buildSearchResultComponents(messageId, side, userId, scored.map(s => s.i)),
-  }).catch(() => {});
+  await interaction.editReply(
+    await buildSearchView(messageId, session, side, userId, nameRaw, scored.map(s => s.i)),
+  ).catch(() => {});
 }

@@ -19,8 +19,8 @@ import { handleSetAdminHubButton, handleSetAdminHubSelect, handleSetAdminHubWeig
 import { handleRarityEditButton, handleRarityEditSelect, handleRarityEditModal, handleRarityHubButton, handleRarityHubSelect, handleRarityHubModal } from "./commands/rarity-admin.js";
 import { handleSetChannelsPick, handleSetChannelsApply } from "./commands/setchannels.js";
 import { handleAdminHubButton, handleAdminHubModal } from "./commands/admin-hub.js";
-import { handleMttvHubButton, handleMttvHubModal } from "./commands/mttcalc-hub.js";
-import { handleMTTVCalcButton, handleMTTVCalcModal } from "./commands/mttvalues.js";
+import { handleMttvHubButton, handleMttvHubModal, handleMttvHubSelect } from "./commands/mttcalc-hub.js";
+import { handleMTTVCalcButton, handleMTTVCalcModal, handleMTTVCalcSelect } from "./commands/mttvalues.js";
 import { checkAchievements, formatUnlockLine } from "./achievements.js";
 import { handleAdminCommand } from "./commands/admin.js";
 import { handleUserCommand } from "./commands/user.js";
@@ -488,6 +488,10 @@ export async function startBot() {
         } else if (interaction.customId.startsWith("hqadmin:")) {
           const { handleHqAdminComponent } = await import("./commands/hq-admin.js");
           await handleHqAdminComponent(interaction);
+        } else if (interaction.customId.startsWith("mtcalc:")) {
+          await handleMTTVCalcSelect(interaction);
+        } else if (interaction.customId.startsWith("mttcalc_hub:")) {
+          await handleMttvHubSelect(interaction);
         }
         return;
       }

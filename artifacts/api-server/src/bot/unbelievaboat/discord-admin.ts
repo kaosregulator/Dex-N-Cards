@@ -149,8 +149,12 @@ async function buildCasinoStation(guildId: string, notice?: string): Promise<{
       { label: "Games (BJ/slots/…)", value: "games", description: "Plays per window + gap", emoji: "🎲" },
     );
 
+  // Discord allows max 5 action rows. hubRows() is 4 rows — bundling it here
+  // made Casino station exceed the limit so the edit failed and cooldowns
+  // appeared to "not open". Keep station lean + a single Back button.
   const actions = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("ubadmin:station_reset").setLabel("Reset all defaults").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ubadmin:overview").setLabel("← Back to hub").setStyle(ButtonStyle.Secondary),
   );
 
   return {
@@ -158,7 +162,6 @@ async function buildCasinoStation(guildId: string, notice?: string): Promise<{
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(pick),
       actions,
-      ...hubRows(),
     ],
   };
 }
