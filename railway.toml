@@ -4,6 +4,8 @@
 
 [build]
 builder = "NIXPACKS"
+# install-browser.mjs runs in api-server build/postinstall and downloads Chromium;
+# nixpacks.toml aptPkgs supply the shared libraries needed to actually launch it.
 buildCommand = "pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build"
 
 [deploy]

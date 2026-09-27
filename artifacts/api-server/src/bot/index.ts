@@ -324,7 +324,7 @@ export async function startBot() {
         return;
       }
       if (
-        (interaction.isButton() || interaction.isChannelSelectMenu()) &&
+        (interaction.isButton() || interaction.isChannelSelectMenu() || interaction.isStringSelectMenu()) &&
         interaction.customId.startsWith("vvhub:")
       ) {
         const { handleVaultValueHubComponent } = await import("./commands/vaultvalue-hub.js");

@@ -61,11 +61,12 @@ function buildHubPanel() {
     .setTitle("🎛️ Rarity Settings")
     .setColor(0x5865f2)
     .setDescription(
-      "Built-in rarities are the stable source of truth. Configure how each rarity **looks** and **drops** for this server.\n\n" +
-      "Use **Edit Rarities** for the normal flow: display name, emoji, color, spawn %, worth, and burn.\n" +
-      "Advanced custom-tier tools are still available for existing data, but they are not needed for normal setup.\n​",
+      "This hub is the **source of truth** for rarity names, colors, spawn %, worth, and burn.\n\n" +
+      "Default labels follow Vault Values: Common → Uncommon → Rare → Epic → Legendary → **Limited Edition** (top). " +
+      "**Exotic** is a custom tier. Event/special cards use Limited Edition + event flag.\n\n" +
+      "Guild nicknames you set here always win over code defaults.\n​",
     )
-    .setFooter({ text: "Admins see percentages and values here; internal weights stay hidden for compatibility." });
+    .setFooter({ text: "Discord /rarity writes · website only reads · Reset All clears nicknames back to site names" });
   const primaryRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("rarity_hub:settings").setLabel("🎛️ Edit Rarities").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("rarity_hub:display").setLabel("🎨 Display Only").setStyle(ButtonStyle.Secondary),

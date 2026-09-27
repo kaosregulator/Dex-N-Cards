@@ -154,6 +154,28 @@ export async function handleBattleAdminButton(interaction: ButtonInteraction): P
       });
       break;
     }
+    case "resetformulas": {
+      // Schema defaults — rarity rank still scales via hpPerRarity / attackPerRarity / etc.
+      // Per-card overrides stay until you use "Reset to Auto" on that card.
+      await updateBattleSettings(guildId, {
+        hpBase: 750,
+        hpPerRarity: 220,
+        hpWorthDivisor: 40,
+        attackBase: 85,
+        attackPerRarity: 28,
+        defenseBase: 55,
+        defensePerRarity: 18,
+        speedBase: 50,
+        levelMaxBonusPct: 150,
+      });
+      await interaction.followUp({
+        content:
+          "♻️ **Battle formulas reset** to defaults (HP/ATK/DEF/speed bases + per-rarity steps). " +
+          "Rarity ladder still drives strength. Per-card battle overrides are unchanged — open a card → **Reset to Auto** to clear those.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      break;
+    }
     case "toggle": {
       const s = await getBattleSettings(guildId);
       await updateBattleSettings(guildId, { enabled: !s.enabled });
@@ -727,16 +749,16 @@ function buildHubComponents(s?: { frameDelayMs: number; battleAnimationSpeed?: s
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("battleadmin:rules").setLabel("Rules").setEmoji("⚙️").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("battleadmin:formulas").setLabel("Formulas").setEmoji("🧮").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("battleadmin:resetformulas").setLabel("Reset Formulas").setEmoji("♻️").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("battleadmin:rewards").setLabel("Rewards").setEmoji("🎁").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("battleadmin:cards").setLabel("Cards").setEmoji("🎴").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("battleadmin:itemmgr").setLabel("Battle Items").setEmoji("🎒").setStyle(ButtonStyle.Primary),
   );
   const row3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("battleadmin:itemmgr").setLabel("Battle Items").setEmoji("🎒").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("battleadmin:passivemgr").setLabel("Passives").setEmoji("✨").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("battleadmin:resetlb").setLabel("Reset Leaderboard").setEmoji("🏆").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("battleadmin:season").setLabel("New Season").setEmoji("🔄").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("battleadmin:globaltoggle").setLabel("Global LB").setEmoji("🌐").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("battleadmin:animtoggle").setLabel("Battle Visuals").setEmoji("🎞️").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("battleadmin:passivemgr").setLabel("Passives").setEmoji("✨").setStyle(ButtonStyle.Primary),
   );
   const cur = s?.frameDelayMs ?? 950;
   const speedRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
