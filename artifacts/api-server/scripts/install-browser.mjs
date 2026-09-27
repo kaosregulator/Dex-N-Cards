@@ -139,7 +139,7 @@ if (existing) {
   process.exit(0);
 }
 
-log("installing Chromium for /emoji + vault Browse (this is a one-off download)…");
+log("installing Chromium for /emoji (this is a one-off download)…");
 
 /**
  * Locate playwright's CLI.
@@ -173,8 +173,8 @@ const result = cli
 if (result.status !== 0) {
   // Deliberately exit 0: /emoji + Browse degrade; the rest of the bot still boots.
   log(
-    "could not install Chromium automatically. /emoji and /vaultvalue Browse will stay " +
-    "unavailable until `pnpm emoji:install-browser` is run on this host.",
+    "could not install Chromium automatically. /emoji will stay unavailable until " +
+    "`pnpm emoji:install-browser` is run on this host.",
   );
   if (result.error) log(`reason: ${result.error.message}`);
   process.exit(0);

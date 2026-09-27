@@ -19,8 +19,8 @@ import { handleSetAdminHubButton, handleSetAdminHubSelect, handleSetAdminHubWeig
 import { handleRarityEditButton, handleRarityEditSelect, handleRarityEditModal, handleRarityHubButton, handleRarityHubSelect, handleRarityHubModal } from "./commands/rarity-admin.js";
 import { handleSetChannelsPick, handleSetChannelsApply } from "./commands/setchannels.js";
 import { handleAdminHubButton, handleAdminHubModal } from "./commands/admin-hub.js";
-import { handleMttvHubButton, handleMttvHubModal } from "./commands/mttcalc-hub.js";
-import { handleMTTVCalcButton, handleMTTVCalcModal } from "./commands/mttvalues.js";
+import { handleMttvHubButton, handleMttvHubModal, handleMttvHubSelect } from "./commands/mttcalc-hub.js";
+import { handleMTTVCalcButton, handleMTTVCalcModal, handleMTTVCalcSelect } from "./commands/mttvalues.js";
 import { checkAchievements, formatUnlockLine } from "./achievements.js";
 import { handleAdminCommand } from "./commands/admin.js";
 import { handleUserCommand } from "./commands/user.js";
@@ -162,11 +162,6 @@ export async function startBot() {
       // shouts in the logs ([ISOLATION]/[REPLIT]) if it spots orphaned cards, a
       // mass-deleted home roster, or cross-guild collection contamination.
       void runIsolationSelfCheck();
-      // Probe valuevaultx / vaultedvaluesx / mttvalues and snapshot the live feed
-      // so /vaultvalue → Sources can show drift vs last boot.
-      void import("./commands/vault-sources.js")
-        .then((m) => m.runVaultSourceHealthCheck({ persist: true }))
-        .catch((err) => logger.warn({ err }, "vault source health check failed"));
       // Boot-time backfill is no longer needed; sets are managed via the
       // first-class sets + card_set_memberships tables.
       startBattleMaintenance();
@@ -336,22 +331,9 @@ export async function startBot() {
         await handleVaultValueHubComponent(interaction);
         return;
       }
-      if (
-        (interaction.isButton() || interaction.isStringSelectMenu()) &&
-        interaction.customId.startsWith("vvbrowse:")
-      ) {
-        const { handleVaultBrowserComponent } = await import("./commands/vault-browser.js");
-        await handleVaultBrowserComponent(interaction);
-        return;
-      }
       if (interaction.isModalSubmit() && interaction.customId.startsWith("vvhub:")) {
         const { handleVaultValueHubModal } = await import("./commands/vaultvalue-hub.js");
         await handleVaultValueHubModal(interaction);
-        return;
-      }
-      if (interaction.isModalSubmit() && interaction.customId.startsWith("vvbrowse:")) {
-        const { handleVaultBrowserModal } = await import("./commands/vault-browser.js");
-        await handleVaultBrowserModal(interaction);
         return;
       }
       if (
@@ -506,6 +488,10 @@ export async function startBot() {
         } else if (interaction.customId.startsWith("hqadmin:")) {
           const { handleHqAdminComponent } = await import("./commands/hq-admin.js");
           await handleHqAdminComponent(interaction);
+        } else if (interaction.customId.startsWith("mtcalc:")) {
+          await handleMTTVCalcSelect(interaction);
+        } else if (interaction.customId.startsWith("mttcalc_hub:")) {
+          await handleMttvHubSelect(interaction);
         }
         return;
       }

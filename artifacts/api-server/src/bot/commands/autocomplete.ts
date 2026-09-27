@@ -302,7 +302,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       return;
     }
 
-    // ── Vault Values item AC — /vaultvalue item: + /cardadmin create_vault (+ legacy) ──
+    // ── Vault Values item AC — /vaultvalue item + /cardadmin create_vault (+ legacy) ──
     if (
       ((cmd === "info_mttv" || cmd === "createcardfrommttv") && focused.name === "item") ||
       (cmd === "vaultvalue" && focused.name === "item") ||

@@ -53,9 +53,9 @@ Postgres database and your usual secrets (bot token, guild id, session secret).
 | `AUTO_DB_PUSH` | Unset = push schema only when tables are missing. `1` = always push on start. `0` = never. |
 | `DN_DEPLOYMENT` | `1` if you host somewhere that is not Replit/Railway |
 
-### Playwright / vault Browse + /emoji (automatic on Railway)
+### Playwright / /emoji (automatic on Railway)
 
-Railway needs **two** things for Chromium (Value Vault **Browse** and MakeEmoji):
+Railway needs **two** things for Chromium (MakeEmoji):
 
 1. **Browser binary** — downloaded during `pnpm install` / api-server build via
    `artifacts/api-server/scripts/install-browser.mjs` into
