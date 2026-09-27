@@ -25,6 +25,8 @@ export type VaultSourceStatus = {
 /** Live Military Tycoon gem-value JSON (Wix). Primary price + image feed. */
 export const VALUEVAULTX_FEED_URL = "https://valuevaultx.com/_functions/api/MTSValueList";
 export const VALUEVAULTX_SITE_URL = "https://valuevaultx.com";
+/** Military Tycoon list page (has Search); homepage is only a game picker. */
+export const VALUEVAULTX_MTS_LIST_URL = "https://www.valuevaultx.com/military-tycoon";
 
 /** Newer Vaulted Values X UI (images in Supabase). No public JSON feed yet — HTML/SSR. */
 export const VAULTEDVALUESX_LIST_URL = "https://mts.vaultedvaluesx.com/value-list";

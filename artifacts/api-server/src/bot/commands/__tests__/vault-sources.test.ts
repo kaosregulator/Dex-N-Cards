@@ -85,6 +85,9 @@ describe("diffVaultFeedSnapshot", () => {
 
 describe("searchVaultPrices safety net", () => {
   it("ranks Abram Tank ahead of weaker Abram hits and formats gem ranges", async () => {
+    // mttvalues → db requires DATABASE_URL at import time; ranking helpers are pure.
+    process.env.DATABASE_URL ??=
+      "postgresql://dn_cards_dev:dn_cards_dev@127.0.0.1:5432/dn_cards_dev";
     const { matchScore, formatVaultPriceLine, formatMTTVValue } = await import("../mttvalues.js");
     // Local ranking only (no network) — proves search stays usable if MTTV dies.
     const items = [

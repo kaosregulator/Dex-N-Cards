@@ -27,6 +27,7 @@ import { logger } from "../../lib/logger.js";
 import {
   MTTVALUES_SITE_URL,
   VAULTEDVALUESX_LIST_URL,
+  VALUEVAULTX_MTS_LIST_URL,
   VALUEVAULTX_SITE_URL,
 } from "./vault-sources.js";
 
@@ -42,7 +43,8 @@ const SITE_HOME: Record<BrowserSite, { label: string; emoji: string; url: string
   valuevaultx: {
     label: "Value Vault X",
     emoji: "📦",
-    url: VALUEVAULTX_SITE_URL,
+    // Land on Military Tycoon list (homepage is a game picker with no search).
+    url: VALUEVAULTX_MTS_LIST_URL,
     color: 0x9b59b6,
   },
   vaultedvaluesx: {
@@ -329,7 +331,7 @@ function sitePickerEmbed(): EmbedBuilder {
       [
         "Open a **real website** inside Discord — photo of the page, numbered clicks, search, scroll.",
         "",
-        `${SITE_HOME.valuevaultx.emoji} **Value Vault X** — ${VALUEVAULTX_SITE_URL}`,
+        `${SITE_HOME.valuevaultx.emoji} **Value Vault X** — ${VALUEVAULTX_MTS_LIST_URL}`,
         `${SITE_HOME.vaultedvaluesx.emoji} **Vaulted Values X** — ${VAULTEDVALUESX_LIST_URL}`,
         `${SITE_HOME.mttvalues.emoji} **MTT Values** — ${MTTVALUES_SITE_URL}`,
         "",
@@ -651,57 +653,62 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
 
   await interaction.deferReply(EPHEMERAL);
   try {
-    // Prefer a stamped search input, else first visible search/text input
-    const typed = await session.page.evaluate(async (query) => {
-      const pick =
-        document.querySelector<HTMLElement>("[data-dn-click] input, input[data-dn-click], [data-dn-click][type], textarea[data-dn-click]")
-        || document.querySelector<HTMLInputElement>("input[type='search']")
-        || document.querySelector<HTMLInputElement>("input[placeholder*='earch' i], input[name*='earch' i], input[aria-label*='earch' i]")
-        || document.querySelector<HTMLInputElement>("input[type='text'], input:not([type])");
-
-      // If data-dn-click is on a wrapper, find input inside / self
-      let input: HTMLInputElement | HTMLTextAreaElement | null = null;
-      const stamped = document.querySelector<HTMLElement>("[data-dn-click]");
-      // Prefer stamped element that is an input, else first stamped input kind from list
-      const stampedInputs = Array.from(document.querySelectorAll<HTMLElement>("[data-dn-click]")).filter((el) => {
-        const tag = el.tagName.toLowerCase();
-        return tag === "input" || tag === "textarea" || !!el.querySelector("input, textarea");
-      });
-      const stampedInputHost = stampedInputs[0];
-      if (stampedInputHost) {
-        input = (stampedInputHost.tagName.toLowerCase() === "input" || stampedInputHost.tagName.toLowerCase() === "textarea")
-          ? stampedInputHost as HTMLInputElement
-          : stampedInputHost.querySelector("input, textarea");
+    // Prefer Playwright typing (works for Wix/React controlled Search boxes).
+    let typedOk = false;
+    const searchLoc = session.page.locator(
+      "input[data-dn-click], [data-dn-click] input, input[placeholder*='earch' i], input[type='search'], input[name*='earch' i], #searchInput, input[type='text']",
+    ).first();
+    if (await searchLoc.count()) {
+      try {
+        await searchLoc.scrollIntoViewIfNeeded().catch(() => {});
+        await searchLoc.click({ timeout: 5000, force: true });
+        await searchLoc.fill("");
+        await searchLoc.pressSequentially(q, { delay: 35 });
+        await searchLoc.press("Enter");
+        typedOk = true;
+      } catch {
+        typedOk = false;
       }
-      if (!input) input = pick as HTMLInputElement | null;
-      if (!input) return { ok: false as const, reason: "no-input" };
+    }
 
-      input.focus();
-      input.value = "";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      // Native setter for React-controlled fields
-      const proto = input.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const desc = Object.getOwnPropertyDescriptor(proto, "value");
-      desc?.set?.call(input, query);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
-      // Also try form submit
-      input.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      return { ok: true as const };
-    }, q);
+    if (!typedOk) {
+      // DOM fallback for odd shells
+      const typed = await session.page.evaluate(async (query) => {
+        const pick =
+          document.querySelector<HTMLInputElement>("input[type='search']")
+          || document.querySelector<HTMLInputElement>("input[placeholder*='earch' i], input[name*='earch' i], input[aria-label*='earch' i]")
+          || document.querySelector<HTMLInputElement>("input[type='text'], input:not([type])");
+        let input: HTMLInputElement | HTMLTextAreaElement | null = null;
+        const stampedInputs = Array.from(document.querySelectorAll<HTMLElement>("[data-dn-click]")).filter((el) => {
+          const tag = el.tagName.toLowerCase();
+          return tag === "input" || tag === "textarea" || !!el.querySelector("input, textarea");
+        });
+        const stampedInputHost = stampedInputs[0];
+        if (stampedInputHost) {
+          input = (stampedInputHost.tagName.toLowerCase() === "input" || stampedInputHost.tagName.toLowerCase() === "textarea")
+            ? stampedInputHost as HTMLInputElement
+            : stampedInputHost.querySelector("input, textarea");
+        }
+        if (!input) input = pick;
+        if (!input) return { ok: false as const };
+        input.focus();
+        const proto = input.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const desc = Object.getOwnPropertyDescriptor(proto, "value");
+        desc?.set?.call(input, query);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        return { ok: true as const };
+      }, q);
 
-    if (!typed.ok) {
-      // Playwright fill fallback
-      const loc = session.page.locator("input[type='search'], input[placeholder*='earch' i], input[name*='earch' i], input[type='text']").first();
-      if (await loc.count()) {
-        await loc.click({ timeout: 5000 });
-        await loc.fill(q);
-        await loc.press("Enter");
-      } else {
+      if (!typed.ok) {
+        const overlay = await vaultPriceOverlay(q);
         await interaction.editReply({
-          content: "Couldn’t find a search box on this page — scroll to one (yellow ⌨️) or click into it first.",
+          content: [
+            "Couldn’t find a search box on this page — scroll to one (yellow ⌨️) or click into it first.",
+            "",
+            overlay,
+          ].join("\n"),
         });
         return;
       }
