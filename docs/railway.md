@@ -61,13 +61,21 @@ Railway needs **two** things for Chromium (Value Vault **Browse** and MakeEmoji)
    `artifacts/api-server/scripts/install-browser.mjs` into
    `PLAYWRIGHT_BROWSERS_PATH` (`/root/.cache/ms-playwright`).
 2. **System libraries** — listed in `nixpacks.toml` `aptPkgs` (`libgbm1`,
-   `libnss3`, `libatk-bridge2.0-0`, …). Without these the binary exists but
+   `libnss3`, `libasound2t64`, …). Without these the binary exists but
    launch fails with `browserType.launch: Target page, context or browser has been closed`.
+
+Railway’s Nixpacks base is **Ubuntu 24.04 (noble)** — use the `t64` package
+names (`libasound2t64`, not `libasound2`). The old names are virtual-only and
+fail the build with `E: Package 'libasound2' has no installation candidate`.
 
 After deploy, build logs should show `[emoji] Chromium smoke launch OK.`  
 If you see `[emoji] WARNING: Chromium is missing shared libraries`, the image
 did not pick up the apt packages — trigger a **full rebuild** (clear build cache)
 so Nixpacks re-runs setup with the current `nixpacks.toml`.
+
+Repo renames on GitHub (e.g. `DN-cards` → `Dex-N-Cards`) do not break apt;
+point Railway’s GitHub connection at `kaosregulator/Dex-N-Cards` if needed, but
+a failed `apt-get` is almost always the package-name issue above.
 
 ### Quiet Mode audio (automatic on Railway)
 
