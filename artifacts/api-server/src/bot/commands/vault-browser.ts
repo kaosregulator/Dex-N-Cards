@@ -101,24 +101,51 @@ async function getBrowser(): Promise<Browser> {
       "--disable-blink-features=AutomationControlled",
       "--no-sandbox",
       "--disable-dev-shm-usage",
+      "--disable-gpu",
     ];
-    // Deduplicate args
     const uniq = [...new Set(args)];
     logger.info(
       { executablePath: executablePath ?? "(playwright default)" },
       "mini-browser launching Chromium",
     );
-    const browser = await pw.chromium.launch({
-      ...base,
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-      args: uniq,
-    });
-    browser.on("disconnected", () => {
-      if (sharedBrowser === browser) sharedBrowser = null;
-    });
-    sharedBrowser = browser;
-    return browser;
+
+    try {
+      const browser = await pw.chromium.launch({
+        ...base,
+        headless: true,
+        ...(executablePath ? { executablePath } : {}),
+        args: uniq,
+      });
+      browser.on("disconnected", () => {
+        if (sharedBrowser === browser) sharedBrowser = null;
+      });
+      sharedBrowser = browser;
+      return browser;
+    } catch (err) {
+      // Surface missing .so libs — common Railway failure when aptPkgs lag behind.
+      let hint = "";
+      if (executablePath) {
+        try {
+          const { spawnSync } = await import("node:child_process");
+          const ldd = spawnSync("ldd", [executablePath], { encoding: "utf8" });
+          const missing = (ldd.stdout || "")
+            .split("\n")
+            .filter((l) => /not found/i.test(l))
+            .map((l) => l.trim().split(/\s+/)[0])
+            .filter(Boolean)
+            .slice(0, 8);
+          if (missing.length) {
+            hint = ` Missing libraries: ${missing.join(", ")}. Redeploy so Railway installs nixpacks.toml Chromium aptPkgs.`;
+          }
+        } catch { /* ignore */ }
+      }
+      const msg = (err as Error).message || String(err);
+      throw new Error(
+        (/has been closed|Target closed|Failed to launch/i.test(msg)
+          ? "Chromium crashed on start (usually missing system libraries on Railway)."
+          : msg) + hint,
+      );
+    }
   })();
 
   try {
