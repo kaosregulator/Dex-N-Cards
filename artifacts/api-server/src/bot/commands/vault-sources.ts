@@ -30,7 +30,7 @@ export const VALUEVAULTX_SITE_URL = "https://valuevaultx.com";
 export const VAULTEDVALUESX_LIST_URL = "https://mts.vaultedvaluesx.com/value-list";
 export const VAULTEDVALUESX_SITE_URL = "https://www.vaultedvaluesx.com";
 
-/** Legacy MTT Values — Cloudflare / Firestore locked (403). Kept for health reporting only. */
+/** MTT Values — fetch() often 403 (Cloudflare); Playwright mini-browser can open it. */
 export const MTTVALUES_SITE_URL = "https://mttvalues.com";
 
 /**

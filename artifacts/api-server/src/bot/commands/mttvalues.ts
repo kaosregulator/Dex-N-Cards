@@ -492,7 +492,9 @@ export async function handleValueHelp(interaction: ChatInputCommandInteraction):
       "• 🏷️ **Tags** — market trends like `rising`, `dropping`, `stable`.\n\n" +
       "**How to use:**\n" +
       "• `/vaultvalue item:<name>` — autocomplete lookup (fast path).\n" +
-      "• `/vaultvalue` → **Browse** — live navigator (pick Value Vault X or Vaulted Values X).\n" +
+      "• `/vaultvalue` → **Browse** — live mini-browser (Value Vault X / Vaulted Values X / MTT Values):\n" +
+      "  page photo · numbered clicks · Search types into the site · scroll / back.\n" +
+
       "• `/vaultvalue` → **Info** — type a name / acronym, pick from matches.\n" +
       "• `/vaultvalue` → **Calc** — private two-sided trade calculator.\n" +
       "• `/vaultvalue` → **Sources** — live health of value sites.\n\n" +

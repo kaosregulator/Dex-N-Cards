@@ -48,20 +48,20 @@ function hubEmbed(): EmbedBuilder {
     .setTitle("📦 Vault Values Hub")
     .setDescription(
       [
-        "Military Tycoon prices from [valuevaultx.com](https://valuevaultx.com).",
-        "Also tracking [vaultedvaluesx.com](https://mts.vaultedvaluesx.com/value-list) for the newer list UI.",
+        "Live Military Tycoon prices — look up one item, or **Browse** a real site in Discord.",
         "",
-        "**Quick lookup:** `/vaultvalue item:Sea Dragon` (autocomplete)",
+        "**Quick lookup:** `/vaultvalue item:Sea Dragon` (autocomplete + JSON feed)",
         "",
-        "**Info** — one-item lookup",
-        "**Browse** — live navigator (Value Vault X or Vaulted Values X)",
+        "**Info** — one-item embed (fast)",
+        "**Browse** — mini-browser: Value Vault X · Vaulted Values X · MTT Values",
+        "　　photo of the page · numbered clicks · search types into the site · scroll",
         "**Calc** — two-sided trade calculator",
         "**List** — top items by value",
         "**Help** / **Sources** — docs + site health",
         "**Post Calc** — (admin) pin a calculator in a channel",
       ].join("\n"),
     )
-    .setFooter({ text: "Autocomplete on item: · live browse · valuevaultx.com" });
+    .setFooter({ text: "Browse = live website photos · item: = fast JSON lookup" });
 }
 
 function hubRows(isAdmin: boolean) {
