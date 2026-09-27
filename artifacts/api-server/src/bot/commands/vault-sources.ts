@@ -34,15 +34,17 @@ export const VAULTEDVALUESX_SITE_URL = "https://www.vaultedvaluesx.com";
 export const MTTVALUES_SITE_URL = "https://mttvalues.com";
 
 /**
- * Map Vault Values `suggestedRarity` → DN built-in rarity keys.
- * DB enum keys stay fixed; display names come from RARITY_LABELS / guild nicknames.
+ * Map Vault Values `suggestedRarity` → DN built-in rarity keys (+ optional custom slug).
+ * DB enum keys stay fixed; display names come from RARITY_LABELS / guild nicknames (/rarity).
  *
- * Site ladder (by typical gem value): Common → Uncommon → Rare → Epic → Legendary → Exotic → Limited Edition
- * DN has 6 keys, so Exotic + Limited Edition both land on `mythic`; LE also sets isLimitedEdition.
+ * Site ladder (low → high): Common → Uncommon → Rare → Epic → Legendary → Exotic → Limited Edition
+ * Limited Edition → mythic (top). Exotic → custom slug "exotic" on legendary base.
+ * Event/special cards use mythic + isEventExclusive (not from this mapper).
  */
 export function mapVaultRarityToDn(suggested: string | null | undefined): {
   rarity: Rarity;
   isLimitedEdition: boolean;
+  customRaritySlug?: string;
 } {
   const s = (suggested ?? "").trim().toLowerCase();
   if (s === "common") return { rarity: "common", isLimitedEdition: false };
@@ -50,7 +52,7 @@ export function mapVaultRarityToDn(suggested: string | null | undefined): {
   if (s === "rare") return { rarity: "rare", isLimitedEdition: false };
   if (s === "epic") return { rarity: "epic", isLimitedEdition: false };
   if (s === "legendary") return { rarity: "legendary", isLimitedEdition: false };
-  if (s === "exotic") return { rarity: "mythic", isLimitedEdition: false };
+  if (s === "exotic") return { rarity: "legendary", isLimitedEdition: false, customRaritySlug: "exotic" };
   if (s.includes("limited")) return { rarity: "mythic", isLimitedEdition: true };
   return { rarity: "common", isLimitedEdition: false };
 }

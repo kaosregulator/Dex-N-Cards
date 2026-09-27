@@ -82,7 +82,7 @@ function buildLegacyCommands() {
     cmd("catalog", "Browse by category — see what you own and what's missing", s => s
       .addStringOption(o => o.setName("category").setDescription("Optional: jump straight to a category (default: overview)")
         .addChoices(
-          { name: "🔮 Extra", value: "mythic" },
+          { name: "💎 Limited Edition", value: "mythic" },
           { name: "🟡 Legendary", value: "legendary" },
           { name: "🟣 Epic", value: "epic" },
           { name: "🔵 Rare", value: "rare" },
@@ -207,7 +207,7 @@ function buildLegacyCommands() {
         .addChoices(
           { name: "⚪ Common", value: "common" }, { name: "🟢 Uncommon", value: "uncommon" },
           { name: "🔵 Rare", value: "rare" }, { name: "🟣 Epic", value: "epic" },
-          { name: "🟡 Legendary", value: "legendary" }, { name: "🔴 Mythic", value: "mythic" }))
+          { name: "🟡 Legendary", value: "legendary" }, { name: "💎 Limited Edition", value: "mythic" }))
       .addStringOption(o => o.setName("type").setDescription("Filter by card type"))
       .addStringOption(o => o.setName("owned").setDescription("Only owned or only missing")
         .addChoices({ name: "Owned", value: "owned" }, { name: "Missing", value: "missing" }))),
@@ -384,9 +384,9 @@ function buildLegacyCommands() {
       .addStringOption(o => o.setName("add_card").setDescription("Add one card to the pack").setAutocomplete(true))
       .addStringOption(o => o.setName("remove_card").setDescription("Remove one card from the pack").setAutocomplete(true))
       .addStringOption(o => o.setName("add_rarity").setDescription("Add ALL cards of this rarity to the pack")
-        .addChoices({ name: "Common", value: "common" }, { name: "Uncommon", value: "uncommon" }, { name: "Rare", value: "rare" }, { name: "Epic", value: "epic" }, { name: "Legendary", value: "legendary" }, { name: "Mythic", value: "mythic" }))
+        .addChoices({ name: "Common", value: "common" }, { name: "Uncommon", value: "uncommon" }, { name: "Rare", value: "rare" }, { name: "Epic", value: "epic" }, { name: "Legendary", value: "legendary" }, { name: "Limited Edition", value: "mythic" }))
       .addStringOption(o => o.setName("remove_rarity").setDescription("Remove ALL cards of this rarity from the pack")
-        .addChoices({ name: "Common", value: "common" }, { name: "Uncommon", value: "uncommon" }, { name: "Rare", value: "rare" }, { name: "Epic", value: "epic" }, { name: "Legendary", value: "legendary" }, { name: "Mythic", value: "mythic" }))),
+        .addChoices({ name: "Common", value: "common" }, { name: "Uncommon", value: "uncommon" }, { name: "Rare", value: "rare" }, { name: "Epic", value: "epic" }, { name: "Legendary", value: "legendary" }, { name: "Limited Edition", value: "mythic" }))),
 
     // ── /rep (user, reputation system) ────────────────────────────────────────
     cmd("rep", "Reputation system — give rep, check rep, remove rep, and see the leaderboard", s => s

@@ -10,7 +10,10 @@ import {
 } from "discord.js";
 import { logger } from "../../lib/logger.js";
 import { getBotClient } from "../client-holder.js";
-import { addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
+import {
+  addCard, addCardToSet, getCardByName, getSetByName,
+  getCustomRarityBySlug, createCustomRarity, assignCardToCustomRarity,
+} from "../db.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
 import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
 import { VALUEVAULTX_FEED_URL, mapVaultRarityToDn } from "./vault-sources.js";
@@ -355,6 +358,7 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
   const baseRarity = (useAuto ? vaultMap.rarity : rarityInput) as Rarity;
   const limited = limitedOpt ?? vaultMap.isLimitedEdition;
   const defs = createCardRarityDefaults(baseRarity);
+  const exoticSlug = useAuto ? vaultMap.customRaritySlug : undefined;
   const type = (typeRaw || item.tags[0] || "vehicle")
     .toLowerCase()
     .replace(/\s+/g, " ")
@@ -417,6 +421,30 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
     }
   }
 
+  if (exoticSlug === "exotic") {
+    try {
+      let exotic = await getCustomRarityBySlug(guildId, "exotic");
+      if (!exotic) {
+        exotic = await createCustomRarity(guildId, {
+          slug: "exotic",
+          name: "Exotic",
+          emoji: "🔥",
+          position: 55,
+          worthValue: 4000,
+          burnValue: 2000,
+          color: 0xff6b35,
+          dropWeight: 0.5,
+          droppable: true,
+          inPacks: true,
+        });
+      }
+      await assignCardToCustomRarity(guildId, card.id, "exotic");
+      setNote += " · Exotic tier";
+    } catch (err) {
+      logger.warn({ err, cardId: card.id, guildId }, "Could not assign Exotic custom rarity");
+    }
+  }
+
   const siteRarity = item.rarity[0] ? ` · site ${item.rarity[0]}` : "";
   await renderPanel(
     interaction,
@@ -458,18 +486,18 @@ export async function handleValueHelp(interaction: ChatInputCommandInteraction):
       "Vault Values tracks community prices for Military Tycoon items.\n\n" +
       "**What the numbers mean:**\n" +
       "• 💰 **Value** — the typical trade value range for the item.\n" +
-      "• ⭐ **Rarity** — site tier (Common → … → Exotic / Limited Edition).\n" +
+      "• ⭐ **Rarity** — Common → Uncommon → Rare → Epic → Legendary → Exotic → **Limited Edition** (top).\n" +
       "• 📊 **Demand** — how wanted the item is right now (1–10).\n" +
       "• 🛠️ **Functionality** — how useful the item is in-game (1–10).\n" +
       "• 🏷️ **Tags** — market trends like `rising`, `dropping`, `stable`.\n\n" +
       "**How to use:**\n" +
       "• `/vaultvalue item:<name>` — autocomplete lookup (fast path).\n" +
+      "• `/vaultvalue` → **Browse** — live navigator (pick Value Vault X or Vaulted Values X).\n" +
       "• `/vaultvalue` → **Info** — type a name / acronym, pick from matches.\n" +
       "• `/vaultvalue` → **Calc** — private two-sided trade calculator.\n" +
-      "• `/vaultvalue` → **List** — top items by value.\n" +
       "• `/vaultvalue` → **Sources** — live health of value sites.\n\n" +
       "Primary feed: [valuevaultx.com](https://valuevaultx.com). " +
-      "Newer list UI: [mts.vaultedvaluesx.com](https://mts.vaultedvaluesx.com/value-list).",
+      "List UI: [mts.vaultedvaluesx.com](https://mts.vaultedvaluesx.com/value-list).",
     )
     .setFooter({ text: "Prices from Vault Values · no API key required" });
   await interaction.editReply({ embeds: [embed] });

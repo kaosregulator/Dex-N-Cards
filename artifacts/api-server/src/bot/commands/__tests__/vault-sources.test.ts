@@ -8,41 +8,52 @@ import {
 import { DEFAULT_CARDS, RARITY_LABELS, RARITY_WEIGHTS, rarityLabel } from "../../cards-data.js";
 
 describe("mapVaultRarityToDn", () => {
-  it("maps the Vault Values ladder onto DN keys", () => {
+  it("maps the Vault Values ladder onto DN keys (LE top, Exotic custom)", () => {
     expect(mapVaultRarityToDn("Common")).toEqual({ rarity: "common", isLimitedEdition: false });
     expect(mapVaultRarityToDn("Uncommon")).toEqual({ rarity: "uncommon", isLimitedEdition: false });
     expect(mapVaultRarityToDn("Rare")).toEqual({ rarity: "rare", isLimitedEdition: false });
     expect(mapVaultRarityToDn("Epic")).toEqual({ rarity: "epic", isLimitedEdition: false });
     expect(mapVaultRarityToDn("Legendary")).toEqual({ rarity: "legendary", isLimitedEdition: false });
-    expect(mapVaultRarityToDn("Exotic")).toEqual({ rarity: "mythic", isLimitedEdition: false });
+    expect(mapVaultRarityToDn("Exotic")).toEqual({
+      rarity: "legendary",
+      isLimitedEdition: false,
+      customRaritySlug: "exotic",
+    });
     expect(mapVaultRarityToDn("Limited Edition")).toEqual({ rarity: "mythic", isLimitedEdition: true });
   });
 });
 
 describe("RARITY_LABELS defaults", () => {
-  it("uses Vault Values names and honors guild nicknames first", () => {
+  it("uses site names with Limited Edition on top and honors guild nicknames", () => {
     expect(RARITY_LABELS.rare).toBe("Rare");
     expect(RARITY_LABELS.epic).toBe("Epic");
     expect(RARITY_LABELS.legendary).toBe("Legendary");
-    expect(RARITY_LABELS.mythic).toBe("Exotic");
-    const nick = new Map([["rare" as const, { displayName: "Server LE" }]]);
-    expect(rarityLabel("rare", null, nick)).toBe("Server LE");
-    expect(RARITY_WEIGHTS.rare).toBeGreaterThan(RARITY_WEIGHTS.epic);
+    expect(RARITY_LABELS.mythic).toBe("Limited Edition");
+    const nick = new Map([["mythic" as const, { displayName: "Server Extra" }]]);
+    expect(rarityLabel("mythic", null, nick)).toBe("Server Extra");
+    expect(RARITY_WEIGHTS.legendary).toBeGreaterThan(RARITY_WEIGHTS.mythic);
   });
 });
 
 describe("DEFAULT_CARDS harvest", () => {
-  it("has images, descriptions, and every built-in rarity", () => {
-    expect(DEFAULT_CARDS.length).toBeGreaterThanOrEqual(50);
+  it("is a large vehicle-first set with every built-in rarity", () => {
+    expect(DEFAULT_CARDS.length).toBeGreaterThanOrEqual(120);
     const byRarity = new Map<string, number>();
+    let bannerish = 0;
+    let exotic = 0;
     for (const c of DEFAULT_CARDS) {
       expect(c.imageUrl).toMatch(/^https?:\/\//);
       expect((c.description ?? "").length).toBeGreaterThan(5);
       byRarity.set(c.rarity, (byRarity.get(c.rarity) ?? 0) + 1);
+      if (/banner|emblem/i.test(c.cardType) || /banner|emblem/i.test(c.name)) bannerish++;
+      if (c.customRaritySlug === "exotic") exotic++;
     }
     for (const r of ["common", "uncommon", "rare", "epic", "legendary", "mythic"] as const) {
       expect(byRarity.get(r) ?? 0).toBeGreaterThan(0);
     }
+    expect(exotic).toBeGreaterThan(10);
+    // Prefer vehicles/soldiers — banners are fillers only (uncommon is mostly nameplates).
+    expect(bannerish).toBeLessThan(DEFAULT_CARDS.length * 0.35);
   });
 });
 

@@ -53,24 +53,27 @@ function hubEmbed(): EmbedBuilder {
         "",
         "**Quick lookup:** `/vaultvalue item:Sea Dragon` (autocomplete)",
         "",
-        "**Info** — search / pick from matches",
+        "**Info** — one-item lookup",
+        "**Browse** — live navigator (Value Vault X or Vaulted Values X)",
         "**Calc** — two-sided trade calculator",
         "**List** — top items by value",
-        "**Help** — how pricing works",
-        "**Sources** — live site health",
+        "**Help** / **Sources** — docs + site health",
         "**Post Calc** — (admin) pin a calculator in a channel",
       ].join("\n"),
     )
-    .setFooter({ text: "Autocomplete on item: · panel actions · valuevaultx.com" });
+    .setFooter({ text: "Autocomplete on item: · live browse · valuevaultx.com" });
 }
 
 function hubRows(isAdmin: boolean) {
   const rows = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("vvhub:info").setLabel("Info").setEmoji("🔎").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("vvhub:browse").setLabel("Browse").setEmoji("🧭").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("vvhub:calc").setLabel("Calculator").setEmoji("🧮").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("vvhub:list").setLabel("Top list").setEmoji("📊").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("vvhub:help").setLabel("Help").setEmoji("❓").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("vvhub:sources").setLabel("Sources").setEmoji("🛰️").setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -119,6 +122,12 @@ export async function handleVaultValueHubComponent(
         ),
       );
     await interaction.showModal(modal);
+    return;
+  }
+
+  if (id === "vvhub:browse" && interaction.isButton()) {
+    const { startVaultBrowser } = await import("./vault-browser.js");
+    await startVaultBrowser(interaction);
     return;
   }
 

@@ -336,9 +336,22 @@ export async function startBot() {
         await handleVaultValueHubComponent(interaction);
         return;
       }
+      if (
+        (interaction.isButton() || interaction.isStringSelectMenu()) &&
+        interaction.customId.startsWith("vvbrowse:")
+      ) {
+        const { handleVaultBrowserComponent } = await import("./commands/vault-browser.js");
+        await handleVaultBrowserComponent(interaction);
+        return;
+      }
       if (interaction.isModalSubmit() && interaction.customId.startsWith("vvhub:")) {
         const { handleVaultValueHubModal } = await import("./commands/vaultvalue-hub.js");
         await handleVaultValueHubModal(interaction);
+        return;
+      }
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("vvbrowse:")) {
+        const { handleVaultBrowserModal } = await import("./commands/vault-browser.js");
+        await handleVaultBrowserModal(interaction);
         return;
       }
       if (
