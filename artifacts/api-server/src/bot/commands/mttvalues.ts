@@ -235,6 +235,27 @@ export function matchScore(item: MTTVItem, query: string): number {
   return score;
 }
 
+/**
+ * Search the durable valuevaultx JSON feed (not mttvalues.com).
+ * Used by Discord lookup AND the mini-browser price safety net when a live
+ * site fails to show item data (Cloudflare / App Check / redesign).
+ */
+export async function searchVaultPrices(query: string, limit = 6): Promise<MTTVItem[]> {
+  const items = await fetchMTTVItems();
+  return items
+    .map((i) => ({ i, score: matchScore(i, query) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, Math.min(limit, 25)))
+    .map(({ i }) => i);
+}
+
+/** One-line price blurb for embeds / mini-browser notes. */
+export function formatVaultPriceLine(item: MTTVItem): string {
+  const rarity = item.rarity.map((r) => `${rarityEmoji(r)} ${r}`).join(" · ") || "—";
+  return `**${item.name}** — ${formatMTTVValue(item)} gems · ${rarity}`;
+}
+
 export async function handleInfoMTTV(interaction: ChatInputCommandInteraction): Promise<void> {
   // Ephemeral-friendly linger so mobile users can read the embed.
   const deleteReplyAfterDelay = () => {

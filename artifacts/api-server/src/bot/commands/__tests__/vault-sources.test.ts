@@ -82,3 +82,56 @@ describe("diffVaultFeedSnapshot", () => {
     expect(notes.some((n) => n.includes("Common"))).toBe(true);
   });
 });
+
+describe("searchVaultPrices safety net", () => {
+  it("ranks Abram Tank ahead of weaker Abram hits and formats gem ranges", async () => {
+    const { matchScore, formatVaultPriceLine, formatMTTVValue } = await import("../mttvalues.js");
+    // Local ranking only (no network) — proves search stays usable if MTTV dies.
+    const items = [
+      {
+        id: "1",
+        name: "Abram Tank",
+        valueMin: 1000,
+        valueMax: 2000,
+        rarity: ["Rare"],
+        demand: 3,
+        functionality: null,
+        tags: [] as string[],
+        description: "tank",
+        image: null,
+      },
+      {
+        id: "2",
+        name: "AA Abram",
+        valueMin: 200,
+        valueMax: 1000,
+        rarity: ["Common"],
+        demand: 2,
+        functionality: null,
+        tags: [] as string[],
+        description: "",
+        image: null,
+      },
+      {
+        id: "3",
+        name: "Sea Dragon",
+        valueMin: 0,
+        valueMax: 0,
+        rarity: ["Exotic"],
+        demand: 5,
+        functionality: null,
+        tags: [] as string[],
+        description: "",
+        image: null,
+      },
+    ];
+    const ranked = items
+      .map((i) => ({ i, score: matchScore(i, "Abram") }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    expect(ranked[0]!.i.name).toBe("Abram Tank");
+    expect(formatMTTVValue(ranked[0]!.i)).toMatch(/1,000/);
+    expect(formatVaultPriceLine(ranked[0]!.i)).toContain("Abram Tank");
+    expect(matchScore(items[2]!, "Abram")).toBe(0);
+  });
+});

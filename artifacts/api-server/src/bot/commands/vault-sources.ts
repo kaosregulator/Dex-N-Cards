@@ -30,7 +30,12 @@ export const VALUEVAULTX_SITE_URL = "https://valuevaultx.com";
 export const VAULTEDVALUESX_LIST_URL = "https://mts.vaultedvaluesx.com/value-list";
 export const VAULTEDVALUESX_SITE_URL = "https://www.vaultedvaluesx.com";
 
-/** MTT Values — fetch() often 403 (Cloudflare); Playwright mini-browser can open it. */
+/**
+ * MTT Values — fetch() often 403 (Cloudflare); Playwright can open the shell.
+ * Item rows may stay on "Loading…" (Firebase App Check). Primary prices stay on
+ * valuevaultx JSON via searchVaultPrices / Discord /vaultvalue — update this URL
+ * later if the site relocates; search+price must not depend on MTTV alone.
+ */
 export const MTTVALUES_SITE_URL = "https://mttvalues.com";
 
 /**
@@ -190,8 +195,13 @@ export async function checkAllVaultSources(): Promise<VaultSourceStatus[]> {
   const [feed, vvx, mtt] = await Promise.all([
     probeValueVaultxFeed(),
     probeHtmlSite("vaultedvaluesx", "Vaulted Values X (MTS list)", VAULTEDVALUESX_LIST_URL, "html-site"),
-    probeHtmlSite("mttvalues", "MTT Values (legacy)", MTTVALUES_SITE_URL, "legacy"),
+    probeHtmlSite("mttvalues", "MTT Values (browse shell)", MTTVALUES_SITE_URL, "legacy"),
   ]);
+  // Clarify MTTV: page can be up while item JSON is blocked (App Check).
+  if (mtt.ok && !mtt.note) {
+    mtt.note =
+      "Shell reachable — item prices may fail (App Check). Use Value Vault X JSON for search/prices.";
+  }
   return [feed, vvx, mtt];
 }
 

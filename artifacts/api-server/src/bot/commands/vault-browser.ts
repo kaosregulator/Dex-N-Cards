@@ -334,9 +334,41 @@ function sitePickerEmbed(): EmbedBuilder {
         `${SITE_HOME.mttvalues.emoji} **MTT Values** — ${MTTVALUES_SITE_URL}`,
         "",
         "Yellow numbers on the screenshot match the dropdown. **Search** types into the site’s own search box.",
+        "",
+        "💰 **Price safety net:** every Search also looks up the Value Vault X JSON feed so you still get name · gems · rarity if a site (e.g. MTTV) is loading or redesigning.",
       ].join("\n"),
     )
     .setFooter({ text: "Ephemeral · your session only · closes after ~12 min idle" });
+}
+
+/** Detect MTTV / similar shells stuck on empty Loading rows (no gem prices on page). */
+async function pageLooksPriceEmpty(page: Page, site: BrowserSite): Promise<boolean> {
+  if (site !== "mttvalues") return false;
+  try {
+    return await page.evaluate(() => {
+      const text = (document.body?.innerText || "").replace(/\s+/g, " ");
+      const loadingHeavy = (text.match(/\bLoading\b/gi) || []).length >= 2;
+      // Gem ranges like 1,000 – 2,000 or 7M style rarely appear while App Check blocks data
+      const hasGemRange = /\d[\d,]{2,}\s*[-–]\s*\d|\b\d+(\.\d+)?\s*[MmKk]\b/.test(text);
+      return loadingHeavy && !hasGemRange;
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function vaultPriceOverlay(query: string): Promise<string> {
+  try {
+    const { searchVaultPrices, formatVaultPriceLine } = await import("./mttvalues.js");
+    const hits = await searchVaultPrices(query, 5);
+    if (!hits.length) {
+      return `_No JSON feed matches for **${query}** — try another spelling._`;
+    }
+    return ["📦 **Value Vault X prices (JSON):**", ...hits.map((h) => `• ${formatVaultPriceLine(h)}`)].join("\n");
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "mini-browser JSON price overlay failed");
+    return "_Price feed briefly unavailable — try Discord **/vaultvalue** lookup._";
+  }
 }
 
 function sitePickerRows(): ActionRowBuilder<ButtonBuilder>[] {
@@ -679,12 +711,21 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
     const url = session.page.url();
     if (session.history[session.history.length - 1] !== url) session.history.push(url);
 
+    // Always attach durable JSON prices so MTTV redesign / App Check can't strand users.
+    const [priceNote, emptyShell] = await Promise.all([
+      vaultPriceOverlay(q),
+      pageLooksPriceEmpty(session.page, session.site),
+    ]);
+    const shellWarn = emptyShell
+      ? "⚠️ This site’s item rows look empty/Loading — prices below are from the **Value Vault X JSON** feed (still current). MTTV can be re-pointed later without breaking search."
+      : "";
+
     // Re-render on the deferred reply (new message) — also refresh the original browse message if possible
     session.targets = await stampAndCollect(session.page);
     const buf = await screenshotPage(session.page);
     const meta = SITE_HOME[session.site];
     const file = new AttachmentBuilder(buf, { name: "browse.jpg" });
-    const lines = session.targets.slice(0, 12).map((t) => {
+    const lines = session.targets.slice(0, 8).map((t) => {
       const icon = t.kind === "input" ? "⌨️" : t.kind === "button" ? "🔘" : "🔗";
       return `**${t.index}.** ${icon} ${t.label}`;
     });
@@ -696,12 +737,15 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
         [
           `Typed **${q}** into the live site.`,
           `📍 \`${session.page.url().slice(0, 160)}\``,
+          shellWarn,
           "",
-          lines.length ? lines.join("\n") : "_Results loaded — scroll if needed._",
-        ].join("\n"),
+          priceNote,
+          "",
+          lines.length ? lines.join("\n") : "_Page chrome loaded — scroll if needed._",
+        ].filter(Boolean).join("\n"),
       )
       .setImage("attachment://browse.jpg")
-      .setFooter({ text: "Pick a number below · Scroll / Back still work on your Browse message" });
+      .setFooter({ text: "JSON prices always attached · Scroll / Back still work on Browse" });
 
     const components = [...navRows(true)];
     const sel = clickSelect(session.targets);
@@ -710,8 +754,13 @@ export async function handleVaultBrowserModal(interaction: ModalSubmitInteractio
     await interaction.editReply({ embeds: [embed], components, files: [file] });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "mini-browser search failed");
+    // Last resort: still try to return JSON prices even if Playwright typing failed
+    const fallback = await vaultPriceOverlay(q).catch(() => "");
     await interaction.editReply({
-      content: `Search failed: ${(err as Error).message.slice(0, 120)}`,
+      content: [
+        `Search on the live page failed: ${(err as Error).message.slice(0, 100)}`,
+        fallback,
+      ].filter(Boolean).join("\n\n"),
     });
   }
 }
