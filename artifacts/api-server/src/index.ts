@@ -169,6 +169,8 @@ async function runBootMigrations() {
   // Fusion Hub v2 knobs (copies→star, xp-overflow→scrap). Self-healing.
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS fuse_copies_per_star integer NOT NULL DEFAULT 5`);
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS xp_overflow_scrap_rate integer NOT NULL DEFAULT 100`);
+  // Dual prefix: admin/card commands vs UnbelievaBoat casino games (e.g. `.slots`).
+  await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS games_prefix text NOT NULL DEFAULT '.'`);
 
   // progression tables (card_progress, battle_profiles, user_currency, quests,
   // reputation, …) are untouched; this only stores the new account-wide level

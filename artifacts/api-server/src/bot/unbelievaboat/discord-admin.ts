@@ -100,6 +100,17 @@ function numField(id: string, label: string, value: number) {
   );
 }
 
+function textField(id: string, label: string, value: string) {
+  return new ActionRowBuilder<TextInputBuilder>().addComponents(
+    new TextInputBuilder()
+      .setCustomId(id)
+      .setLabel(label.slice(0, 45))
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setValue(value.slice(0, 100)),
+  );
+}
+
 function parseNonNeg(raw: string, label: string): number {
   const n = Number(String(raw).trim().replace(/,/g, ""));
   if (!Number.isFinite(n) || n < 0) throw new Error(`${label} must be a non-negative number.`);
@@ -122,7 +133,8 @@ async function buildCasinoStation(guildId: string, notice?: string): Promise<{
     .setDescription(
       [
         notice ? `${notice}\n` : "",
-        "_Webhook floor commands (`*_ub` / `/casino`). UB’s own Discord cooldowns are **not** on their API — these are ours._",
+        "_Webhook floor commands (`*_ub` / `/casino` / games prefix). UB’s own Discord cooldowns are **not** on their API — these are ours._",
+        "_Cooldown input: `30m`, `4h`, `daily`, `90s`, or a bare number of **minutes**._",
         "",
         `**Daily** · CD ${cdText(cds.dailySec * 1000)} · payout **${fmt(pay.dailyMin)}–${fmt(pay.dailyMax)}**`,
         `**Collect** · CD ${cdText(cds.collectSec * 1000)} · payout = perk incomes`,
@@ -570,16 +582,18 @@ export async function handleUbAdminComponent(
 
   if (id === "ubadmin:station_pick" && interaction.isStringSelectMenu()) {
     const kind = interaction.values[0]!;
-    const { readCooldowns } = await import("./cooldowns.js");
+    const { readCooldowns, formatCooldownInput } = await import("./cooldowns.js");
     const { readPayouts } = await import("./payouts.js");
     const s = await getOrCreateUbSettings(guildId);
     const cds = readCooldowns(s);
     const pay = readPayouts(s);
+    const cdField = (sec: number) =>
+      textField("cd", "Cooldown (30m / 4h / daily / or minutes)", formatCooldownInput(sec));
 
     if (kind === "daily") {
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:daily").setTitle("Daily — CD + payout");
       modal.addComponents(
-        numField("cd_sec", "Cooldown (seconds)", cds.dailySec),
+        cdField(cds.dailySec),
         numField("min", "Payout min", pay.dailyMin),
         numField("max", "Payout max", pay.dailyMax),
       );
@@ -588,16 +602,14 @@ export async function handleUbAdminComponent(
     }
     if (kind === "collect") {
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:collect").setTitle("Collect — cooldown");
-      modal.addComponents(
-        numField("cd_sec", "Cooldown (seconds)", cds.collectSec),
-      );
+      modal.addComponents(cdField(cds.collectSec));
       await interaction.showModal(modal);
       return;
     }
     if (kind === "work") {
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:work").setTitle("Work — CD + payout");
       modal.addComponents(
-        numField("cd_sec", "Cooldown (seconds)", cds.workSec),
+        cdField(cds.workSec),
         numField("min", "Payout min", pay.workMin),
         numField("max", "Payout max", pay.workMax),
       );
@@ -607,7 +619,7 @@ export async function handleUbAdminComponent(
     if (kind === "crime") {
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:crime").setTitle("Crime — CD + payout");
       modal.addComponents(
-        numField("cd_sec", "Cooldown (seconds)", cds.crimeSec),
+        cdField(cds.crimeSec),
         numField("win_min", "Win payout min", pay.crimeWinMin),
         numField("win_max", "Win payout max", pay.crimeWinMax),
         numField("fail_pct", "Fail chance % (0–100)", pay.crimeFailChancePct),
@@ -619,7 +631,7 @@ export async function handleUbAdminComponent(
     if (kind === "beg") {
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:beg").setTitle("Beg — CD + payout");
       modal.addComponents(
-        numField("cd_sec", "Cooldown (seconds)", cds.begSec),
+        cdField(cds.begSec),
         numField("chance", "Pity chance % (0–100)", pay.begChancePct),
         numField("min", "Pity payout min", pay.begMin),
         numField("max", "Pity payout max", pay.begMax),
@@ -630,7 +642,7 @@ export async function handleUbAdminComponent(
     if (kind === "rob") {
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:rob").setTitle("Rob — CD + steal/fine");
       modal.addComponents(
-        numField("cd_sec", "Cooldown (seconds)", cds.robSec),
+        cdField(cds.robSec),
         numField("success_pct", "Success chance % (0–100)", pay.robSuccessChancePct),
         numField("steal_min", "Steal min", pay.robStealMin),
         numField("steal_cap", "Steal cap", pay.robStealCap),
@@ -643,8 +655,8 @@ export async function handleUbAdminComponent(
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:games").setTitle("Games — rate limit");
       modal.addComponents(
         numField("uses", "Plays per window", cds.gameUses),
-        numField("window_sec", "Window (seconds)", cds.gameWindowSec),
-        numField("gap_sec", "Gap between games (seconds)", cds.gameGapSec),
+        textField("window", "Window (5m / 1h / or minutes)", formatCooldownInput(cds.gameWindowSec)),
+        textField("gap", "Gap (3s / 30s / or minutes)", formatCooldownInput(cds.gameGapSec)),
       );
       await interaction.showModal(modal);
       return;
@@ -923,7 +935,7 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     const kind = parts[2];
     try {
       await interaction.deferReply(EPHEMERAL);
-      const { readCooldowns } = await import("./cooldowns.js");
+      const { readCooldowns, parseCooldownInput } = await import("./cooldowns.js");
       const { readPayouts } = await import("./payouts.js");
       const s = await getOrCreateUbSettings(guildId);
       const cds = { ...readCooldowns(s) };
@@ -931,36 +943,36 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       const field = (id: string) => interaction.fields.getTextInputValue(id);
 
       if (kind === "daily") {
-        cds.dailySec = parseNonNeg(field("cd_sec"), "Cooldown");
+        cds.dailySec = parseCooldownInput(field("cd"), "Cooldown");
         pay.dailyMin = parseNonNeg(field("min"), "Min");
         pay.dailyMax = Math.max(pay.dailyMin, parseNonNeg(field("max"), "Max"));
       } else if (kind === "collect") {
-        cds.collectSec = parseNonNeg(field("cd_sec"), "Cooldown");
+        cds.collectSec = parseCooldownInput(field("cd"), "Cooldown");
       } else if (kind === "work") {
-        cds.workSec = parseNonNeg(field("cd_sec"), "Cooldown");
+        cds.workSec = parseCooldownInput(field("cd"), "Cooldown");
         pay.workMin = parseNonNeg(field("min"), "Min");
         pay.workMax = Math.max(pay.workMin, parseNonNeg(field("max"), "Max"));
       } else if (kind === "crime") {
-        cds.crimeSec = parseNonNeg(field("cd_sec"), "Cooldown");
+        cds.crimeSec = parseCooldownInput(field("cd"), "Cooldown");
         pay.crimeWinMin = parseNonNeg(field("win_min"), "Win min");
         pay.crimeWinMax = Math.max(pay.crimeWinMin, parseNonNeg(field("win_max"), "Win max"));
         pay.crimeFailChancePct = Math.min(100, parseNonNeg(field("fail_pct"), "Fail %"));
         pay.crimeFineMin = parseNonNeg(field("fine_min"), "Fine floor");
       } else if (kind === "beg") {
-        cds.begSec = parseNonNeg(field("cd_sec"), "Cooldown");
+        cds.begSec = parseCooldownInput(field("cd"), "Cooldown");
         pay.begChancePct = Math.min(100, parseNonNeg(field("chance"), "Pity %"));
         pay.begMin = parseNonNeg(field("min"), "Min");
         pay.begMax = Math.max(pay.begMin, parseNonNeg(field("max"), "Max"));
       } else if (kind === "rob") {
-        cds.robSec = parseNonNeg(field("cd_sec"), "Cooldown");
+        cds.robSec = parseCooldownInput(field("cd"), "Cooldown");
         pay.robSuccessChancePct = Math.min(100, parseNonNeg(field("success_pct"), "Success %"));
         pay.robStealMin = parseNonNeg(field("steal_min"), "Steal min");
         pay.robStealCap = Math.max(pay.robStealMin, parseNonNeg(field("steal_cap"), "Steal cap"));
         pay.robFailFineMax = Math.max(pay.robFailFineMin, parseNonNeg(field("fail_fine_max"), "Fail fine max"));
       } else if (kind === "games") {
         cds.gameUses = Math.max(1, parseNonNeg(field("uses"), "Plays"));
-        cds.gameWindowSec = Math.max(30, parseNonNeg(field("window_sec"), "Window"));
-        cds.gameGapSec = parseNonNeg(field("gap_sec"), "Gap");
+        cds.gameWindowSec = Math.max(30, parseCooldownInput(field("window"), "Window"));
+        cds.gameGapSec = parseCooldownInput(field("gap"), "Gap");
       } else {
         await interaction.editReply("Unknown station command.");
         return;

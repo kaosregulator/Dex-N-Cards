@@ -28,7 +28,23 @@ UnbelievaBoat’s Discord `set-cooldown` / `set-game-cooldown` settings are **no
 | Rob | 24h | 40% success · steal 25–500 · fail fine 50–199 |
 | Games (BJ/slots/…) | 4 plays / 5 min | bet multipliers (unchanged) |
 
-Pick a command in the dropdown → edit cooldown (seconds) and payout fields. **Reset all defaults** restores factory values.
+Pick a command in the dropdown → edit cooldown + payout fields. Cooldown accepts human times:
+`30m`, `4h`, `daily`, `90s`, or a bare number of **minutes** (not seconds). **Reset all defaults** restores factory values.
+
+### Prefix games (per guild)
+
+Default games prefix is `.` (separate from the admin/card prefix `!`):
+
+```text
+.slots 100
+.blackjack 50
+.daily
+.rob @user
+.setgamesprefix .     # via admin prefix: !setgamesprefix .
+!setprefix !          # admin/card commands
+```
+
+Change either prefix per guild; they must not be identical.
 
 ## Discord dashboard — `/unbelievaboat`
 

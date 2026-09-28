@@ -56,7 +56,15 @@ const VALID_RARITIES = new Set(["common", "uncommon", "rare", "epic", "legendary
 export async function getGuildPrefix(guildId: string): Promise<string> {
   const { getOrCreateGuildSettings } = await import("../db.js");
   const s = await getOrCreateGuildSettings(guildId);
-  return s.commandPrefix;
+  return s.commandPrefix || "!";
+}
+
+/** UnbelievaBoat casino games prefix (default `.`). Independent of admin prefix. */
+export async function getGuildGamesPrefix(guildId: string): Promise<string> {
+  const { getOrCreateGuildSettings } = await import("../db.js");
+  const s = await getOrCreateGuildSettings(guildId);
+  const gp = (s as { gamesPrefix?: string | null }).gamesPrefix;
+  return (gp && gp.length > 0 ? gp : ".") || ".";
 }
 
 export async function handlePrefixCommand(msg: Message, prefix: string): Promise<void> {
@@ -289,7 +297,8 @@ export async function handlePrefixCommand(msg: Message, prefix: string): Promise
       `🎲 Rarity Spawn Chances (✏️ = customised): ${rarityLines}\n` +
       `🔄 Trading: ${s.tradeEnabled ? "✅ Enabled" : "⏸️ Disabled"}\n` +
       `💬 Trade Channel: ${s.tradeChannelId ? `<#${s.tradeChannelId}>` : "Any channel"}\n` +
-      `⚖️ Command Prefix: \`${s.commandPrefix}\` (change with \`${s.commandPrefix}setprefix\`)`,
+      `⚖️ Command Prefix: \`${s.commandPrefix}\` (change with \`${s.commandPrefix}setprefix\`)\n` +
+      `🎰 Games Prefix: \`${(s as { gamesPrefix?: string }).gamesPrefix || "."}\` (change with \`${s.commandPrefix}setgamesprefix\`)`,
     );
     return;
   }
@@ -338,13 +347,38 @@ export async function handlePrefixCommand(msg: Message, prefix: string): Promise
 
   // ── !setprefix ─────────────────────────────────────────────────────────────
   if (cmd === "setprefix") {
+    if (!await checkAdmin(msg)) { await msg.reply("❌ Admins only."); return; }
     const newPrefix = args[0]?.trim();
     if (!newPrefix || newPrefix.length > 5) {
-      await msg.reply("❌ Usage: `!setprefix !` (or `>`, `$`, etc.). Max 5 characters.");
+      await msg.reply(`❌ Usage: \`${prefix}setprefix !\` (or \`>\`, \`$\`, etc.). Max 5 characters.`);
+      return;
+    }
+    const games = await getGuildGamesPrefix(guildId);
+    if (newPrefix === games) {
+      await msg.reply("❌ Command prefix cannot match the games prefix. Change one of them first.");
       return;
     }
     await updateGuildSettings(guildId, { commandPrefix: newPrefix });
-    await msg.reply(`✅ Command prefix changed to **\`${newPrefix}\`**`);
+    await msg.reply(`✅ Command prefix changed to **\`${newPrefix}\`** (admin/card commands).\nGames stay on **\`${games}\`** — change with \`${newPrefix}setgamesprefix\`.`);
+    return;
+  }
+
+  // ── !setgamesprefix ────────────────────────────────────────────────────────
+  if (cmd === "setgamesprefix") {
+    if (!await checkAdmin(msg)) { await msg.reply("❌ Admins only."); return; }
+    const newPrefix = args[0]?.trim();
+    if (!newPrefix || newPrefix.length > 5) {
+      await msg.reply(`❌ Usage: \`${prefix}setgamesprefix .\` (casino games). Max 5 characters.`);
+      return;
+    }
+    if (newPrefix === prefix) {
+      await msg.reply("❌ Games prefix cannot match the command prefix. Pick a different one.");
+      return;
+    }
+    await updateGuildSettings(guildId, { gamesPrefix: newPrefix } as Partial<GuildSettings>);
+    await msg.reply(
+      `✅ Games prefix changed to **\`${newPrefix}\`** — try \`${newPrefix}slots 100\` or \`${newPrefix}help\`.`,
+    );
     return;
   }
 }
