@@ -77,7 +77,7 @@ Administrator-only, ephemeral. Same spirit as `/unbelievaboat`, without games/st
 | **Lookup user** | Points + all/month/week score ranks + global profile |
 | **Adjust points / score** | **Add** / **Remove** buttons (no typing action); member pick or user ID |
 
-If remove fails with **MANAGE_GUILD**, the Discord account that owns `TATSU_API_KEY` needs **Manage Server** in the guild — recreate with `t!apikey create` as that account.
+**MANAGE_GUILD on remove:** that text is returned by `api.tatsu.gg` on the PATCH — we do not check Manage Server ourselves (Administrator on `/tatsu` is separate). Add and remove use the same endpoint/`TATSU_API_KEY`. If remove fails while add works, retry with the **Remove** button; if it persists, recreate the key (`t!apikey create`) as an account that has Manage Server in the guild.
 | **Strip spam** | Bulk remove points + score, auto-watchlist |
 | **Watchlist** | Local suspect list + notes (DN-side only) |
 | **Snapshot + climbers** | Save board slice; flag score Δ ≥ threshold |

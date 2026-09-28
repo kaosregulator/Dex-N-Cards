@@ -6,12 +6,13 @@ import { messageAsChatInput } from "../commands/message-as-chat.js";
 import type { OptBag } from "../commands/option-proxy.js";
 
 const HELP = [
-  "**Casino prefix commands** (games prefix — default `.`)",
-  "`daily` · `collect` · `bal` · `deposit <amt>` · `withdraw <amt>` · `top` · `store`",
-  "`slots <credits>` · `blackjack <bet>` · `roulette <bet> [red|black|green|0-36]`",
-  "`uno <bet>` · `hl <bet>` / `higherlower <bet>` · `rb <bet> <red|black>`",
-  "`work` · `crime` · `beg` · `rob @user` · `russian @user <bet>`",
-  "Change games prefix: `!setgamesprefix .` (uses your admin command prefix).",
+  "**Casino** — short prefix (default `.`). Results post as **UnbelievaBoat**.",
+  "`.daily` · `.collect` · `.bal` · `.work` · `.crime` · `.beg`",
+  "`.slots 100` · `.blackjack 50` · `.roulette 50 red` · `.uno 50`",
+  "`.hl 50` · `.rb 50 red` · `.rob @user` · `.russian @user 50`",
+  "`.deposit 100` · `.withdraw 100` · `.top` · `.store`",
+  "Slash still works too (`/daily_ub`, `/blackjack_ub`, … or `/casino`).",
+  "Change prefix: `!setgamesprefix .`",
 ].join("\n");
 
 function parseBet(raw: string | undefined): number | null {

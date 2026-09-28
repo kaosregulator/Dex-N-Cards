@@ -10,6 +10,7 @@ import {
   type Message,
 } from "discord.js";
 import { logger } from "../../lib/logger.js";
+import { isPrefixChatProxy } from "../commands/message-as-chat.js";
 import {
   UNBELIEVABOAT_ICON,
   UNBELIEVABOAT_WEBHOOK_USERNAME,
@@ -99,9 +100,9 @@ export async function postAsUnbelievaBoat(
   const hook = await resolveWebhook(interaction.client, host);
   if (!hook) return null;
 
-  // Stamp slash tip on the first embed so bystanders know how to play.
+  // Stamp slash tip on the first embed so bystanders know the slash shortcut too.
   if (opts.slashHint && opts.embeds?.[0]) {
-    const tip = `_▶️ Run \`${opts.slashHint}\` · all tables: \`/casino\`_`;
+    const tip = `_▶️ Or use \`${opts.slashHint}\` · all tables: \`/casino\`_`;
     const emb = opts.embeds[0];
     const desc = emb.data.description ?? "";
     if (!desc.includes(opts.slashHint)) {
@@ -147,6 +148,12 @@ export async function replyThenPostAsUnbelievaBoat(
 
   const id = await postAsUnbelievaBoat(interaction, publicPayload);
   if (id) {
+    // Prefix (`.daily`): react on the command — no clutter "Posted as UB" reply.
+    if (isPrefixChatProxy(interaction)) {
+      await interaction.deleteReply().catch(() => {});
+      await interaction.__dnPrefixMessage.react("✅").catch(() => {});
+      return;
+    }
     await interaction.editReply({ content: privateAck, embeds: [], components: [], files: [] });
     return;
   }
@@ -184,11 +191,26 @@ export async function openTableAsUnbelievaBoat(
 
   const id = await postAsUnbelievaBoat(interaction, publicPayload);
   if (id) {
+    if (isPrefixChatProxy(interaction)) {
+      await interaction.deleteReply().catch(() => {});
+      await interaction.__dnPrefixMessage.react("✅").catch(() => {});
+      return id;
+    }
     await interaction.editReply({ content: privateAck, embeds: [], components: [], files: [] });
     return id;
   }
 
   // Webhook unavailable — public follow-up so the floor can still play.
+  if (isPrefixChatProxy(interaction)) {
+    await interaction.editReply({
+      content: undefined,
+      embeds: publicPayload.embeds ?? [],
+      files: publicPayload.files ?? [],
+      components: publicPayload.components ?? [],
+    });
+    return null;
+  }
+
   await interaction.followUp({
     embeds: publicPayload.embeds ?? [],
     files: publicPayload.files ?? [],

@@ -117,12 +117,15 @@ function scoreIdModal(action: "add" | "remove") {
 }
 
 function tatsuApiErr(err: unknown): string {
+  // Pass through Tatsu’s message — we do not invent MANAGE_GUILD locally.
+  // That string only appears when api.tatsu.gg returns it on the PATCH.
   const msg = err instanceof Error ? err.message : "Modify failed";
   if (/MANAGE_GUILD|Manage Server|manage guild/i.test(msg)) {
     return (
-      "⚠️ Tatsu rejected this edit: the **Discord account that owns `TATSU_API_KEY`** needs **Manage Server** in this guild " +
-      "(not just your Dex N Cards admin role). Recreate the key with `t!apikey create` while logged in as a Manage-Server account, " +
-      "then update `TATSU_API_KEY` on Railway.\n\n_Raw: " + msg + "_"
+      `⚠️ ${msg}\n\n` +
+      "_This is Tatsu’s API reply (same PATCH we use for add). Dex N Cards admin/owner is not checked here — " +
+      "Tatsu checks the Discord account that created `TATSU_API_KEY`. If add still works with this key, retry **Remove** once; " +
+      "if remove keeps failing, recreate the key with `t!apikey create` while that account has Manage Server._"
     );
   }
   return `⚠️ ${msg}`;

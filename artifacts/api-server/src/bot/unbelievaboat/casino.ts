@@ -502,10 +502,10 @@ export async function handleBalance(interaction: ChatInputCommandInteraction): P
       `🏦 Bank **${fmtCash(bal.bank)}** ${bal.symbol}`,
       `Σ Total **${fmtCash(bal.cash + bal.bank)}**`,
       "",
-      `_Deposit / withdraw from the \`/casino\` panel._`,
+      `_Deposit / withdraw: \`.deposit\` / \`.withdraw\` or \`/casino\`._`,
     ].join("\n"));
     embed.setThumbnail(target.displayAvatarURL({ size: 128 }));
-    await interaction.editReply({ embeds: [embed] });
+    await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], slashHint: "/bal_ub" });
   } catch (err) {
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);
   }
@@ -526,7 +526,11 @@ export async function handleDeposit(interaction: ChatInputCommandInteraction): P
       `💵 Cash **${fmtCash(bal.cash)}** · 🏦 Bank **${fmtCash(bal.bank)}**`,
     ].join("\n"));
     if (imageName) embed.setImage(`attachment://${imageName}`);
-    await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], files });
+    await replyThenPostAsUnbelievaBoat(interaction, {
+      embeds: [embed],
+      files,
+      slashHint: `/deposit_ub amount:${amount}`,
+    });
     void logEconomyEvent(
       interaction.client, interaction.guildId!, interaction.user,
       "Deposit", `Deposited ${fmtCash(amount)} ${bal.symbol}`,
@@ -555,7 +559,11 @@ export async function handleWithdraw(interaction: ChatInputCommandInteraction): 
       `💵 Cash **${fmtCash(bal.cash)}** · 🏦 Bank **${fmtCash(bal.bank)}**`,
     ].join("\n"));
     if (imageName) embed.setImage(`attachment://${imageName}`);
-    await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], files });
+    await replyThenPostAsUnbelievaBoat(interaction, {
+      embeds: [embed],
+      files,
+      slashHint: `/withdraw_ub amount:${amount}`,
+    });
     void logEconomyEvent(
       interaction.client, interaction.guildId!, interaction.user,
       "Withdraw", `Withdrew ${fmtCash(amount)} ${bal.symbol}`,

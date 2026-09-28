@@ -37,14 +37,24 @@ function toMessageEdit(payload: ReplyPayload): string | MessageEditOptions {
   };
 }
 
+/** Marker so webhook helpers can treat prefix runs differently (no clutter ack). */
+export type PrefixChatProxy = ChatInputCommandInteraction & {
+  __dnPrefixMessage: Message;
+};
+
+export function isPrefixChatProxy(interaction: object): interaction is PrefixChatProxy {
+  return Boolean((interaction as { __dnPrefixMessage?: Message }).__dnPrefixMessage);
+}
+
 /**
  * Build a ChatInputCommandInteraction proxy backed by a guild message.
  * Ephemeral flags are ignored (prefix replies are always public in-channel).
+ * UnbelievaBoat handlers still post public results via webhook as UB.
  */
 export function messageAsChatInput(
   msg: Message,
   values: OptBag = {},
-): ChatInputCommandInteraction {
+): PrefixChatProxy {
   let replyMsg: Message | null = null;
   let deferred = false;
   let replied = false;
@@ -59,6 +69,8 @@ export function messageAsChatInput(
     member: msg.member,
     client: msg.client,
     createdTimestamp: msg.createdTimestamp,
+    /** Source message — used by UB webhook helpers. */
+    __dnPrefixMessage: msg,
     get deferred() { return deferred; },
     get replied() { return replied; },
     isChatInputCommand: () => true,
@@ -95,9 +107,12 @@ export function messageAsChatInput(
       return replyMsg;
     },
     async deleteReply() {
-      if (replyMsg) await replyMsg.delete().catch(() => {});
+      if (replyMsg) {
+        await replyMsg.delete().catch(() => {});
+        replyMsg = null;
+      }
     },
   };
 
-  return withOptionValues(fake, values);
+  return withOptionValues(fake, values) as PrefixChatProxy;
 }

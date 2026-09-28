@@ -460,7 +460,12 @@ export async function handleHigherLower(interaction: ChatInputCommandInteraction
       new ButtonBuilder().setCustomId(`unbgame:hl:higher:${interaction.user.id}`).setLabel("Higher").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`unbgame:hl:lower:${interaction.user.id}`).setLabel("Lower").setStyle(ButtonStyle.Danger),
     );
-    await interaction.editReply({ embeds: [embed], files, components: [row] });
+    await openTableAsUnbelievaBoat(interaction, {
+      embeds: [embed],
+      files,
+      components: [row],
+      slashHint: `/higherlower_ub bet:${bet}`,
+    });
   } catch (err) {
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);
   }
