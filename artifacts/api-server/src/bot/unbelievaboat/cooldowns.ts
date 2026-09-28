@@ -72,6 +72,63 @@ export function cdText(ms: number): string {
   return rm ? `${h}h ${rm}m` : `${h}h`;
 }
 
+/** Human-friendly value for cooldown modals (e.g. `4h`, `30m`, `daily`). */
+export function formatCooldownInput(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s === 0) return "0s";
+  if (s === 86400 || s % 86400 === 0) {
+    const d = s / 86400;
+    return d === 1 ? "daily" : `${d}d`;
+  }
+  if (s % 3600 === 0) return `${s / 3600}h`;
+  if (s % 60 === 0) return `${s / 60}m`;
+  return `${s}s`;
+}
+
+/**
+ * Parse station cooldown input → seconds.
+ * Accepts: `daily`, `4h`, `30m`, `90s`, `2d`, `4 hours`, `30 minutes`,
+ * or a bare number (treated as **minutes** — not seconds).
+ */
+export function parseCooldownInput(raw: string, label = "Cooldown"): number {
+  const t = String(raw ?? "").trim().toLowerCase().replace(/,/g, "");
+  if (!t) throw new Error(`${label}: enter a time (e.g. 30m, 4h, daily).`);
+  if (t === "daily" || t === "day" || t === "1 day") return 86400;
+
+  const spaced = t.match(/^(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)$/i);
+  if (spaced) {
+    const n = Number(spaced[1]);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${label} must be a non-negative number.`);
+    const u = spaced[2]!.toLowerCase();
+    if (u === "s" || u.startsWith("sec")) return Math.floor(n);
+    if (u === "m" || u.startsWith("min")) return Math.floor(n * 60);
+    if (u === "h" || u.startsWith("hr") || u.startsWith("hour")) return Math.floor(n * 3600);
+    if (u === "d" || u.startsWith("day")) return Math.floor(n * 86400);
+  }
+
+  const compact = t.match(/^(\d+(?:\.\d+)?)(s|m|h|d)$/i);
+  if (compact) {
+    const n = Number(compact[1]);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${label} must be a non-negative number.`);
+    const u = compact[2]!.toLowerCase();
+    if (u === "s") return Math.floor(n);
+    if (u === "m") return Math.floor(n * 60);
+    if (u === "h") return Math.floor(n * 3600);
+    if (u === "d") return Math.floor(n * 86400);
+  }
+
+  // Bare number → minutes (admins think in minutes, not seconds).
+  if (/^\d+(?:\.\d+)?$/.test(t)) {
+    const n = Number(t);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${label} must be a non-negative number.`);
+    return Math.floor(n * 60);
+  }
+
+  throw new Error(
+    `${label}: use \`30m\`, \`4h\`, \`daily\`, \`90s\`, or a bare number of **minutes**.`,
+  );
+}
+
 type IncomeKey = "daily" | "work" | "crime" | "beg" | "rob" | "collect";
 
 const INCOME_FIELD: Record<IncomeKey, "lastDailyAt" | "lastRobAt" | "lastBegAt" | "lastWorkAt" | "lastCrimeAt" | "lastCollectAt"> = {

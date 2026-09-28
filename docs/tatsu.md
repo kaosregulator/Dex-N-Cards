@@ -75,7 +75,9 @@ Administrator-only, ephemeral. Same spirit as `/unbelievaboat`, without games/st
 | **Prune left** | Find board accounts no longer in Discord; zero using **board score** (member API often lies at 0) |
 | **Edit user** | Live lookup + board scan + adjust/zero dropdown (supports raw user ID) |
 | **Lookup user** | Points + all/month/week score ranks + global profile |
-| **Adjust points / score** | Add or remove (chunked); member pick or user ID |
+| **Adjust points / score** | **Add** / **Remove** buttons (no typing action); member pick or user ID |
+
+If remove fails with **MANAGE_GUILD**, the Discord account that owns `TATSU_API_KEY` needs **Manage Server** in the guild — recreate with `t!apikey create` as that account.
 | **Strip spam** | Bulk remove points + score, auto-watchlist |
 | **Watchlist** | Local suspect list + notes (DN-side only) |
 | **Snapshot + climbers** | Save board slice; flag score Δ ≥ threshold |

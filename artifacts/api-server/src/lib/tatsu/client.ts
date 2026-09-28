@@ -167,17 +167,20 @@ export const tatsuApi = {
 
   modifyMemberPoints(guildId: string, userId: string, amount: number, action: TatsuAction) {
     const amt = Math.min(TATSU_MODIFY_MAX, Math.max(1, Math.floor(amount)));
+    // Tatsu expects integer 0=add / 1=remove (not strings / booleans).
+    const act = action === 1 ? 1 : 0;
     return tatsuFetch<TatsuMemberPoints>("PATCH", `/guilds/${guildId}/members/${userId}/points`, {
       amount: amt,
-      action,
+      action: act,
     });
   },
 
   modifyMemberScore(guildId: string, userId: string, amount: number, action: TatsuAction) {
     const amt = Math.min(TATSU_MODIFY_MAX, Math.max(1, Math.floor(amount)));
+    const act = action === 1 ? 1 : 0;
     return tatsuFetch<TatsuMemberScore>("PATCH", `/guilds/${guildId}/members/${userId}/score`, {
       amount: amt,
-      action,
+      action: act,
     });
   },
 

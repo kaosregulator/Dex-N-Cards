@@ -24,7 +24,7 @@ import { handleMTTVCalcButton, handleMTTVCalcModal, handleMTTVCalcSelect } from 
 import { checkAchievements, formatUnlockLine } from "./achievements.js";
 import { handleAdminCommand } from "./commands/admin.js";
 import { handleUserCommand } from "./commands/user.js";
-import { handlePrefixCommand, getGuildPrefix } from "./commands/prefix.js";
+import { handlePrefixCommand, getGuildPrefix, getGuildGamesPrefix } from "./commands/prefix.js";
 import {
   handleSetupButton, handleSetupSelect, handleSetupModalSubmit,
 } from "./commands/setup-wizard.js";
@@ -1190,16 +1190,42 @@ export async function startBot() {
     // consumes the message or blocks the prefix / card-catch pipeline below.
     void handleAfkMessage(msg).catch(err => logger.debug({ err }, "AFK message hook error"));
 
-    // prefix commands (admin setup and config) — prefix is configurable per-guild
+    // Dual prefixes (per-guild): admin/card commands vs UnbelievaBoat casino games.
     const prefix = await getGuildPrefix(msg.guild.id);
+    const gamesPrefix = await getGuildGamesPrefix(msg.guild.id);
 
     // Giveaway message-requirement tracking (anti-spam, ignores commands/bots).
     // Fire-and-forget — never consumes the message or blocks the pipeline below.
     void handleGiveawayMessage(msg, prefix).catch(err => logger.debug({ err }, "Giveaway message hook error"));
 
-    if (content.startsWith(prefix)) {
-      await handlePrefixCommand(msg, prefix).catch(err => logger.error({ err }, "Prefix command error"));
-      return;
+    // Prefer longer prefix when both match the same string start (e.g. `!!` vs `!`).
+    const adminHit = content.startsWith(prefix);
+    const gamesHit = content.startsWith(gamesPrefix);
+    if (adminHit || gamesHit) {
+      if (adminHit && gamesHit) {
+        if (gamesPrefix.length > prefix.length) {
+          const { handleUbPrefixCommand } = await import("./unbelievaboat/ub-prefix-router.js");
+          const consumed = await handleUbPrefixCommand(msg, gamesPrefix).catch(err => {
+            logger.error({ err }, "UB prefix command error");
+            return true;
+          });
+          if (consumed) return;
+        }
+        await handlePrefixCommand(msg, prefix).catch(err => logger.error({ err }, "Prefix command error"));
+        return;
+      }
+      if (gamesHit) {
+        const { handleUbPrefixCommand } = await import("./unbelievaboat/ub-prefix-router.js");
+        const consumed = await handleUbPrefixCommand(msg, gamesPrefix).catch(err => {
+          logger.error({ err }, "UB prefix command error");
+          return true;
+        });
+        if (consumed) return;
+      }
+      if (adminHit) {
+        await handlePrefixCommand(msg, prefix).catch(err => logger.error({ err }, "Prefix command error"));
+        return;
+      }
     }
 
     // Card creation wizard step responses

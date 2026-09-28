@@ -67,6 +67,67 @@ export function buildTatsuAdminCommandJson() {
     .toJSON();
 }
 
+
+function pointsAmountModal(customId: string, title: string) {
+  return new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle(title.slice(0, 45))
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("1000"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
+      ),
+    );
+}
+
+function pointsIdModal(action: "add" | "remove") {
+  return new ModalBuilder()
+    .setCustomId(`tatsu:points_id_modal:${action}`)
+    .setTitle(action === "add" ? "Add points by user ID" : "Remove points by user ID")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("user_id").setLabel("Discord user ID").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("123456789012345678"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("1000"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
+      ),
+    );
+}
+
+function scoreIdModal(action: "add" | "remove") {
+  return new ModalBuilder()
+    .setCustomId(`tatsu:score_id_modal:${action}`)
+    .setTitle(action === "add" ? "Add score by user ID" : "Remove score by user ID")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("user_id").setLabel("Discord user ID").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("123456789012345678"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("5000"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
+      ),
+    );
+}
+
+function tatsuApiErr(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "Modify failed";
+  if (/MANAGE_GUILD|Manage Server|manage guild/i.test(msg)) {
+    return (
+      "⚠️ Tatsu rejected this edit: the **Discord account that owns `TATSU_API_KEY`** needs **Manage Server** in this guild " +
+      "(not just your Dex N Cards admin role). Recreate the key with `t!apikey create` while logged in as a Manage-Server account, " +
+      "then update `TATSU_API_KEY` on Railway.\n\n_Raw: " + msg + "_"
+    );
+  }
+  return `⚠️ ${msg}`;
+}
+
 function hubRows() {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -678,64 +739,74 @@ export async function handleTatsuAdminComponent(
   }
 
   if (id === "tatsu:points_by_id" && interaction.isButton()) {
-    const modal = new ModalBuilder()
-      .setCustomId("tatsu:points_id_modal")
-      .setTitle("Adjust points by user ID")
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("user_id").setLabel("Discord user ID").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("123456789012345678"),
+    await interaction.deferUpdate();
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("💠 Points by user ID").setDescription(
+        "Choose **Add** or **Remove**, then enter the Discord snowflake + amount.",
+      )],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("tatsu:points_id_do:add").setLabel("➕ Add by ID").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId("tatsu:points_id_do:remove").setLabel("➖ Remove by ID").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
         ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("remove"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("1000"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-        ),
-      );
-    await interaction.showModal(modal);
+      ],
+    });
+    return;
+  }
+
+  if (id.startsWith("tatsu:points_id_do:") && interaction.isButton()) {
+    const action = id.split(":")[2] as "add" | "remove";
+    if (action !== "add" && action !== "remove") return;
+    await interaction.showModal(pointsIdModal(action));
     return;
   }
 
   if (id === "tatsu:points_user" && interaction.isUserSelectMenu()) {
     const userId = interaction.values[0]!;
-    const modal = new ModalBuilder()
-      .setCustomId(`tatsu:points_modal:${userId}`)
-      .setTitle("Adjust Tatsu points")
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("add"),
+    await interaction.deferUpdate();
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("💠 Adjust points").setDescription(
+        `Member: <@${userId}>\nPick **Add** or **Remove** — no typing \`add\`/\`remove\`.`,
+      )],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`tatsu:points_do:add:${userId}`).setLabel("➕ Add points").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`tatsu:points_do:remove:${userId}`).setLabel("➖ Remove points").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
         ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("1000"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-        ),
-      );
-    await interaction.showModal(modal);
+      ],
+    });
+    return;
+  }
+
+  if (id.startsWith("tatsu:points_do:") && interaction.isButton()) {
+    const parts = id.split(":");
+    const action = parts[2] as "add" | "remove";
+    const userId = parts[3]!;
+    if (action !== "add" && action !== "remove") return;
+    await interaction.showModal(pointsAmountModal(
+      `tatsu:points_modal:${action}:${userId}`,
+      action === "add" ? "Add Tatsu points" : "Remove Tatsu points",
+    ));
     return;
   }
 
   if (id.startsWith("tatsu:points_for:") && interaction.isButton()) {
     const userId = id.slice("tatsu:points_for:".length);
-    const modal = new ModalBuilder()
-      .setCustomId(`tatsu:points_modal:${userId}`)
-      .setTitle("Adjust Tatsu points")
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("add"),
+    await interaction.deferUpdate();
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("💠 Adjust points").setDescription(
+        `Member: <@${userId}>\nPick **Add** or **Remove**.`,
+      )],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`tatsu:points_do:add:${userId}`).setLabel("➕ Add points").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`tatsu:points_do:remove:${userId}`).setLabel("➖ Remove points").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
         ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("1000"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-        ),
-      );
-    await interaction.showModal(modal);
+      ],
+    });
     return;
   }
 
@@ -759,24 +830,26 @@ export async function handleTatsuAdminComponent(
   }
 
   if (id === "tatsu:score_by_id" && interaction.isButton()) {
-    const modal = new ModalBuilder()
-      .setCustomId("tatsu:score_id_modal")
-      .setTitle("Adjust score by user ID")
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("user_id").setLabel("Discord user ID").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("123456789012345678"),
+    await interaction.deferUpdate();
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("⭐ Score by user ID").setDescription(
+        "Choose **Add** or **Remove**, then enter the Discord snowflake + amount.",
+      )],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("tatsu:score_id_do:add").setLabel("➕ Add by ID").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId("tatsu:score_id_do:remove").setLabel("➖ Remove by ID").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
         ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("remove"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("5000"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-        ),
-      );
-    await interaction.showModal(modal);
+      ],
+    });
+    return;
+  }
+
+  if (id.startsWith("tatsu:score_id_do:") && interaction.isButton()) {
+    const action = id.split(":")[2] as "add" | "remove";
+    if (action !== "add" && action !== "remove") return;
+    await interaction.showModal(scoreIdModal(action));
     return;
   }
 
@@ -868,41 +941,36 @@ export async function handleTatsuAdminComponent(
     const boardScore = ctx && ctx.expires > Date.now() ? ctx.boardScore : undefined;
 
     if (choice === "adjust_points") {
-      const modal = new ModalBuilder()
-        .setCustomId(`tatsu:points_modal:${userId}`)
-        .setTitle("Adjust Tatsu points")
-        .addComponents(
-          new ActionRowBuilder<TextInputBuilder>().addComponents(
-            new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("remove"),
+      await interaction.deferUpdate();
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("💠 Adjust points").setDescription(
+          `Member: <@${userId}>\nPick **Add** or **Remove**.`,
+        )],
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`tatsu:points_do:add:${userId}`).setLabel("➕ Add points").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`tatsu:points_do:remove:${userId}`).setLabel("➖ Remove points").setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
           ),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(
-            new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("1000"),
-          ),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(
-            new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-          ),
-        );
-      await interaction.showModal(modal);
+        ],
+      });
       return;
     }
     if (choice === "adjust_score") {
-      const modal = new ModalBuilder()
-        .setCustomId(`tatsu:score_modal:${userId}`)
-        .setTitle("Adjust Tatsu score")
-        .addComponents(
-          new ActionRowBuilder<TextInputBuilder>().addComponents(
-            new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("remove"),
+      await interaction.deferUpdate();
+      await interaction.editReply({
+        embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("⭐ Adjust score").setDescription(
+          `Member: <@${userId}>\nPick **Add** or **Remove**.` +
+          (boardScore != null ? `\n_Board score hint: **${fmt(boardScore)}**_` : ""),
+        )],
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`tatsu:score_do:add:${userId}`).setLabel("➕ Add score").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`tatsu:score_do:remove:${userId}`).setLabel("➖ Remove score").setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
           ),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(
-            new TextInputBuilder().setCustomId("amount").setLabel(
-              boardScore != null ? `Amount (board shows ${fmt(boardScore)})` : "Amount (1+)",
-            ).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder(boardScore != null ? String(boardScore) : "5000"),
-          ),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(
-            new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-          ),
-        );
-      await interaction.showModal(modal);
+        ],
+      });
       return;
     }
 
@@ -1044,41 +1112,49 @@ export async function handleTatsuAdminComponent(
 
   if (id === "tatsu:score_user" && interaction.isUserSelectMenu()) {
     const userId = interaction.values[0]!;
-    const modal = new ModalBuilder()
-      .setCustomId(`tatsu:score_modal:${userId}`)
-      .setTitle("Adjust Tatsu score")
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("remove"),
+    await interaction.deferUpdate();
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("⭐ Adjust score").setDescription(
+        `Member: <@${userId}>\nPick **Add** or **Remove**.`,
+      )],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`tatsu:score_do:add:${userId}`).setLabel("➕ Add score").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`tatsu:score_do:remove:${userId}`).setLabel("➖ Remove score").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
         ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("5000"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-        ),
-      );
-    await interaction.showModal(modal);
+      ],
+    });
+    return;
+  }
+
+  if (id.startsWith("tatsu:score_do:") && interaction.isButton()) {
+    const parts = id.split(":");
+    const action = parts[2] as "add" | "remove";
+    const userId = parts[3]!;
+    if (action !== "add" && action !== "remove") return;
+    await interaction.showModal(pointsAmountModal(
+      `tatsu:score_modal:${action}:${userId}`,
+      action === "add" ? "Add Tatsu score" : "Remove Tatsu score",
+    ));
     return;
   }
 
   if (id.startsWith("tatsu:score_for:") && interaction.isButton()) {
     const userId = id.slice("tatsu:score_for:".length);
-    const modal = new ModalBuilder()
-      .setCustomId(`tatsu:score_modal:${userId}`)
-      .setTitle("Adjust Tatsu score")
-      .addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("action").setLabel("Action: add or remove").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("remove"),
+    await interaction.deferUpdate();
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(TATSU_COLOR).setTitle("⭐ Adjust score").setDescription(
+        `Member: <@${userId}>\nPick **Add** or **Remove**.`,
+      )],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`tatsu:score_do:add:${userId}`).setLabel("➕ Add score").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`tatsu:score_do:remove:${userId}`).setLabel("➖ Remove score").setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId("tatsu:overview").setLabel("Home").setStyle(ButtonStyle.Secondary),
         ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("amount").setLabel("Amount (1+)").setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder("5000"),
-        ),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(
-          new TextInputBuilder().setCustomId("reason").setLabel("Reason (optional)").setStyle(TextInputStyle.Short).setRequired(false),
-        ),
-      );
-    await interaction.showModal(modal);
+      ],
+    });
     return;
   }
 
@@ -1510,23 +1586,30 @@ export async function handleTatsuAdminModal(interaction: ModalSubmitInteraction)
   const parseAction = (raw: string): 0 | 1 | null => {
     const a = raw.trim().toLowerCase();
     if (a === "add" || a === "0" || a === "+") return 0;
-    if (a === "remove" || a === "rem" || a === "1" || a === "-") return 1;
+    if (a === "remove" || a === "rem" || a === "1" || a === "-" || a === "subtract" || a === "sub") return 1;
     return null;
   };
 
-  if (id === "tatsu:points_id_modal" || id === "tatsu:score_id_modal") {
+  // New: tatsu:points_id_modal:add|remove — legacy: tatsu:points_id_modal (action field)
+  if (id === "tatsu:points_id_modal" || id.startsWith("tatsu:points_id_modal:")
+    || id === "tatsu:score_id_modal" || id.startsWith("tatsu:score_id_modal:")) {
     await interaction.deferReply(EPHEMERAL);
-    const isPoints = id === "tatsu:points_id_modal";
+    const isPoints = id.startsWith("tatsu:points_id_modal");
+    const parts = id.split(":");
+    const actionFromId = parts[2] === "add" ? 0 as const : parts[2] === "remove" ? 1 as const : null;
     const userId = interaction.fields.getTextInputValue("user_id").replace(/\D/g, "");
-    const action = parseAction(interaction.fields.getTextInputValue("action"));
+    let action = actionFromId;
+    if (action == null) {
+      try { action = parseAction(interaction.fields.getTextInputValue("action")); } catch { action = null; }
+    }
     const amount = Math.floor(Number(interaction.fields.getTextInputValue("amount").replace(/,/g, "")));
-    const reason = interaction.fields.getTextInputValue("reason") || undefined;
+    const reason = (() => { try { return interaction.fields.getTextInputValue("reason") || undefined; } catch { return undefined; } })();
     if (!/^\d{17,20}$/.test(userId)) {
       await interaction.editReply("Enter a valid Discord snowflake user ID.");
       return;
     }
     if (action == null || !Number.isFinite(amount) || amount < 1) {
-      await interaction.editReply("Need action `add` or `remove`, and amount ≥ 1.");
+      await interaction.editReply("Need amount ≥ 1 (use the Add / Remove buttons).");
       return;
     }
     if (!isTatsuConfigured() || !settings.enabled) {
@@ -1566,7 +1649,7 @@ export async function handleTatsuAdminModal(interaction: ModalSubmitInteraction)
         );
       }
     } catch (err) {
-      await interaction.editReply(`⚠️ ${err instanceof Error ? err.message : "Modify failed"}`);
+      await interaction.editReply(tatsuApiErr(err));
     }
     return;
   }
@@ -1587,16 +1670,26 @@ export async function handleTatsuAdminModal(interaction: ModalSubmitInteraction)
     return;
   }
 
+  // New: tatsu:points_modal:add|remove:userId — legacy: tatsu:points_modal:userId + action field
   if (id.startsWith("tatsu:points_modal:") || id.startsWith("tatsu:score_modal:")) {
     await interaction.deferReply(EPHEMERAL);
     const isPoints = id.startsWith("tatsu:points_modal:");
-    const userId = id.split(":")[2]!;
-    const action = parseAction(interaction.fields.getTextInputValue("action"));
+    const parts = id.split(":");
+    // points_modal:add:uid | points_modal:uid
+    let action: 0 | 1 | null = null;
+    let userId: string;
+    if (parts[2] === "add" || parts[2] === "remove") {
+      action = parts[2] === "add" ? 0 : 1;
+      userId = parts[3]!;
+    } else {
+      userId = parts[2]!;
+      try { action = parseAction(interaction.fields.getTextInputValue("action")); } catch { action = null; }
+    }
     const amount = Math.floor(Number(interaction.fields.getTextInputValue("amount").replace(/,/g, "")));
-    const reason = interaction.fields.getTextInputValue("reason") || undefined;
+    const reason = (() => { try { return interaction.fields.getTextInputValue("reason") || undefined; } catch { return undefined; } })();
 
     if (action == null || !Number.isFinite(amount) || amount < 1) {
-      await interaction.editReply("Need action `add` or `remove`, and amount ≥ 1.");
+      await interaction.editReply("Need amount ≥ 1 (use the Add / Remove buttons).");
       return;
     }
     if (!isTatsuConfigured() || !settings.enabled) {
@@ -1637,7 +1730,7 @@ export async function handleTatsuAdminModal(interaction: ModalSubmitInteraction)
         );
       }
     } catch (err) {
-      await interaction.editReply(`⚠️ ${err instanceof Error ? err.message : "Modify failed"}`);
+      await interaction.editReply(tatsuApiErr(err));
     }
     return;
   }

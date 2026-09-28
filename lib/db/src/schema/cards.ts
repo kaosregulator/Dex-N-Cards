@@ -227,6 +227,9 @@ export const guildSettingsTable = pgTable("guild_settings", {
   // Catch mode: "type" (type card name), "button" (click claim button), or "both"
   catchMode: text("catch_mode").notNull().default("type"),
   commandPrefix: text("command_prefix").notNull().default("!"),
+  // Separate prefix for UnbelievaBoat casino games (default `.` → `.slots 100`).
+  // Empty / null falls back to `.` at runtime; changeable per guild.
+  gamesPrefix: text("games_prefix").notNull().default("."),
   // ── Pack store config ──────────────────────────────────────────────────────
   // Shared cooldown between any two pack opens (0 = no cooldown).
   packCooldownSeconds: integer("pack_cooldown_seconds").notNull().default(60),
