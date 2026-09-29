@@ -38,6 +38,8 @@ import {
   type QuoteLayout,
 } from "./styles.js";
 import { clip, prepareQuoteText } from "./text.js";
+import { quoteDisplayName } from "./display-name.js";
+import { postQuoteAsPerson } from "./webhook.js";
 import {
   buildDualBuilderReply, buildDualHubReply,
   dualPostFiles, dualPostPayload, dualSlotFromView, renderDualPreviews,
@@ -85,11 +87,12 @@ function payloadFromMessage(message: Message): QuotePayload | null {
       }),
   });
   if (!text) return null;
-  const displayName = message.member?.displayName ?? message.author.displayName ?? message.author.username;
+  const handle = message.author.username;
+  const rawName = message.member?.displayName ?? message.author.displayName ?? handle;
   return {
     text,
-    displayName,
-    handle: message.author.username,
+    displayName: quoteDisplayName(rawName, handle),
+    handle,
     avatarUrl: avatarUrlFor(message),
     messageId: message.id,
     channelId: message.channelId,
@@ -387,10 +390,11 @@ export async function handleQuoteCommand(interaction: ChatInputCommandInteractio
     await interaction.deferReply(EPHEMERAL).catch(() => {});
     const target = userOpt ?? interaction.user;
     const member = await interaction.guild?.members.fetch(target.id).catch(() => null);
+    const handle = target.username;
     const payload: QuotePayload = {
       text: prepareQuoteText(textOpt),
-      displayName: member?.displayName ?? target.displayName ?? target.username,
-      handle: target.username,
+      displayName: quoteDisplayName(member?.displayName ?? target.displayName ?? handle, handle),
+      handle,
       avatarUrl: member?.displayAvatarURL({ extension: "png", size: 512 })
         ?? target.displayAvatarURL({ extension: "png", size: 512 }),
       authorId: target.id,
@@ -711,8 +715,11 @@ export async function handleQuoteInteraction(
       if (!interaction.channel || !interaction.channel.isTextBased()) return;
       await interaction.deferUpdate().catch(() => {});
       const text = prepareQuoteText(interaction.fields.getTextInputValue("text"));
-      const displayName = interaction.fields.getTextInputValue("name").trim() || interaction.user.displayName;
       const handle = interaction.fields.getTextInputValue("handle").trim().replace(/^@/, "") || interaction.user.username;
+      const displayName = quoteDisplayName(
+        interaction.fields.getTextInputValue("name").trim() || interaction.user.displayName,
+        handle,
+      );
       const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
       const payload: QuotePayload = {
         text,
@@ -787,13 +794,25 @@ export async function handleQuoteInteraction(
         await interaction.editReply({ content: "❌ Can't post here — download instead:", files: payload.files }).catch(() => {});
         return;
       }
-      const posted = await channel.send(payload).catch((err: unknown) => {
-        logger.warn({ err }, "duo-quote: channel post failed");
-        return null;
-      });
+      const guildChannel = channel as GuildTextBasedChannel;
+      // Appear as quote #1; card/embeds still show both people.
+      const asPerson = session.payload;
+      const posted =
+        (await postQuoteAsPerson(guildChannel, interaction.client, {
+          displayName: asPerson?.displayName ?? "someone",
+          handle: asPerson?.handle,
+          avatarURL: asPerson?.avatarUrl,
+          content: payload.content,
+          embeds: payload.embeds,
+          files: payload.files,
+        })) ??
+        await guildChannel.send(payload).catch((err: unknown) => {
+          logger.warn({ err }, "duo-quote: channel post failed");
+          return null;
+        });
       if (!posted) {
         await interaction.editReply({
-          content: "❌ Couldn't post (missing permissions?). Download instead:",
+          content: "❌ Couldn't post (missing **Manage Webhooks** / send perms?). Download instead:",
           files: payload.files,
         }).catch(() => {});
         return;
@@ -957,8 +976,11 @@ export async function handleQuoteInteraction(
     if (action === "modal" && interaction.isModalSubmit()) {
       await interaction.deferUpdate().catch(() => {});
       const text = prepareQuoteText(interaction.fields.getTextInputValue("text"));
-      const displayName = interaction.fields.getTextInputValue("name").trim() || interaction.user.displayName;
       const handle = interaction.fields.getTextInputValue("handle").trim().replace(/^@/, "") || interaction.user.username;
+      const displayName = quoteDisplayName(
+        interaction.fields.getTextInputValue("name").trim() || interaction.user.displayName,
+        handle,
+      );
       if (!session.payload) {
         const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
         session.payload = {
@@ -1008,7 +1030,6 @@ export async function handleQuoteInteraction(
         return;
       }
       const file = new AttachmentBuilder(png, { name: QUOTE_FILE });
-      const who = session.payload?.displayName ?? "someone";
       const channel = interaction.channel;
       if (!channel || !channel.isTextBased() || channel.isDMBased() || !("send" in channel)) {
         await interaction.editReply({
@@ -1017,16 +1038,21 @@ export async function handleQuoteInteraction(
         }).catch(() => {});
         return;
       }
-      const posted = await channel.send({
-        content: `🖤 **Quoted** ${who}`,
-        files: [file],
-      }).catch((err: unknown) => {
-        logger.warn({ err }, "quote: channel post failed");
-        return null;
-      });
+      const guildChannel = channel as GuildTextBasedChannel;
+      const posted =
+        (await postQuoteAsPerson(guildChannel, interaction.client, {
+          displayName: session.payload?.displayName ?? "someone",
+          handle: session.payload?.handle,
+          avatarURL: session.payload?.avatarUrl,
+          files: [file],
+        })) ??
+        await guildChannel.send({ files: [file] }).catch((err: unknown) => {
+          logger.warn({ err }, "quote: channel post failed");
+          return null;
+        });
       if (!posted) {
         await interaction.editReply({
-          content: "❌ I couldn't post in this channel (missing **Attach Files** / **Send Messages**?). Here's your download instead:",
+          content: "❌ I couldn't post in this channel (missing **Attach Files** / **Manage Webhooks** / **Send Messages**?). Here's your download instead:",
           files: [file],
         }).catch(() => {});
         return;

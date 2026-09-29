@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { prepareQuoteText, stripDiscordMarkdown, wrapLines } from "../text.js";
+import { quoteDisplayName, unstyleFancyText } from "../display-name.js";
 import { QUOTE_STYLES, customFrom, getStyle } from "../styles.js";
 import { DUAL_QUOTE_STYLES, getDualStyle } from "../dual-styles.js";
 
@@ -70,5 +71,34 @@ describe("dual slot hub", () => {
     expect(dualSlotFromView({ view: "dual-pick-a" } as never)).toBe("a");
     expect(dualSlotFromView({ view: "dual-pick-b" } as never)).toBe("b");
     expect(dualSlotFromView({ view: "dual-builder" } as never)).toBe("a");
+  });
+});
+
+describe("quote display names (fancy fonts)", () => {
+  it("folds mathematical bold / italic / sans into ASCII", () => {
+    // Mathematical Bold "Bob" (𝐁𝐨𝐛)
+    const bold = "\u{1D401}\u{1D428}\u{1D41B}";
+    expect(unstyleFancyText(bold)).toBe("Bob");
+    // Mathematical Sans-Serif Bold "Hi" (𝗛𝗶)
+    const sans = "\u{1D5DB}\u{1D5F6}";
+    expect(unstyleFancyText(sans)).toBe("Hi");
+  });
+
+  it("folds fullwidth Latin", () => {
+    expect(unstyleFancyText("Ｗｅｉｒｄ")).toBe("Weird");
+  });
+
+  it("falls back to handle when nick is empty after unstyle", () => {
+    expect(quoteDisplayName("", "cooluser")).toBe("cooluser");
+    expect(quoteDisplayName("\u200B\u200B", "cooluser")).toBe("cooluser");
+  });
+
+  it("keeps a normal nick as-is", () => {
+    expect(quoteDisplayName("Kaos", "kaosregulator")).toBe("Kaos");
+  });
+
+  it("prepareQuoteText unstyles fancy body text without killing newlines", () => {
+    const boldHi = "\u{1D407}\u{1D422}";
+    expect(prepareQuoteText(`${boldHi}\nthere`)).toBe("Hi\nthere");
   });
 });

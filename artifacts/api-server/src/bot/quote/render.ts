@@ -7,6 +7,7 @@ import { getCanvas, type CanvasMod, type Ctx } from "../animations/engine.js";
 import { queueRender } from "../animations/render-queue.js";
 import { BRAND_NAME } from "../help-banners.js";
 import { fitFontSize, wrapLines } from "./text.js";
+import { quoteDisplayName, unstyleFancyText } from "./display-name.js";
 import type { QuoteTheme } from "./styles.js";
 import { logger } from "../../lib/logger.js";
 
@@ -118,7 +119,17 @@ function fontFamily(tone: QuoteTheme["fontTone"]): string {
 }
 
 function handleOf(input: QuoteRenderInput): string {
-  return input.handle.startsWith("@") ? input.handle : `@${input.handle}`;
+  const h = unstyleFancyText(input.handle.replace(/^@/, "")) || "user";
+  return `@${h}`;
+}
+
+/** Defense-in-depth: never paint a fancy-font nick as □□□ on canvas. */
+function withReadableNames(input: QuoteRenderInput): QuoteRenderInput {
+  return {
+    ...input,
+    displayName: quoteDisplayName(input.displayName, input.handle),
+    handle: unstyleFancyText(input.handle.replace(/^@/, "")) || input.handle || "user",
+  };
 }
 
 function quoteText(input: QuoteRenderInput, theme: QuoteTheme): string {
@@ -1158,7 +1169,8 @@ function drawWatermark(ctx: Ctx, theme: QuoteTheme, w: number, h: number, label:
   ctx.restore();
 }
 
-export async function renderQuoteCard(input: QuoteRenderInput): Promise<Buffer | null> {
+export async function renderQuoteCard(raw: QuoteRenderInput): Promise<Buffer | null> {
+  const input = withReadableNames(raw);
   return queueRender("quote-card", async () => {
     const mod = await getCanvas();
     if (!mod) return null;
