@@ -6,9 +6,18 @@
 import { getCanvas, type CanvasMod, type Ctx } from "../animations/engine.js";
 import { queueRender } from "../animations/render-queue.js";
 import { wrapLines } from "./text.js";
+import { quoteDisplayName, unstyleFancyText } from "./display-name.js";
 import type { DualQuoteTheme } from "./dual-styles.js";
 import { paintDuoVibeLayout } from "./render-dual-vibes.js";
 import { logger } from "../../lib/logger.js";
+
+function readableLine(line: DualLine): DualLine {
+  return {
+    ...line,
+    displayName: quoteDisplayName(line.displayName, line.handle),
+    handle: unstyleFancyText(line.handle.replace(/^@/, "")) || line.handle || "user",
+  };
+}
 
 export interface DualLine {
   text: string;
@@ -549,7 +558,12 @@ function drawCrownDoodle(ctx: Ctx, cx: number, cy: number): void {
   ctx.restore();
 }
 
-export async function renderDualQuoteCard(input: DualQuoteRenderInput): Promise<Buffer | null> {
+export async function renderDualQuoteCard(raw: DualQuoteRenderInput): Promise<Buffer | null> {
+  const input: DualQuoteRenderInput = {
+    ...raw,
+    a: readableLine(raw.a),
+    b: readableLine(raw.b),
+  };
   return queueRender("duo-quote", async () => {
     const mod = await getCanvas();
     if (!mod) return null;

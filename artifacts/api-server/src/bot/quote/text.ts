@@ -2,6 +2,8 @@
 // Quote text helpers — strip Discord markdown-ish noise and wrap for canvas.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { unstyleFancyText } from "./display-name.js";
+
 /** Soften Discord markdown into readable quote text (not a perfect parser). */
 export function stripDiscordMarkdown(input: string): string {
   let s = input;
@@ -42,7 +44,7 @@ export function resolveMentions(
   let s = content;
   if (mentions?.users) {
     for (const u of mentions.users) {
-      const name = u.displayName || u.username;
+      const name = unstyleFancyText(u.displayName || u.username) || u.username;
       s = s.replace(new RegExp(`<@!?${u.id}>`, "g"), `@${name}`);
     }
   }
@@ -69,7 +71,8 @@ export function prepareQuoteText(
   raw: string,
   mentions?: Parameters<typeof resolveMentions>[1],
 ): string {
-  return stripDiscordMarkdown(resolveMentions(raw, mentions));
+  // Unstyle fancy Unicode in the body too (same tofu problem on canvas).
+  return unstyleFancyText(stripDiscordMarkdown(resolveMentions(raw, mentions)), false);
 }
 
 type MeasureCtx = { measureText(text: string): { width: number } };
