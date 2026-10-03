@@ -219,7 +219,7 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/casino` — floor panel: wallet, mega slots, public blackjack, UNO, collect, store, leaderboard\n" +
           "`/vaultvalue` — Vault Values panel (info · calc · list · help)\n" +
           "`/unbelievaboat` — (admin) economy dashboard, log channel, rob immunity\n" +
-          "`/tatsu` — (admin) Tatsu score/points leaderboard, lookup, spam strip" },
+          "`/tatsu` — (staff) Tatsu score/points leaderboard, lookup, spam strip" },
       );
   },
 

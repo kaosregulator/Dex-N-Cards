@@ -1,10 +1,10 @@
 // /tatsu — Discord dashboard for Tatsu score/points leaderboards + spam tools.
-// Ephemeral, Administrator-only. No mini-games (unlike /unbelievaboat).
+// Ephemeral. Staff gate: invoker + bot need owner / Administrator / Manage Server.
 //
 // What the Tatsu API can do: rankings (all/month/week), member points/score,
-// add/remove points & score (≤100k/call, needs MANAGE_GUILD on the key owner),
-// global user profile. What it cannot: persistence/spam rates, wipe economy,
-// leveled roles — those stay on Tatsu's website / t@ menus.
+// add/remove points & score (≤100k/call), global user profile. What it cannot:
+// persistence/spam rates, wipe economy, leveled roles — those stay on Tatsu's
+// website / t@ menus.
 
 import type {
   ChatInputCommandInteraction,
@@ -47,6 +47,10 @@ import {
   saveSnapshot,
   latestSnapshot,
 } from "../../lib/tatsu/db.js";
+import {
+  resolveTatsuAccess,
+  TATSU_DEFAULT_MEMBER_PERMISSIONS,
+} from "./access.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const TATSU_COLOR = 0x5865f2;
@@ -63,7 +67,7 @@ export function buildTatsuAdminCommandJson() {
     .setName("tatsu")
     .setDescription("Tatsu Discord dashboard — leaderboard, points, score, spam watch")
     .setDMPermission(false)
-    .setDefaultMemberPermissions(0x8)
+    .setDefaultMemberPermissions(TATSU_DEFAULT_MEMBER_PERMISSIONS)
     .toJSON();
 }
 
@@ -116,19 +120,45 @@ function scoreIdModal(action: "add" | "remove") {
     );
 }
 
+/**
+ * User-facing modify error. Discord staff/bot perms are checked separately in
+ * resolveTatsuAccess — do not surface raw MANAGE_GUILD lectures here.
+ */
 function tatsuApiErr(err: unknown): string {
-  // Pass through Tatsu’s message — we do not invent MANAGE_GUILD locally.
-  // That string only appears when api.tatsu.gg returns it on the PATCH.
   const msg = err instanceof Error ? err.message : "Modify failed";
   if (/MANAGE_GUILD|Manage Server|manage guild/i.test(msg)) {
     return (
-      `⚠️ ${msg}\n\n` +
-      "_This is Tatsu’s API reply (same PATCH we use for add). Dex N Cards admin/owner is not checked here — " +
-      "Tatsu checks the Discord account that created `TATSU_API_KEY`. If add still works with this key, retry **Remove** once; " +
-      "if remove keeps failing, recreate the key with `t!apikey create` while that account has Manage Server._"
+      "⚠️ Tatsu could not apply that edit.\n" +
+      "Your Discord roles and the bot look fine from our side — recreate the key with " +
+      "`t!apikey create` while logged in as a server manager, then update `TATSU_API_KEY`."
     );
   }
-  return `⚠️ ${msg}`;
+  // Drop permission jargon if Tatsu embeds it in another phrasing.
+  const cleaned = msg.replace(/MANAGE_GUILD|Manage Server|manage guild/gi, "permission").trim();
+  return `⚠️ ${cleaned || "Modify failed"}`;
+}
+
+async function denyUnlessTatsuAccess(
+  interaction:
+    | ChatInputCommandInteraction
+    | ButtonInteraction
+    | StringSelectMenuInteraction
+    | UserSelectMenuInteraction
+    | ChannelSelectMenuInteraction
+    | ModalSubmitInteraction,
+): Promise<boolean> {
+  const access = await resolveTatsuAccess({
+    userId: interaction.user.id,
+    guild: interaction.guild,
+    memberPermissions: interaction.memberPermissions,
+  });
+  if (access.ok) return true;
+  if (interaction.deferred || interaction.replied) {
+    await interaction.followUp({ content: access.message, ...EPHEMERAL }).catch(() => {});
+  } else {
+    await interaction.reply({ content: access.message, ...EPHEMERAL }).catch(() => {});
+  }
+  return false;
 }
 
 function hubRows() {
@@ -205,10 +235,9 @@ async function buildOverviewEmbed(guildId: string): Promise<EmbedBuilder> {
         "**API can:** read boards · lookup · add/remove **points & score** (≤100k/call, chunked).",
         "**API cannot:** change **reputation** · persistence / msg rate · wipe economy · leveled roles.",
         "Left the server but still on the board? **Leaderboard → Prune left** zeros their Tatsu score/points.",
-        "Key owner must be **in this server** with **Manage Server** for edits.",
       ].filter(Boolean).join("\n"),
     )
-    .setFooter({ text: "Admin only · rate limit 60 req/min · docs: https://dev.tatsu.gg/" });
+    .setFooter({ text: "Staff only · rate limit 60 req/min · docs: https://dev.tatsu.gg/" });
 }
 
 export async function handleTatsuAdminCommand(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -216,6 +245,7 @@ export async function handleTatsuAdminCommand(interaction: ChatInputCommandInter
     await interaction.reply({ content: "Server only.", ...EPHEMERAL });
     return;
   }
+  if (!(await denyUnlessTatsuAccess(interaction))) return;
   await interaction.deferReply(EPHEMERAL);
   const embed = await buildOverviewEmbed(interaction.guildId);
   await interaction.editReply({ embeds: [embed], components: hubRows() });
@@ -510,10 +540,7 @@ export async function handleTatsuAdminComponent(
     await interaction.reply({ content: "Server only.", ...EPHEMERAL });
     return;
   }
-  if (!interaction.memberPermissions?.has("Administrator")) {
-    await interaction.reply({ content: "Administrator only.", ...EPHEMERAL });
-    return;
-  }
+  if (!(await denyUnlessTatsuAccess(interaction))) return;
 
   const id = interaction.customId;
   const settings = await getOrCreateTatsuSettings(guildId);
@@ -1053,7 +1080,7 @@ export async function handleTatsuAdminComponent(
       });
     } catch (err) {
       await interaction.editReply({
-        content: `⚠️ ${err instanceof Error ? err.message : "Edit failed"}`,
+        content: tatsuApiErr(err),
         embeds: [],
         components: hubRows(),
       }).catch(() => {});
@@ -1105,7 +1132,7 @@ export async function handleTatsuAdminComponent(
       });
     } catch (err) {
       await interaction.editReply({
-        content: `⚠️ ${err instanceof Error ? err.message : "Zero-out failed"}`,
+        content: tatsuApiErr(err),
         embeds: [],
         components: hubRows(),
       }).catch(() => {});
@@ -1257,7 +1284,7 @@ export async function handleTatsuAdminComponent(
           detail: z,
         });
       } catch (err) {
-        results.push(`• <@${g.userId}> ⚠️ ${err instanceof Error ? err.message : "failed"}`);
+        results.push(`• <@${g.userId}> ${tatsuApiErr(err)}`);
       }
     }
     prunePreview.delete(guildId);
@@ -1530,10 +1557,7 @@ export async function handleTatsuAdminModal(interaction: ModalSubmitInteraction)
     await interaction.reply({ content: "Server only.", ...EPHEMERAL });
     return;
   }
-  if (!interaction.memberPermissions?.has("Administrator")) {
-    await interaction.reply({ content: "Administrator only.", ...EPHEMERAL });
-    return;
-  }
+  if (!(await denyUnlessTatsuAccess(interaction))) return;
 
   const id = interaction.customId;
   const settings = await getOrCreateTatsuSettings(guildId);
@@ -1776,7 +1800,7 @@ export async function handleTatsuAdminModal(interaction: ModalSubmitInteraction)
         `🪓 <@${interaction.user.id}> stripped <@${userId}>: ${results.join(" · ")} — ${reason}`);
       await interaction.editReply(`✅ Stripped <@${userId}>:\n${results.map(l => `• ${l}`).join("\n")}\nAlso added to watchlist.`);
     } catch (err) {
-      await interaction.editReply(`⚠️ ${err instanceof Error ? err.message : "Strip failed"}`);
+      await interaction.editReply(tatsuApiErr(err));
     }
   }
 }

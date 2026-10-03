@@ -158,7 +158,7 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/pet` | Pets (when enabled) |
 | `/casino` | UnbelievaBoat casino hub — deposit/withdraw, daily, collect, games, UNO, leaderboard, store |
 | `/unbelievaboat` | Admin Discord dashboard (cooldowns, cash, store, logs, rob immunity) |
-| `/tatsu` | Admin Tatsu dashboard (leaderboard, points/score, spam watch) |
+| `/tatsu` | Staff Tatsu dashboard (leaderboard, points/score, spam watch) |
 
 ### Staff / admin
 | Command | Description |
