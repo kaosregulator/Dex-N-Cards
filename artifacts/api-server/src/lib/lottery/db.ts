@@ -12,8 +12,85 @@ import {
   type UbLotteryDraw,
   type UbLotteryScratcher,
 } from "@workspace/db";
-import { DRAW_GAMES, type DrawGameKey, type LotteryGameKey } from "./catalog.js";
+import {
+  DRAW_GAMES,
+  SCRATCH_TIERS,
+  SCRATCH_TIER_KEYS,
+  type DrawGameKey,
+  type LotteryGameKey,
+  type ScratchTierKey,
+} from "./catalog.js";
 import { resolveGameConfig } from "./config.js";
+
+/** UTC calendar day key for daily scratch stock restock. */
+export function utcDateKey(d = new Date()): string {
+  return d.toISOString().slice(0, 10);
+}
+
+export type ScratchStockState = {
+  date: string;
+  remaining: Record<ScratchTierKey, number>;
+};
+
+function defaultRemaining(): Record<ScratchTierKey, number> {
+  return {
+    copper: SCRATCH_TIERS.copper.dailyStock,
+    silver: SCRATCH_TIERS.silver.dailyStock,
+    gold: SCRATCH_TIERS.gold.dailyStock,
+    diamond: SCRATCH_TIERS.diamond.dailyStock,
+  };
+}
+
+/** Read stock, auto-restocking when the UTC day rolls. */
+export async function getScratchStock(guildId: string): Promise<ScratchStockState> {
+  const settings = await getOrCreateLotterySettings(guildId);
+  const scratchCfg = ((settings.gameConfig ?? {}).scratch ?? {}) as Record<string, unknown>;
+  const raw = (scratchCfg.scratchStock ?? null) as ScratchStockState | null;
+  const today = utcDateKey();
+  if (raw && raw.date === today && raw.remaining) {
+    const remaining = { ...defaultRemaining(), ...raw.remaining };
+    for (const k of SCRATCH_TIER_KEYS) {
+      if (typeof remaining[k] !== "number" || remaining[k]! < 0) {
+        remaining[k] = SCRATCH_TIERS[k].dailyStock;
+      }
+    }
+    return { date: today, remaining };
+  }
+  const fresh: ScratchStockState = { date: today, remaining: defaultRemaining() };
+  await writeScratchStock(guildId, fresh);
+  return fresh;
+}
+
+export async function writeScratchStock(guildId: string, stock: ScratchStockState): Promise<void> {
+  await patchGameConfig(guildId, "scratch", { scratchStock: stock });
+}
+
+/**
+ * Atomically consume one unit of daily stock for a tier.
+ * Returns remaining after purchase, or soldOut if empty.
+ */
+export async function consumeScratchStock(
+  guildId: string,
+  tier: ScratchTierKey,
+): Promise<{ remaining: number } | { soldOut: true; remaining: number }> {
+  const stock = await getScratchStock(guildId);
+  const left = stock.remaining[tier] ?? 0;
+  if (left <= 0) return { soldOut: true, remaining: 0 };
+  stock.remaining[tier] = left - 1;
+  await writeScratchStock(guildId, stock);
+  return { remaining: stock.remaining[tier]! };
+}
+
+/** Put one unit back (e.g. charge failed after consume). */
+export async function restoreScratchStock(
+  guildId: string,
+  tier: ScratchTierKey,
+): Promise<void> {
+  const stock = await getScratchStock(guildId);
+  const cap = SCRATCH_TIERS[tier].dailyStock;
+  stock.remaining[tier] = Math.min(cap, (stock.remaining[tier] ?? 0) + 1);
+  await writeScratchStock(guildId, stock);
+}
 
 export async function getOrCreateLotterySettings(guildId: string): Promise<UbLotterySettings> {
   const existing = await db
@@ -256,18 +333,22 @@ export async function listGuildsDueForWeeklyDraw(
 export async function createScratcher(input: {
   guildId: string;
   userId: string;
+  tierKey: ScratchTierKey;
   cost: number;
   prize: number;
   cells: Array<{ label: string; value: number }>;
+  publicReveal?: boolean;
 }): Promise<UbLotteryScratcher> {
   const [row] = await db
     .insert(ubLotteryScratchersTable)
     .values({
       guildId: input.guildId,
       userId: input.userId,
+      tierKey: input.tierKey,
       cost: input.cost,
       prize: input.prize,
       cells: input.cells,
+      publicReveal: input.publicReveal ?? false,
     })
     .returning();
   return row!;

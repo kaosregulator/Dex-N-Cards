@@ -86,6 +86,8 @@ export const ubLotteryScratchersTable = pgTable("ub_lottery_scratchers", {
   id: serial("id").primaryKey(),
   guildId: text("guild_id").notNull(),
   userId: text("user_id").notNull(),
+  /** copper | silver | gold | diamond */
+  tierKey: text("tier_key").notNull().default("silver"),
   cost: integer("cost").notNull().default(0),
   prize: integer("prize").notNull().default(0),
   /** 9 cells: label + value; reveal mask tracked separately */
@@ -94,6 +96,8 @@ export const ubLotteryScratchersTable = pgTable("ub_lottery_scratchers", {
   fullyRevealed: boolean("fully_revealed").notNull().default(false),
   redeemed: boolean("redeemed").notNull().default(false),
   redeemTo: text("redeem_to"), // cash | bank
+  /** Whether this reveal was posted publicly in-channel */
+  publicReveal: boolean("public_reveal").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [
   index("ub_lottery_scratchers_guild_user_idx").on(t.guildId, t.userId),
