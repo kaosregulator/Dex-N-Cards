@@ -87,6 +87,65 @@ export type PostAsUnbelievaBoatOpts = {
 };
 
 /**
+ * Post to a channel as UnbelievaBoat (webhook), for admin draws / boards that
+ * are not tied to an interaction reply. Falls back to a normal channel send.
+ */
+export async function sendChannelAsUnbelievaBoat(
+  client: Client,
+  channel: TextChannel | NewsChannel,
+  opts: PostAsUnbelievaBoatOpts,
+): Promise<Message | null> {
+  const hook = await resolveWebhook(client, channel);
+  if (hook) {
+    try {
+      const sent = await hook.send({
+        username: UNBELIEVABOAT_WEBHOOK_USERNAME,
+        avatarURL: UNBELIEVABOAT_ICON,
+        content: opts.content,
+        embeds: opts.embeds,
+        files: opts.files,
+        components: opts.components,
+        allowedMentions: { parse: ["users"] },
+      });
+      return sent;
+    } catch (err) {
+      webhookCache.delete(channel.id);
+      logger.debug({ err, channelId: channel.id }, "UnbelievaBoat channel webhook send failed");
+    }
+  }
+  try {
+    return await channel.send({
+      content: opts.content,
+      embeds: opts.embeds,
+      files: opts.files,
+      components: opts.components,
+      allowedMentions: { parse: ["users"] },
+    });
+  } catch (err) {
+    logger.debug({ err, channelId: channel.id }, "UnbelievaBoat channel fallback send failed");
+    return null;
+  }
+}
+
+/** Edit a prior webhook/bot message in-place (used for live ball reveals). */
+export async function editUnbelievaBoatMessage(
+  message: Message,
+  opts: PostAsUnbelievaBoatOpts,
+): Promise<Message | null> {
+  try {
+    return await message.edit({
+      content: opts.content,
+      embeds: opts.embeds,
+      files: opts.files,
+      components: opts.components,
+    });
+  } catch (err) {
+    logger.debug({ err, messageId: message.id }, "UnbelievaBoat message edit failed");
+    return null;
+  }
+}
+
+/**
  * Post as UnbelievaBoat via webhook. Returns the message id, or null when the
  * caller should fall back to a normal bot reply on the interaction.
  */

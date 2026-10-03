@@ -22,14 +22,16 @@ import {
   GAME_DEFS,
   SCRATCH_TIERS,
   SCRATCH_TIER_KEYS,
+  SCRATCH_LEGEND,
   formatNums,
-  rollScratchPrizeForTier,
-  buildScratchCells,
+  buildScratchTicket,
+  scorePick3,
   isDrawGame,
   isScratchTier,
   type DrawGameKey,
   type LotteryGameKey,
   type ScratchTierKey,
+  type ScratchCell,
 } from "./catalog.js";
 import {
   ensurePools,
@@ -46,6 +48,7 @@ import {
   getScratchStock,
   consumeScratchStock,
   restoreScratchStock,
+  updateScratcherMeta,
 } from "../../../lib/lottery/db.js";
 import {
   resolveGameConfig,
@@ -54,10 +57,13 @@ import {
 } from "../../../lib/lottery/config.js";
 import { CashError, spendFunds, earnCash, depositCash, fmtCash, requireEconomy } from "../cash.js";
 import { plainCashLabel } from "../currency-canvas.js";
+import { postAsUnbelievaBoat } from "../webhook.js";
+import { UNBELIEVABOAT_AUTHOR } from "../branding.js";
 import {
   renderLotteryStoreGif,
   renderScratchGif,
   renderScratchShopGif,
+  renderScratchLegendGif,
 } from "./render.js";
 
 /** Private-only replies — number picks / private scratch must never be public. */
@@ -184,8 +190,17 @@ export async function handleLotteryComponent(
     });
     return;
   }
+  if (id === "lottery:scratch_legend" && interaction.isButton()) {
+    await interaction.deferUpdate();
+    await showScratchLegend(interaction);
+    return;
+  }
   if (id.startsWith("lottery:scratch:") && interaction.isButton()) {
     await onScratchTap(interaction);
+    return;
+  }
+  if (id.startsWith("lottery:pickcell:") && interaction.isButton()) {
+    await onPick3Cell(interaction);
     return;
   }
   if (id.startsWith("lottery:redeem:") && interaction.isButton()) {
@@ -322,20 +337,23 @@ async function showScratchShop(interaction: StringSelectMenuInteraction): Promis
     const left = stock.remaining[k] ?? 0;
     const tag = left > 0 ? `🟢 ${left} left` : "🔴 sold out";
     return (
-      `${t.emoji} **${t.name}** — **${symbol}${fmtCash(t.price)}** · ${tag}\n` +
-      `└ ${t.blurb}`
+      `${t.emoji} **${t.name}** (${t.gameLabel}) — **${symbol}${fmtCash(t.price)}** · ${tag}\n` +
+      `└ ${t.howTo}`
     );
   });
 
   const embed = new EmbedBuilder()
     .setColor(GAME_DEFS.scratch.color)
+    .setAuthor(UNBELIEVABOAT_AUTHOR)
     .setTitle("🎫 Scratch Shop")
     .setDescription(
       [
-        "Choose a tier, then scratch **in public** or **privately** (like pack opens).",
+        "Four special scratchers · daily stock · public or private peel.",
         "Stock restocks every day at **00:00 UTC**.",
         "",
         ...lines,
+        "",
+        "_Tap **What marks mean** for WIN / TRY / MISS / MATCH / LINE / PICK._",
       ].join("\n"),
     )
     .setFooter({ text: "UnbelievaBoat Scratch · daily stock" });
@@ -352,7 +370,7 @@ async function showScratchShop(interaction: StringSelectMenuInteraction): Promis
           label: t.name,
           value: t.key,
           emoji: t.emoji,
-          description: `${plainCashLabel(t.price)} · ${left > 0 ? `${left} left today` : "sold out"}`.slice(0, 100),
+          description: `${t.gameLabel} · ${plainCashLabel(t.price)} · ${left > 0 ? `${left} left` : "sold out"}`.slice(0, 100),
         };
       }),
     );
@@ -364,7 +382,29 @@ async function showScratchShop(interaction: StringSelectMenuInteraction): Promis
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("lottery:scratch_legend").setLabel("What marks mean").setEmoji("📖").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("lottery:store").setLabel("Back to store").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showScratchLegend(interaction: ButtonInteraction): Promise<void> {
+  const gif = await renderScratchLegendGif();
+  const files = gif ? [new AttachmentBuilder(gif, { name: "scratch-legend.gif" })] : [];
+  const embed = new EmbedBuilder()
+    .setColor(GAME_DEFS.scratch.color)
+    .setAuthor(UNBELIEVABOAT_AUTHOR)
+    .setTitle("📖 Scratch marks")
+    .setDescription(SCRATCH_LEGEND.map(r => `**${r.mark}** — ${r.meaning}`).join("\n"));
+  if (gif) embed.setImage("attachment://scratch-legend.gif");
+  await interaction.editReply({
+    content: undefined,
+    embeds: [embed],
+    files,
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("lottery:store").setLabel("Store").setStyle(ButtonStyle.Secondary),
       ),
     ],
   });
@@ -397,12 +437,15 @@ async function showScratchVisibilityPrompt(
 
   const embed = new EmbedBuilder()
     .setColor(tier.color)
+    .setAuthor(UNBELIEVABOAT_AUTHOR)
     .setTitle(`${tier.emoji} ${tier.name}`)
     .setDescription(
       [
+        `**${tier.gameLabel}** — ${tier.howTo}`,
+        "",
         `Price **${symbol}${fmtCash(tier.price)}** · **${left}** left in today's stock.`,
         "",
-        "**Scratch Publicly** shows your card in the channel.",
+        "**Scratch Publicly** posts as **UnbelievaBoat** in the channel.",
         "**Scratch Privately** keeps the foil between you and the bot.",
         "",
         "_Nothing is charged until you pick._",
@@ -701,7 +744,6 @@ async function beginScratchPurchase(
     return;
   }
 
-  // Stock gate before charging — pack-style: charge only after visibility choice.
   const stock = await getScratchStock(guildId);
   if ((stock.remaining[tierKey] ?? 0) <= 0) {
     await interaction.reply({
@@ -711,23 +753,12 @@ async function beginScratchPurchase(
     return;
   }
 
-  if (vis === "priv") {
-    await interaction.deferUpdate();
-  } else {
-    // Public reveal → fresh channel message (like pack:open:pub).
-    await interaction.deferReply().catch(() => {});
-    // Soft-update the ephemeral prompt so it doesn't look stuck.
-    await interaction.message.edit({
-      content: `📢 Scratching **${tier.name}** publicly…`,
-      embeds: [],
-      components: [],
-      files: [],
-    }).catch(() => {});
-  }
+  // Always keep the prompt ephemeral; public cards go out via UnbelievaBoat webhook.
+  await interaction.deferUpdate();
 
   const consumed = await consumeScratchStock(guildId, tierKey);
   if ("soldOut" in consumed) {
-    const payload = {
+    await interaction.editReply({
       content: `**${tier.name}** just sold out. Stock restocks at **00:00 UTC**.`,
       embeds: [],
       components: [
@@ -735,9 +766,8 @@ async function beginScratchPurchase(
           new ButtonBuilder().setCustomId("lottery:store").setLabel("Back to store").setStyle(ButtonStyle.Secondary),
         ),
       ],
-      files: [] as AttachmentBuilder[],
-    };
-    await interaction.editReply(payload);
+      files: [],
+    });
     return;
   }
 
@@ -745,57 +775,96 @@ async function beginScratchPurchase(
     await spendFunds(guildId, interaction.user.id, tier.price, `${tier.name}`);
     await addToPool(guildId, "scratch", tier.price);
     const refreshed = await getPool(guildId, "scratch");
-    const prize = rollScratchPrizeForTier(tierKey, refreshed.poolAmount);
-    const cells = buildScratchCells(prize, tier.price);
+    const built = buildScratchTicket(tierKey, refreshed.poolAmount);
     const card = await createScratcher({
       guildId,
       userId: interaction.user.id,
       tierKey,
+      gameMode: built.gameMode,
       cost: tier.price,
-      prize,
-      cells,
+      prize: built.prize,
+      cells: built.cells,
+      meta: built.meta,
       publicReveal: vis === "pub",
     });
-    if (prize > 0) {
-      await setPoolAmount(guildId, "scratch", Math.max(refreshed.seedAmount, refreshed.poolAmount - prize));
+    if (built.prize > 0) {
+      await setPoolAmount(guildId, "scratch", Math.max(refreshed.seedAmount, refreshed.poolAmount - built.prize));
     }
     let symbol = "";
     try { ({ symbol } = await requireEconomy(guildId)); } catch { /* */ }
     const gif = await renderScratchGif({
-      cells: card.cells,
+      cells: card.cells as ScratchCell[],
       revealedCount: 0,
       prize: card.prize,
       symbol,
       tierKey,
+      gameMode: card.gameMode,
+      meta: card.meta,
     });
     const files = gif ? [new AttachmentBuilder(gif, { name: "scratch.gif" })] : [];
     const privacy = vis === "pub"
-      ? "📢 **Public scratch** — the channel can watch you peel the foil."
+      ? "📢 **Public scratch** — posted as **UnbelievaBoat**."
       : "🔒 **Only you see this card.**";
     const embed = new EmbedBuilder()
       .setColor(tier.color)
+      .setAuthor(UNBELIEVABOAT_AUTHOR)
       .setTitle(`${tier.emoji} ${tier.name} ready`)
       .setDescription(
-        `${privacy}\nMash **Scratch** to peel the foil — spam until all 9 cells are open.`,
+        [
+          privacy,
+          `**${tier.gameLabel}** — ${tier.howTo}`,
+          "Mash **Scratch** to peel the foil — spam until all 9 cells are open.",
+        ].join("\n"),
       )
       .setFooter({
         text: `Paid ${symbol}${fmtCash(tier.price)} · #${card.id} · ${consumed.remaining} left today`,
       });
     if (gif) embed.setImage("attachment://scratch.gif");
-    await interaction.editReply({
-      content: vis === "pub" ? `${interaction.user} bought a **${tier.name}**!` : undefined,
-      embeds: [embed],
-      files,
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`lottery:scratch:${card.id}`)
-            .setLabel("Scratch!")
-            .setEmoji("✨")
-            .setStyle(ButtonStyle.Success),
-        ),
-      ],
-    });
+    const components = [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`lottery:scratch:${card.id}`)
+          .setLabel("Scratch!")
+          .setEmoji("✨")
+          .setStyle(ButtonStyle.Success),
+      ),
+    ];
+
+    if (vis === "pub") {
+      const hookId = await postAsUnbelievaBoat(interaction, {
+        content: `${interaction.user} bought a **${tier.name}** (${tier.gameLabel})!`,
+        embeds: [embed],
+        files,
+        components,
+      });
+      await interaction.editReply({
+        content: hookId
+          ? `📢 **${tier.name}** opened publicly as **UnbelievaBoat**.`
+          : `📢 **${tier.name}** opened publicly (bot fallback — webhook unavailable).`,
+        embeds: [],
+        files: [],
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("lottery:store").setLabel("Back to store").setStyle(ButtonStyle.Secondary),
+          ),
+        ],
+      });
+      if (!hookId) {
+        await interaction.followUp({
+          content: `${interaction.user} bought a **${tier.name}**!`,
+          embeds: [embed],
+          files,
+          components,
+        }).catch(() => {});
+      }
+    } else {
+      await interaction.editReply({
+        content: undefined,
+        embeds: [embed],
+        files,
+        components,
+      });
+    }
   } catch (err) {
     await restoreScratchStock(guildId, tierKey).catch(() => {});
     const msg = err instanceof CashError ? err.message : "Could not buy scratcher.";
@@ -812,6 +881,10 @@ async function onScratchTap(interaction: ButtonInteraction): Promise<void> {
   }
   if (card.fullyRevealed) {
     await interaction.deferUpdate();
+    if (card.gameMode === "pick3" && !(card.meta as { locked?: boolean })?.locked) {
+      await showPick3Prompt(interaction, card.id);
+      return;
+    }
     await showRedeem(interaction, card.id);
     return;
   }
@@ -822,22 +895,29 @@ async function onScratchTap(interaction: ButtonInteraction): Promise<void> {
   try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
   const tierKey = (isScratchTier(next.tierKey) ? next.tierKey : "silver") as ScratchTierKey;
   const gif = await renderScratchGif({
-    cells: next.cells,
+    cells: next.cells as ScratchCell[],
     revealedCount: next.revealedCount,
     prize: next.prize,
     symbol,
     tierKey,
+    gameMode: next.gameMode,
+    meta: next.meta,
   });
   const files = gif ? [new AttachmentBuilder(gif, { name: "scratch.gif" })] : [];
   if (next.fullyRevealed) {
+    if (next.gameMode === "pick3") {
+      await showPick3Prompt(interaction, next.id, files);
+      return;
+    }
     await showRedeem(interaction, next.id, files);
     return;
   }
   const tier = SCRATCH_TIERS[tierKey];
   const embed = new EmbedBuilder()
     .setColor(tier.color)
+    .setAuthor(UNBELIEVABOAT_AUTHOR)
     .setTitle(`${tier.emoji} Keep scratching…`)
-    .setDescription(`**${next.revealedCount}/9** cells open — hit **Scratch!** again.`)
+    .setDescription(`**${next.revealedCount}/9** cells open — ${tier.howTo}`)
     .setImage("attachment://scratch.gif");
   await interaction.editReply({
     embeds: [embed],
@@ -854,7 +934,7 @@ async function onScratchTap(interaction: ButtonInteraction): Promise<void> {
   });
 }
 
-async function showRedeem(
+async function showPick3Prompt(
   interaction: ButtonInteraction,
   scratchId: number,
   files?: AttachmentBuilder[],
@@ -863,19 +943,122 @@ async function showRedeem(
   if (!card) return;
   let symbol = "";
   try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
-  const tierKey = (isScratchTier(card.tierKey) ? card.tierKey : "silver") as ScratchTierKey;
+  const tierKey = (isScratchTier(card.tierKey) ? card.tierKey : "diamond") as ScratchTierKey;
+  const picks = ((card.meta as { picks?: number[] })?.picks ?? []) as number[];
   const gifFiles = files ?? (
     await renderScratchGif({
-      cells: card.cells,
+      cells: card.cells as ScratchCell[],
       revealedCount: 9,
       prize: card.prize,
       symbol,
       tierKey,
+      gameMode: "pick3",
+      meta: card.meta,
+      picked: picks,
+    }).then(b => (b ? [new AttachmentBuilder(b, { name: "scratch.gif" })] : []))
+  );
+  const embed = new EmbedBuilder()
+    .setColor(SCRATCH_TIERS[tierKey].color)
+    .setAuthor(UNBELIEVABOAT_AUTHOR)
+    .setTitle("💎 Pick three cells to bank")
+    .setDescription(
+      `Choose **3** cells. Their values add up (capped at the escrowed prize **${symbol}${fmtCash(card.prize)}**).\n` +
+      `Selected: **${picks.length}/3**`,
+    )
+    .setImage(gifFiles.length ? "attachment://scratch.gif" : null);
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let r = 0; r < 3; r++) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+    for (let c = 0; c < 3; c++) {
+      const i = r * 3 + c;
+      const cell = card.cells[i]!;
+      const selected = picks.includes(i);
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`lottery:pickcell:${card.id}:${i}`)
+          .setLabel(selected ? `✓ ${cell.value}` : `${i + 1}: ${cell.value}`)
+          .setStyle(selected ? ButtonStyle.Success : ButtonStyle.Secondary)
+          .setDisabled(selected || picks.length >= 3),
+      );
+    }
+    rows.push(row);
+  }
+  await interaction.editReply({ embeds: [embed], files: gifFiles, components: rows });
+}
+
+async function onPick3Cell(interaction: ButtonInteraction): Promise<void> {
+  const parts = interaction.customId.split(":"); // lottery:pickcell:id:idx
+  const id = Number(parts[2]);
+  const idx = Number(parts[3]);
+  const card = await getScratcher(id);
+  if (!card || card.userId !== interaction.user.id || card.guildId !== interaction.guildId) {
+    await interaction.reply({ content: "That's not your ticket.", ...EPHEMERAL });
+    return;
+  }
+  if (card.gameMode !== "pick3" || !card.fullyRevealed) {
+    await interaction.reply({ content: "This ticket isn't ready for picks.", ...EPHEMERAL });
+    return;
+  }
+  await interaction.deferUpdate();
+  const meta = { ...(card.meta ?? {}) } as { picks?: number[]; locked?: boolean; pickLimit?: number };
+  if (meta.locked) {
+    await showRedeem(interaction, id);
+    return;
+  }
+  const picks = [...(meta.picks ?? [])];
+  if (!picks.includes(idx) && picks.length < 3) picks.push(idx);
+  meta.picks = picks;
+
+  if (picks.length >= 3) {
+    const paid = scorePick3(card.cells as ScratchCell[], picks, card.prize);
+    const refund = Math.max(0, card.prize - paid);
+    meta.locked = true;
+    await updateScratcherMeta(id, meta, paid);
+    if (refund > 0) {
+      const pool = await getPool(interaction.guildId!, "scratch");
+      await setPoolAmount(interaction.guildId!, "scratch", pool.poolAmount + refund);
+    }
+    await showRedeem(interaction, id);
+    return;
+  }
+
+  await updateScratcherMeta(id, meta);
+  await showPick3Prompt(interaction, id);
+}
+
+async function showRedeem(
+  interaction: ButtonInteraction,
+  scratchId: number,
+  files?: AttachmentBuilder[],
+): Promise<void> {
+  const card = await getScratcher(scratchId);
+  if (!card) return;
+  // Pick 3 must finish selecting before redeem.
+  if (card.gameMode === "pick3" && !(card.meta as { locked?: boolean })?.locked) {
+    await showPick3Prompt(interaction, scratchId, files);
+    return;
+  }
+  let symbol = "";
+  try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
+  const tierKey = (isScratchTier(card.tierKey) ? card.tierKey : "silver") as ScratchTierKey;
+  const picks = ((card.meta as { picks?: number[] })?.picks ?? []) as number[];
+  const gifFiles = files ?? (
+    await renderScratchGif({
+      cells: card.cells as ScratchCell[],
+      revealedCount: 9,
+      prize: card.prize,
+      symbol,
+      tierKey,
+      gameMode: card.gameMode,
+      meta: card.meta,
+      picked: picks,
     }).then(b => (b ? [new AttachmentBuilder(b, { name: "scratch.gif" })] : []))
   );
   const won = card.prize > 0;
   const embed = new EmbedBuilder()
     .setColor(won ? 0x57f287 : 0x4e5058)
+    .setAuthor(UNBELIEVABOAT_AUTHOR)
     .setTitle(won ? "🎉 Scratch complete — you won!" : "Scratch complete")
     .setDescription(
       won
