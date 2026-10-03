@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>/memberdate — UI presentation</title>
+<style>
+  :root {
+    --bg: #313338; --panel: #2b2d31; --text: #dbdee1; --muted: #949ba4;
+    --blurple: #5865f2; --green: #248046; --gray-btn: #4e5058; --success: #57f287;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "gg sans", "Segoe UI", system-ui, sans-serif; background: #1a1b1e; color: var(--text); }
+  header.hero {
+    padding: 28px 32px 18px;
+    background: linear-gradient(135deg, #0f2a1f, #1a3d2e 55%, #14304a);
+    border-bottom: 1px solid #0006;
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: 28px; }
+  header.hero p { margin: 0; color: #b8e6c8; max-width: 720px; }
+  .page { max-width: 980px; margin: 0 auto; padding: 24px 20px 64px; display: grid; gap: 28px; }
+  .section-label {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+  }
+  .discord-msg { background: var(--bg); border-radius: 12px; padding: 16px 18px; box-shadow: 0 8px 24px #0005; }
+  .author { display: flex; gap: 12px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: linear-gradient(135deg, #57f287, #5865f2);
+    display: grid; place-items: center; font-weight: 800; color: white; flex: 0 0 auto;
+  }
+  .name-row { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+  .bot-name { font-weight: 600; color: white; }
+  .bot-tag { background: var(--blurple); color: white; font-size: 10px; font-weight: 700; padding: 1px 4px; border-radius: 3px; }
+  .ephemeral { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
+  .embed {
+    border-left: 4px solid var(--success); background: #2b2d31; border-radius: 4px;
+    padding: 10px 14px 12px; max-width: 520px;
+  }
+  .embed-author { display: flex; gap: 8px; align-items: center; font-weight: 700; color: white; margin-bottom: 8px; }
+  .embed-author img, .thumb-sm {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: linear-gradient(135deg, #ffd54a, #ff5e78);
+  }
+  .thumb {
+    float: right; width: 80px; height: 80px; border-radius: 8px; margin: 0 0 8px 12px;
+    background: linear-gradient(135deg, #ffd54a, #ff5e78);
+  }
+  .embed-desc { font-size: 14px; white-space: pre-wrap; line-height: 1.45; }
+  .embed-footer { margin-top: 10px; font-size: 12px; color: var(--muted); clear: both; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .btn {
+    border: 0; border-radius: 3px; padding: 8px 12px; font-size: 14px; color: white;
+    background: var(--gray-btn); display: inline-flex; min-height: 32px; align-items: center;
+  }
+  .btn.primary { background: var(--blurple); opacity: 0.7; }
+  .btn:disabled, .btn.disabled { opacity: 0.45; }
+  .grid-2 { display: grid; gap: 28px; }
+  @media (min-width: 900px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+  .note { color: var(--muted); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <header class="hero">
+    <h1>/memberdate — staff tenure view</h1>
+    <p>Ephemeral embeds for join date, account age, targeted role promotions, and filtered member lists.</p>
+  </header>
+  <div class="page">
+    <section>
+      <div class="section-label">1 · Lookup · one member + optional role</div>
+      <div class="discord-msg" id="lookup">
+        <div class="author">
+          <div class="avatar">DN</div>
+          <div class="body">
+            <div class="name-row"><span class="bot-name">Dex N Cards</span><span class="bot-tag">App</span></div>
+            <div class="ephemeral">🔒 Only you can see this · Dismiss message</div>
+            <div class="embed">
+              <div class="thumb" aria-hidden="true"></div>
+              <div class="embed-author"><span class="thumb-sm"></span> Kai · member tenure</div>
+              <div class="embed-desc"><strong>Kai</strong> · <code>@kai</code>
+
+📅 <strong>Joined server</strong> — March 12, 2024 (2 years ago)
+└ Been in <strong>Dex N Cards</strong> for <strong>2 years, 6 months</strong>
+
+🪪 <strong>Discord account</strong> — January 3, 2020 (6 years ago)
+└ Account age <strong>6 years, 9 months</strong>
+
+🎖️ <strong>Staff</strong> since August 1, 2025 (7 months ago)
+└ Been <strong>Staff</strong> for <strong>7 months</strong>
+└ <em>From Discord audit log</em>
+
+Roles · @Staff @Moderator @Member</div>
+              <div class="embed-footer">Staff only · /memberdate</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Command: <code>/memberdate lookup user:@Kai role:@Staff</code></p>
+    </section>
+
+    <div class="grid-2">
+      <section>
+        <div class="section-label">2 · Browse · role + 6 months filter</div>
+        <div class="discord-msg" id="browse">
+          <div class="author">
+            <div class="avatar">DN</div>
+            <div class="body">
+              <div class="name-row"><span class="bot-name">Dex N Cards</span><span class="bot-tag">App</span></div>
+              <div class="ephemeral">🔒 Only you can see this</div>
+              <div class="embed">
+                <div style="font-weight:700;color:white;margin-bottom:8px;">👥 Member tenure · Dex N Cards</div>
+                <div class="embed-desc">Joined: <strong>At least 6 months</strong> · Role: @Staff · In role: <strong>At least 3 months</strong> · Sort: <code>joined_desc</code>
+<strong>12</strong> matches · page <strong>1/2</strong>
+
+• <strong>Kai</strong> (@Kai)
+└ March 12, 2024 · <strong>2 years, 6 months</strong> in server
+└ Staff since August 1, 2025 · <strong>7 months</strong>
+
+• <strong>Sam</strong> (@Sam)
+└ June 2, 2023 · <strong>2 years, 10 months</strong> in server
+└ Staff since January 10, 2025 · <strong>1 year, 2 months</strong>
+
+• <strong>Riley</strong> (@Riley)
+└ November 8, 2024 · <strong>1 year, 4 months</strong> in server
+└ Staff · grant date unknown</div>
+                <div class="embed-footer">Staff only · /memberdate browse</div>
+              </div>
+              <div class="row">
+                <span class="btn disabled">Prev</span>
+                <span class="btn primary">1 / 2</span>
+                <span class="btn">Next</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-label">3 · Slash options (staff menu)</div>
+        <div class="discord-msg">
+          <div class="author">
+            <div class="avatar">DN</div>
+            <div class="body">
+              <div class="name-row"><span class="bot-name">Command menu</span></div>
+              <div class="embed" style="border-left-color:#5865f2">
+                <div style="font-weight:700;color:white;margin-bottom:8px;">/memberdate</div>
+                <div class="embed-desc"><strong>lookup</strong>
+└ user: @member (required)
+└ role: @Staff (optional)
+
+<strong>browse</strong>
+└ role: filter by role
+└ min_joined: 1m · 3m · 6m · 1y · 2y · 5y
+└ min_role: same toggles (needs role)
+└ sort: joins / role grants / name
+
+Ephemeral · staff only
+Role grants: live track + audit log backfill</div>
+              </div>
+              <p class="note">Uses Discord's native member picker for <code>user</code>.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

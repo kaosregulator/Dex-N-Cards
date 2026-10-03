@@ -194,6 +194,13 @@ export async function startBot() {
     });
   }
 
+  // /memberdate: track role grant timestamps as members gain/lose roles.
+  client.on(Events.GuildMemberUpdate, (oldMember, newMember) => {
+    void import("./memberdate/role-grants.js")
+      .then(m => m.trackMemberRoleChanges(oldMember, newMember))
+      .catch(err => logger.debug({ err }, "memberdate role track error"));
+  });
+
   client.on(Events.GuildCreate, async (guild) => {
     logger.info({ guildId: guild.id, name: guild.name }, "Bot joined guild");
     scheduleNextSpawn(guild.id);
@@ -404,6 +411,12 @@ export async function startBot() {
       if (interaction.isModalSubmit() && interaction.customId.startsWith("trivia:")) {
         const { handleTriviaAdminModal } = await import("./trivia/discord-admin.js");
         await handleTriviaAdminModal(interaction);
+        return;
+      }
+      // ── Member tenure /memberdate (memberdate:*) ───────────────────────────
+      if (interaction.isButton() && interaction.customId.startsWith("memberdate:")) {
+        const { handleMemberDateComponent } = await import("./memberdate/command.js");
+        await handleMemberDateComponent(interaction);
         return;
       }
       if (interaction.isButton() && interaction.customId.startsWith("unbgame:")) {
@@ -1131,6 +1144,9 @@ export async function startBot() {
       } else if (cmd === "trivia") {
         const { handleTriviaAdminCommand } = await import("./trivia/discord-admin.js");
         await handleTriviaAdminCommand(interaction);
+      } else if (cmd === "memberdate") {
+        const { handleMemberDateCommand } = await import("./memberdate/command.js");
+        await handleMemberDateCommand(interaction);
       } else if (cmd === "casino") {
         const { handleCasinoCommand } = await import("./unbelievaboat/casino.js");
         await handleCasinoCommand(interaction);
@@ -1181,7 +1197,7 @@ export async function startBot() {
     "begin", "show_shiny",
     "quote",
     "collection_hub", "hq", "hqadmin", "hqbuild",
-    "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu", "trivia",
+    "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu", "trivia", "memberdate",
     "casino", "vaultvalue", "cardadmin", "secret",
     "daily_ub", "collect_ub", "bal_ub", "deposit_ub", "withdraw_ub",
     "slots_ub", "blackjack_ub", "roulette_ub", "uno_ub", "higherlower_ub", "redblack_ub",

@@ -1247,6 +1247,23 @@ async function runBootMigrations() {
   await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_guild_idx ON trivia_role_holds (guild_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_expires_idx ON trivia_role_holds (expires_at)`);
 
+  // ── /memberdate role-grant tracking — additive IF NOT EXISTS ───────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS member_role_grants (
+      id                  SERIAL PRIMARY KEY,
+      guild_id            TEXT NOT NULL,
+      user_id             TEXT NOT NULL,
+      role_id             TEXT NOT NULL,
+      granted_at          TIMESTAMP NOT NULL,
+      source              TEXT NOT NULL DEFAULT 'live',
+      created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS member_role_grants_guild_user_role_uidx ON member_role_grants (guild_id, user_id, role_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS member_role_grants_guild_role_idx ON member_role_grants (guild_id, role_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS member_role_grants_guild_user_idx ON member_role_grants (guild_id, user_id)`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pet_settings (
       id                          SERIAL PRIMARY KEY,
