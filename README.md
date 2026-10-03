@@ -87,6 +87,7 @@ NODE_ENV=development
 PUBLIC_BASE_URL=https://your-public-host.example
 UNBELIEVABOAT_TOKEN=your_unb_api_token    # optional — UnbelievaBoat hub + pet shop (see docs/unbelievaboat.md)
 TATSU_API_KEY=your_tatsu_api_key          # optional — Tatsu dashboard (t!apikey create — see docs/tatsu.md)
+QUIZAPI_KEY=your_quizapi_key              # optional — QuizAPI.io for /trivia (OpenTDB needs no key)
 ```
 
 ### Deploy on Railway
@@ -159,6 +160,7 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/casino` | UnbelievaBoat casino hub — deposit/withdraw, daily, collect, games, UNO, leaderboard, store |
 | `/unbelievaboat` | Admin Discord dashboard (cooldowns, cash, store, logs, rob immunity) |
 | `/tatsu` | Staff Tatsu dashboard (leaderboard, points/score, spam watch) |
+| `/trivia` | Staff community trivia host (flash, QOTD, picture rounds) |
 
 ### Staff / admin
 | Command | Description |
@@ -255,6 +257,7 @@ tank · aircraft · ship · vehicle · infantry · boss · community · event ·
 | [`docs/quiet-mode.md`](./docs/quiet-mode.md) | Quiet Room quarantine role + audio |
 | [`docs/unbelievaboat.md`](./docs/unbelievaboat.md) | UnbelievaBoat + casino |
 | [`docs/tatsu.md`](./docs/tatsu.md) | Tatsu score/points Discord dashboard |
+| [`docs/trivia.md`](./docs/trivia.md) | Community trivia / QOTD / flash host |
 | [`docs/railway.md`](./docs/railway.md) | Railway deploy |
 | [`docs/battle-system.md`](./docs/battle-system.md) | Battles |
 | [`docs/headquarters.md`](./docs/headquarters.md) | Player HQ |

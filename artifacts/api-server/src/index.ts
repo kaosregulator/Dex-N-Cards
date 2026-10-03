@@ -1173,6 +1173,80 @@ async function runBootMigrations() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS tatsu_snapshots_guild_idx ON tatsu_snapshots (guild_id)`);
 
+  // ── Community Trivia / QOTD / Flash host — additive IF NOT EXISTS ──────────
+  // See docs/trivia.md. OpenTDB needs no key; QuizAPI uses QUIZAPI_KEY.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trivia_settings (
+      id                  SERIAL PRIMARY KEY,
+      guild_id            TEXT NOT NULL UNIQUE,
+      enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+      audience            TEXT NOT NULL DEFAULT 'general',
+      default_source      TEXT NOT NULL DEFAULT 'opentdb',
+      default_category    TEXT,
+      default_guess_mode  TEXT NOT NULL DEFAULT 'buttons',
+      qotd_enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+      qotd_channel_id     TEXT,
+      qotd_hour_utc       INTEGER NOT NULL DEFAULT 16,
+      qotd_source         TEXT NOT NULL DEFAULT 'opentdb',
+      qotd_category       TEXT,
+      next_card           JSONB DEFAULT NULL,
+      role_ids            JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_qotd_date      TEXT,
+      created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trivia_rounds (
+      id                  SERIAL PRIMARY KEY,
+      guild_id            TEXT NOT NULL,
+      channel_id          TEXT NOT NULL,
+      message_id          TEXT,
+      mode                TEXT NOT NULL DEFAULT 'flash',
+      status              TEXT NOT NULL DEFAULT 'ready',
+      source              TEXT NOT NULL DEFAULT 'opentdb',
+      guess_mode          TEXT NOT NULL DEFAULT 'buttons',
+      question            JSONB NOT NULL DEFAULT '{}'::jsonb,
+      answer_norm         TEXT NOT NULL DEFAULT '',
+      host_id             TEXT NOT NULL,
+      winners             JSONB NOT NULL DEFAULT '[]'::jsonb,
+      winner_message_id   TEXT,
+      cleanup_at          TIMESTAMP,
+      started_at          TIMESTAMP,
+      ended_at            TIMESTAMP,
+      created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS trivia_rounds_guild_idx ON trivia_rounds (guild_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS trivia_rounds_status_idx ON trivia_rounds (status)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trivia_guesses (
+      id                  SERIAL PRIMARY KEY,
+      round_id            INTEGER NOT NULL,
+      guild_id            TEXT NOT NULL,
+      user_id             TEXT NOT NULL,
+      guess               TEXT NOT NULL,
+      correct             BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS trivia_guesses_round_user_uidx ON trivia_guesses (round_id, user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS trivia_guesses_round_idx ON trivia_guesses (round_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trivia_role_holds (
+      id                  SERIAL PRIMARY KEY,
+      guild_id            TEXT NOT NULL,
+      user_id             TEXT NOT NULL,
+      role_id             TEXT NOT NULL,
+      role_key            TEXT NOT NULL,
+      round_id            INTEGER,
+      expires_at          TIMESTAMP NOT NULL,
+      created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_guild_idx ON trivia_role_holds (guild_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_expires_idx ON trivia_role_holds (expires_at)`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pet_settings (
       id                          SERIAL PRIMARY KEY,

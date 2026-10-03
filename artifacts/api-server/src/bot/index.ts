@@ -46,6 +46,7 @@ import { handleGiveawayHubCommand, handleGiveawayHubComponent } from "./giveaway
 import { handleGiveawayComponent } from "./giveaway/manager.js";
 import { handleGiveawayMessage } from "./giveaway/message-hook.js";
 import { startGiveawayMaintenance } from "./giveaway/sweeper.js";
+import { startTriviaMaintenance } from "./trivia/sweeper.js";
 import { handleHelpHubComponent } from "./commands/help-hub.js";
 import { buildBattleStatsEmbed, battleStatsLevelJumpRow } from "./battle/stats-view.js";
 import { buildCardLevelEmbed } from "./cards/level-command.js";
@@ -167,6 +168,7 @@ export async function startBot() {
       startBattleMaintenance();
       startMarketMaintenance();
       startGiveawayMaintenance();
+      startTriviaMaintenance();
       await registerCommands(c.user.id, token, client);
       // AFK Secretary: start the timed auto-remove sweeper (clears "timed" AFKs
       // once their countdown elapses; presence/messages can't cover this).
@@ -387,6 +389,21 @@ export async function startBot() {
       if (interaction.isModalSubmit() && interaction.customId.startsWith("tatsu:")) {
         const { handleTatsuAdminModal } = await import("./tatsu/discord-admin.js");
         await handleTatsuAdminModal(interaction);
+        return;
+      }
+      // ── Community Trivia / QOTD / Flash host (trivia:*) ─────────────────────
+      if (
+        (interaction.isButton() || interaction.isStringSelectMenu()
+          || interaction.isChannelSelectMenu()) &&
+        interaction.customId.startsWith("trivia:")
+      ) {
+        const { handleTriviaAdminComponent } = await import("./trivia/discord-admin.js");
+        await handleTriviaAdminComponent(interaction);
+        return;
+      }
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("trivia:")) {
+        const { handleTriviaAdminModal } = await import("./trivia/discord-admin.js");
+        await handleTriviaAdminModal(interaction);
         return;
       }
       if (interaction.isButton() && interaction.customId.startsWith("unbgame:")) {
@@ -1111,6 +1128,9 @@ export async function startBot() {
       } else if (cmd === "tatsu") {
         const { handleTatsuAdminCommand } = await import("./tatsu/discord-admin.js");
         await handleTatsuAdminCommand(interaction);
+      } else if (cmd === "trivia") {
+        const { handleTriviaAdminCommand } = await import("./trivia/discord-admin.js");
+        await handleTriviaAdminCommand(interaction);
       } else if (cmd === "casino") {
         const { handleCasinoCommand } = await import("./unbelievaboat/casino.js");
         await handleCasinoCommand(interaction);
@@ -1161,7 +1181,7 @@ export async function startBot() {
     "begin", "show_shiny",
     "quote",
     "collection_hub", "hq", "hqadmin", "hqbuild",
-    "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu",
+    "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu", "trivia",
     "casino", "vaultvalue", "cardadmin", "secret",
     "daily_ub", "collect_ub", "bal_ub", "deposit_ub", "withdraw_ub",
     "slots_ub", "blackjack_ub", "roulette_ub", "uno_ub", "higherlower_ub", "redblack_ub",
@@ -1189,6 +1209,11 @@ export async function startBot() {
     // the intercept embed if they pinged anyone away. Fire-and-forget — never
     // consumes the message or blocks the prefix / card-catch pipeline below.
     void handleAfkMessage(msg).catch(err => logger.debug({ err }, "AFK message hook error"));
+
+    // Community Trivia: typed guesses during a live round (fire-and-forget).
+    void import("./trivia/rounds.js")
+      .then(m => m.handleTriviaChannelMessage(msg))
+      .catch(err => logger.debug({ err }, "Trivia message hook error"));
 
     // Dual prefixes (per-guild): admin/card commands vs UnbelievaBoat casino games.
     const prefix = await getGuildPrefix(msg.guild.id);
@@ -1278,7 +1303,7 @@ async function registerCommands(appId: string, token: string, client: Client) {
     .filter((c: { type?: number; name: string }) => (c.type ?? 1) === 1)
     .map((c: { name: string }) => c.name)
     .sort();
-  const hubsPresent = ["trade", "vaultvalue", "cardadmin", "secret", "casino", "tatsu", "help"]
+  const hubsPresent = ["trade", "vaultvalue", "cardadmin", "secret", "casino", "tatsu", "trivia", "help"]
     .filter(n => chatNames.includes(n));
   const ubSlash = chatNames.filter(n => n.endsWith("_ub"));
   const foldedStillRegistered = [...HUB_REPLACED_COMMANDS].filter(n => chatNames.includes(n));
