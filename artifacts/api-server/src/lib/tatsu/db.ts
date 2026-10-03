@@ -12,15 +12,14 @@ import {
   type TatsuSnapshot,
 } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
-import { HOME_GUILD_ID } from "../../bot/home-guild.js";
 
 export async function getOrCreateTatsuSettings(guildId: string): Promise<TatsuSettings> {
   const existing = await db.select().from(tatsuSettingsTable).where(eq(tatsuSettingsTable.guildId, guildId)).limit(1);
   if (existing[0]) return existing[0];
-  const tatsuGuildId = guildId || HOME_GUILD_ID || guildId;
+  // Always bind Tatsu guild id to the Discord guild running `/tatsu`.
   const [row] = await db.insert(tatsuSettingsTable).values({
     guildId,
-    tatsuGuildId,
+    tatsuGuildId: guildId,
   }).returning();
   return row!;
 }

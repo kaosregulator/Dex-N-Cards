@@ -33,7 +33,10 @@ TATSU_API_KEY=your_key_here
 - Keys are **per Discord user**, free, and created inside Discord — there is no paid storefront key and no scrape/workaround we can ship (that would violate Tatsu’s API rules).
 - Without `TATSU_API_KEY`, `/tatsu` still loads but overview shows the link as off and live probes fail until the key is set.
 
-**Requirements for edits:** the Discord account that owns the API key must be a **member of the guild** and have **Manage Server** (`MANAGE_GUILD`). Guild-scoped reads also require membership (anti-snooping).
+**Requirements for edits:**
+
+1. **Discord (Dex N Cards):** the person running `/tatsu` must be the server owner, or have **Administrator** / **Manage Server**. The bot must also have **Administrator** or **Manage Server** in that guild.
+2. **Tatsu API key:** create with `t!apikey create` while logged into Discord as a server manager. Guild-scoped reads also require that key owner to be a member of the guild (anti-snooping).
 
 **Rate limit:** 60 requests / minute. Exceeding regularly can revoke the key.
 
@@ -65,7 +68,7 @@ These stay on [tatsu.gg](https://tatsu.gg) / Discord `t@` menus — **not** in t
 
 ## Discord dashboard — `/tatsu`
 
-Administrator-only, ephemeral. Same spirit as `/unbelievaboat`, without games/store/pets.
+Staff-only (owner / Administrator / Manage Server on **both** the invoker and Dex N Cards), ephemeral. Same spirit as `/unbelievaboat`, without games/store/pets.
 
 | Control | What it does |
 | --- | --- |
@@ -76,8 +79,6 @@ Administrator-only, ephemeral. Same spirit as `/unbelievaboat`, without games/st
 | **Edit user** | Live lookup + board scan + adjust/zero dropdown (supports raw user ID) |
 | **Lookup user** | Points + all/month/week score ranks + global profile |
 | **Adjust points / score** | **Add** / **Remove** buttons (no typing action); member pick or user ID |
-
-**MANAGE_GUILD on remove:** that text is returned by `api.tatsu.gg` on the PATCH — we do not check Manage Server ourselves (Administrator on `/tatsu` is separate). Add and remove use the same endpoint/`TATSU_API_KEY`. If remove fails while add works, retry with the **Remove** button; if it persists, recreate the key (`t!apikey create`) as an account that has Manage Server in the guild.
 | **Strip spam** | Bulk remove points + score, auto-watchlist |
 | **Watchlist** | Local suspect list + notes (DN-side only) |
 | **Snapshot + climbers** | Save board slice; flag score Δ ≥ threshold |

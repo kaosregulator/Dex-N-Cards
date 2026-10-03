@@ -3,7 +3,8 @@
 // Docs: https://dev.tatsu.gg/ (markdown under /docs/api/)
 // Auth: Authorization header = raw API key from `t!apikey create`
 // Rate limit: 60 req/min (X-RateLimit-* headers). Guild endpoints require the
-// key owner to be in that guild; modify points/score need MANAGE_GUILD.
+// key owner to be in that guild; modify points/score need that account to hold
+// Manage Server there (Tatsu-side — separate from our Discord bot permissions).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { resolvedEnv } from "../runtime-env.js";
@@ -81,8 +82,30 @@ export type TatsuStoreListing = {
   tags?: string[];
 };
 
+/** Normalize pasted keys: strip wrapping quotes and an accidental `Bearer ` prefix. */
+export function normalizeTatsuApiKey(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let key = raw.trim();
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  if (/^bearer\s+/i.test(key)) {
+    key = key.replace(/^bearer\s+/i, "").trim();
+  }
+  return key || null;
+}
+
 function token(): string | null {
-  return resolvedEnv("TATSU_API_KEY") ?? resolvedEnv("TATSU_TOKEN");
+  return normalizeTatsuApiKey(resolvedEnv("TATSU_API_KEY") ?? resolvedEnv("TATSU_TOKEN"));
+}
+
+/** Coerce to Tatsu action uint8: 0 = add, 1 = remove. */
+export function toTatsuAction(action: unknown): TatsuAction {
+  if (action === 1 || action === "1" || action === "remove") return 1;
+  return 0;
 }
 
 export function isTatsuConfigured(): boolean {
@@ -167,20 +190,20 @@ export const tatsuApi = {
 
   modifyMemberPoints(guildId: string, userId: string, amount: number, action: TatsuAction) {
     const amt = Math.min(TATSU_MODIFY_MAX, Math.max(1, Math.floor(amount)));
-    // Tatsu expects integer 0=add / 1=remove (not strings / booleans).
-    const act = action === 1 ? 1 : 0;
+    // Official docs: action uint8 (0=add / 1=remove), amount 1–100000.
+    const act = toTatsuAction(action);
     return tatsuFetch<TatsuMemberPoints>("PATCH", `/guilds/${guildId}/members/${userId}/points`, {
-      amount: amt,
       action: act,
+      amount: amt,
     });
   },
 
   modifyMemberScore(guildId: string, userId: string, amount: number, action: TatsuAction) {
     const amt = Math.min(TATSU_MODIFY_MAX, Math.max(1, Math.floor(amount)));
-    const act = action === 1 ? 1 : 0;
+    const act = toTatsuAction(action);
     return tatsuFetch<TatsuMemberScore>("PATCH", `/guilds/${guildId}/members/${userId}/score`, {
-      amount: amt,
       action: act,
+      amount: amt,
     });
   },
 

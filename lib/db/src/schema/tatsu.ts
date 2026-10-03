@@ -10,8 +10,8 @@ import {
 // Tatsu's own dashboard (t@persistence) — not exposed by their API.
 //
 // API key stays in env (`TATSU_API_KEY`) — never in DB. Create one with
-// `t!apikey create` in Discord (key owner must be in the server; edits need
-// MANAGE_GUILD on that account).
+// `t!apikey create` in Discord (key owner must be in the server). Discord-side
+// `/tatsu` also requires Manage Server/Admin on both the invoker and our bot.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TatsuRankingPeriod = "all" | "month" | "week";
