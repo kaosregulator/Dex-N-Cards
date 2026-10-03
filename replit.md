@@ -57,11 +57,13 @@ DN Cards is DarkNight's collectible military trading card game for the Roblox + 
 - Headquarters (HQ) schema: `lib/db/src/schema/headquarters.ts` (player_hq, hq_unlocks, hq_displays, hq_placements, hq_defenders, hq_base_state, hq_base_attacks, hq_base_reigns, hq_world_nodes, hq_terrain)
 - UnbelievaBoat addon schema: `lib/db/src/schema/unbelievaboat.ts` (ub_settings, ub_role_links, ub_store_catalog, ub_audit_log) + `lib/db/src/schema/pets.ts` (pet_settings, pets, pet_challenges, pet_care_log)
 - Tatsu addon schema: `lib/db/src/schema/tatsu.ts` (tatsu_settings, tatsu_audit_log, tatsu_watchlist, tatsu_snapshots) — Discord dashboard `/tatsu`
+- Trivia addon schema: `lib/db/src/schema/trivia.ts` (trivia_settings, trivia_rounds, trivia_guesses, trivia_role_holds) — Discord host `/trivia`
 - UnbelievaBoat client + admin API: `artifacts/api-server/src/lib/unbelievaboat/`, `artifacts/api-server/src/routes/unbelievaboat-admin.ts` (`/api/admin/ub/*`)
 - Tatsu client + Discord dashboard: `artifacts/api-server/src/lib/tatsu/`, `artifacts/api-server/src/bot/tatsu/discord-admin.ts` (`/tatsu`)
+- Trivia host: `artifacts/api-server/src/lib/trivia/`, `artifacts/api-server/src/bot/trivia/` (`/trivia`)
 - Tamagotchi pets: `artifacts/api-server/src/bot/pets/` (`/pet`, `/petadmin` — animated GIF care hub, UB cash shop, challenges)
 - Dashboard hub: `artifacts/dashboard/src/pages/unbelievaboat-admin.tsx` at `/admin/unbelievaboat`
-- Docs: `docs/unbelievaboat.md`, `docs/tatsu.md`
+- Docs: `docs/unbelievaboat.md`, `docs/tatsu.md`, `docs/trivia.md`
 - Headquarters engine (`/hq`): `artifacts/api-server/src/bot/hq/` — data-driven, theme-agnostic. `defs/{themes,rooms,decorations,walls,floors,backdrops,wallpapers,surfaces,companions,world,unlock-rules}.ts` (registries), `assets.ts` (procedural↔asset seam; resolves `<prefix>/<key>.png` by convention and honours `HQ_ASSETS_DIR`), `db.ts`, `engine.ts` (unlocks DERIVED from existing systems), `grid.ts` (lattice sizes). Hub UI: `artifacts/api-server/src/bot/commands/hq-hub.ts`. See `docs/headquarters.md`.
 - HQ renderers: `hq/paint.ts` (shared primitives + header + emoji stripping — the canvas has no emoji font), `hq/render.ts` (isometric room + exterior base + siege), `hq/render-world.ts` (the campaign world map), `hq/render-terrain.ts` (built surfaces, water, hills + the build cursor), `hq/render-wallpaper.ts` (repeating wall coverings in iso perspective), `hq/cinematic.ts` (landscape siege intro GIF).
 - HQ world campaign: `hq/world.ts` (seeds `hq_world_nodes` from the `defs/world.ts` blueprint, capture/tribute, AI garrisons synthesised from the guild card pool as real `OwnedBattleCard`s). Six AI factions hold twelve tiered territories per guild; members take them and hold them for tribute.

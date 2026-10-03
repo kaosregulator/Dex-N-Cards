@@ -321,6 +321,10 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/quiet_setup ensure_room` — sync rooms + quarantine roles + hides\n" +
           "`/quiet_setup rename` — custom labels for Quiet / Vacation / LOA / Step Away\n" +
           "Includes **Stones in the Water** — a short click-through release exercise. Outsiders can't see the room." },
+        { name: "🎮 Community Trivia (`/trivia`)", value:
+          "`/trivia` — (staff) host **Flash**, **Trivia**, **Picture**, or schedule **QOTD**\n" +
+          "Players guess with big buttons, a Guess popup, or typing until staff hits **End**\n" +
+          "Winners get a confetti card + temporary roles (Trivia Winner, QOTD Champion, …)" },
       );
   },
 
@@ -354,7 +358,8 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/echo` — Echo-Whisper config · `/secret` panel — whisper / staff secret\n" +
           "`/quiet_setup` · `/quiet` — sanctuary place **or force out**\n" +
           "`/unbelievaboat` · `/casino` — UnbelievaBoat economy & casino\n" +
-          "`/tatsu` — Tatsu score/points dashboard & spam tools" },
+          "`/tatsu` — Tatsu score/points dashboard & spam tools\n" +
+          "`/trivia` — community flash trivia, QOTD, picture rounds" },
         { name: "🌐 Website", value: `Public: **[${site}](${site})** · Admin dashboard: run \`/dashboard\` for your login link.` },
       );
   },
