@@ -38,12 +38,40 @@ import {
   bumpScratchReveal,
   redeemScratcher,
   countOpenTickets,
+  getOrCreateLotterySettings,
 } from "../../../lib/lottery/db.js";
+import {
+  resolveGameConfig,
+  checkBuyWindow,
+  formatBuyWindow,
+} from "../../../lib/lottery/config.js";
 import { CashError, spendFunds, earnCash, depositCash, fmtCash, requireEconomy } from "../cash.js";
 import { renderStoreCardGif, renderScratchGif } from "./render.js";
 
+/** Private-only replies — number picks / scratch must never be public. */
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const COLOR = 0xfee75c;
+
+async function assertCanBuy(
+  guildId: string,
+  gameKey: LotteryGameKey,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const settings = await getOrCreateLotterySettings(guildId);
+  if (!settings.enabled) {
+    return { ok: false, message: "Lottery is disabled by staff right now." };
+  }
+  const cfg = resolveGameConfig(settings, gameKey);
+  const window = checkBuyWindow(cfg);
+  if (!window.ok) return { ok: false, message: window.reason };
+  const pool = await getPool(guildId, gameKey);
+  if (pool.status !== "open") {
+    return {
+      ok: false,
+      message: `**${GAME_DEFS[gameKey].name}** is not open for tickets (\`${pool.status}\`).`,
+    };
+  }
+  return { ok: true };
+}
 
 type PickDraft = {
   gameKey: DrawGameKey;
@@ -81,6 +109,11 @@ export async function handleLotteryComponent(
   }
   if (id === "lottery:pick_game" && interaction.isStringSelectMenu()) {
     const game = interaction.values[0] as LotteryGameKey;
+    const gate = await assertCanBuy(interaction.guildId!, game);
+    if (!gate.ok) {
+      await interaction.reply({ content: gate.message, ...EPHEMERAL });
+      return;
+    }
     if (game === "scratch") {
       await beginScratchPurchase(interaction);
       return;
@@ -132,15 +165,20 @@ async function showStore(
   } catch {
     /* show store anyway */
   }
+  const settings = await getOrCreateLotterySettings(guildId);
   const pools = await ensurePools(guildId);
 
   const lines = pools.map(p => {
-    const def = GAME_DEFS[p.gameKey as LotteryGameKey];
+    const key = p.gameKey as LotteryGameKey;
+    const def = GAME_DEFS[key];
     if (!def) return null;
+    const cfg = resolveGameConfig(settings, key);
+    const win = checkBuyWindow(cfg);
+    const openTag = win.ok ? "🟢 open" : "🔴 closed";
     return (
-      `${def.emoji} **${def.name}** — jackpot/pool **${symbol}${fmtCash(p.poolAmount)}**` +
-      ` · ticket **${symbol}${fmtCash(p.ticketPrice)}**` +
-      (p.gameKey !== "scratch" ? ` · \`${p.status}\`` : " · instant")
+      `${def.emoji} **${def.name}** — jackpot **${symbol}${fmtCash(p.poolAmount)}**` +
+      ` · ticket **${symbol}${fmtCash(p.ticketPrice)}** · ${openTag}\n` +
+      `└ Buy: ${formatBuyWindow(cfg)}`
     );
   }).filter(Boolean);
 
@@ -159,15 +197,16 @@ async function showStore(
     .setTitle("🎱 Lottery Ticket Store")
     .setDescription(
       [
-        "Buy with **UnbelievaBoat** cash/bank. Every ticket feeds the prize pool.",
-        "Winners take the pot — jackpots start seeded so the board is never empty.",
+        "🔒 **Private** — your number picks & scratch cards are only visible to you.",
+        "Buy with **UnbelievaBoat** cash/bank. Ticket money feeds the prize pool.",
+        settings.enabled ? "" : "⚠️ Lottery is **disabled** by staff.",
         "",
         ...lines,
         "",
-        "Pick a game → step-by-step numbers (or Scratch) → preview → pay.",
-      ].join("\n"),
+        "Pick a game → enter numbers privately → preview → pay.",
+      ].filter(Boolean).join("\n"),
     )
-    .setFooter({ text: "UB Lottery · /lotteryadmin for staff controls" });
+    .setFooter({ text: "UB Lottery · only you see this panel" });
   if (gif) embed.setImage("attachment://lottery-store.gif");
   else embed.setAuthor({ name: featDef.name });
 
@@ -175,13 +214,14 @@ async function showStore(
     .setCustomId("lottery:pick_game")
     .setPlaceholder("Choose what to play…")
     .addOptions(
-      { label: "Classic Lottery", value: "classic", emoji: "🎟️", description: `Pick 5 · ${symbol}${GAME_DEFS.classic.ticketPrice}` },
-      { label: "Powerball", value: "powerball", emoji: "🔴", description: `5 + Powerball · ${symbol}${GAME_DEFS.powerball.ticketPrice}` },
-      { label: "Mega Millionaire", value: "mega", emoji: "💎", description: `5 + Mega · ${symbol}${GAME_DEFS.mega.ticketPrice}` },
-      { label: "Scratch Ticket", value: "scratch", emoji: "🎫", description: `Instant · ${symbol}${GAME_DEFS.scratch.ticketPrice}` },
+      { label: "Classic Lottery", value: "classic", emoji: "🎟️", description: `Pick 5 · ${symbol}${pools.find(p => p.gameKey === "classic")?.ticketPrice ?? GAME_DEFS.classic.ticketPrice}` },
+      { label: "Powerball", value: "powerball", emoji: "🔴", description: `5 + PB · ${symbol}${pools.find(p => p.gameKey === "powerball")?.ticketPrice ?? GAME_DEFS.powerball.ticketPrice}` },
+      { label: "Mega Millionaire", value: "mega", emoji: "💎", description: `5 + Mega · ${symbol}${pools.find(p => p.gameKey === "mega")?.ticketPrice ?? GAME_DEFS.mega.ticketPrice}` },
+      { label: "Scratch Ticket", value: "scratch", emoji: "🎫", description: `Instant · ${symbol}${pools.find(p => p.gameKey === "scratch")?.ticketPrice ?? GAME_DEFS.scratch.ticketPrice}` },
     );
 
   const payload = {
+    content: null as string | null,
     embeds: [embed],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
     files,
@@ -200,13 +240,6 @@ async function beginPickFlow(
 ): Promise<void> {
   pruneDrafts();
   const pool = await getPool(interaction.guildId!, gameKey);
-  if (pool.status !== "open") {
-    await interaction.reply({
-      content: `**${GAME_DEFS[gameKey].name}** is not open for tickets right now (status: \`${pool.status}\`).`,
-      ...EPHEMERAL,
-    });
-    return;
-  }
   drafts.set(draftKey(interaction.guildId!, interaction.user.id), {
     gameKey,
     numbers: [],
@@ -214,21 +247,30 @@ async function beginPickFlow(
     expires: Date.now() + DRAFT_TTL,
   });
   const def = GAME_DEFS[gameKey];
-  await interaction.reply({
+  const settings = await getOrCreateLotterySettings(interaction.guildId!);
+  const cfg = resolveGameConfig(settings, gameKey);
+  // Stay on the same ephemeral store message — never post picks publicly.
+  await interaction.deferUpdate();
+  await interaction.editReply({
+    content: null,
+    files: [],
     embeds: [
       new EmbedBuilder()
         .setColor(def.color)
         .setTitle(`${def.emoji} ${def.name} — pick your numbers`)
         .setDescription(
           [
+            "🔒 **Only you can see this** — your numbers stay private until the public draw.",
+            "",
             `Ticket price: **${fmtCash(pool.ticketPrice)}** (cash first, then bank)`,
             `Current jackpot: **${fmtCash(pool.poolAmount)}**`,
+            `Buy window: ${formatBuyWindow(cfg)}`,
             "",
-            `You'll enter **${def.pickCount}** numbers from **1–${def.mainMax}**` +
+            `Enter **${def.pickCount}** numbers from **1–${def.mainMax}**` +
               (def.bonusMax ? `, then a **${def.bonusLabel}** (1–${def.bonusMax})` : "") +
               ".",
             "",
-            "Press **Enter number 1** to start. You'll get a clear preview before anything is charged.",
+            "Press **Enter number 1**. Preview before anything is charged.",
           ].join("\n"),
         ),
     ],
@@ -244,7 +286,6 @@ async function beginPickFlow(
           .setStyle(ButtonStyle.Secondary),
       ),
     ],
-    ...EPHEMERAL,
   });
 }
 
@@ -272,6 +313,13 @@ async function onNumberModal(interaction: ModalSubmitInteraction): Promise<void>
   const draft = drafts.get(key);
   if (!draft) {
     await interaction.reply({ content: "Session expired — open `/lottery` again.", ...EPHEMERAL });
+    return;
+  }
+  // Re-check buy window mid-flow so sales can close cleanly.
+  const gate = await assertCanBuy(interaction.guildId!, draft.gameKey);
+  if (!gate.ok) {
+    drafts.delete(key);
+    await interaction.reply({ content: gate.message, ...EPHEMERAL });
     return;
   }
   const def = GAME_DEFS[draft.gameKey];
@@ -317,6 +365,8 @@ async function onNumberModal(interaction: ModalSubmitInteraction): Promise<void>
           .setTitle("🎟️ Preview — confirm purchase")
           .setDescription(
             [
+              "🔒 **Private preview** — nobody else can see your numbers.",
+              "",
               `**${def.name}**`,
               `Numbers: ${formatNums(draft.numbers, draft.powerball, def.bonusLabel)}`,
               "",
@@ -379,6 +429,12 @@ async function confirmPurchase(interaction: ButtonInteraction): Promise<void> {
     await interaction.reply({ content: "No ticket in progress — start again from `/lottery`.", ...EPHEMERAL });
     return;
   }
+  const gate = await assertCanBuy(interaction.guildId!, draft.gameKey);
+  if (!gate.ok) {
+    drafts.delete(key);
+    await interaction.reply({ content: gate.message, ...EPHEMERAL });
+    return;
+  }
   await interaction.deferUpdate();
   const pool = await getPool(interaction.guildId!, draft.gameKey);
   const def = GAME_DEFS[draft.gameKey];
@@ -431,7 +487,8 @@ async function confirmPurchase(interaction: ButtonInteraction): Promise<void> {
 }
 
 async function beginScratchPurchase(interaction: StringSelectMenuInteraction): Promise<void> {
-  await interaction.deferReply(EPHEMERAL);
+  // Keep scratch on the private ephemeral store message.
+  await interaction.deferUpdate();
   const guildId = interaction.guildId!;
   const pool = await getPool(guildId, "scratch");
   try {
@@ -463,10 +520,13 @@ async function beginScratchPurchase(interaction: StringSelectMenuInteraction): P
     const embed = new EmbedBuilder()
       .setColor(GAME_DEFS.scratch.color)
       .setTitle("🎫 Scratch ticket ready")
-      .setDescription("Mash **Scratch** to peel the foil — spam as fast as you want until all 9 cells are open.")
+      .setDescription(
+        "🔒 **Only you see this card.**\nMash **Scratch** to peel the foil — spam until all 9 cells are open.",
+      )
       .setFooter({ text: `Paid ${symbol}${fmtCash(pool.ticketPrice)} · ticket #${card.id}` });
     if (gif) embed.setImage("attachment://scratch.gif");
     await interaction.editReply({
+      content: null,
       embeds: [embed],
       files,
       components: [
@@ -481,14 +541,14 @@ async function beginScratchPurchase(interaction: StringSelectMenuInteraction): P
     });
   } catch (err) {
     const msg = err instanceof CashError ? err.message : "Could not buy scratcher.";
-    await interaction.editReply({ content: msg });
+    await interaction.editReply({ content: msg, embeds: [], components: [], files: [] });
   }
 }
 
 async function onScratchTap(interaction: ButtonInteraction): Promise<void> {
   const id = Number(interaction.customId.split(":")[2]);
   const card = await getScratcher(id);
-  if (!card || card.userId !== interaction.user.id) {
+  if (!card || card.userId !== interaction.user.id || card.guildId !== interaction.guildId) {
     await interaction.reply({ content: "That's not your ticket.", ...EPHEMERAL });
     return;
   }
@@ -577,6 +637,11 @@ async function onRedeem(interaction: ButtonInteraction): Promise<void> {
   const parts = interaction.customId.split(":"); // lottery:redeem:id:cash|bank
   const id = Number(parts[2]);
   const to = parts[3] === "bank" ? "bank" : "cash";
+  const owned = await getScratcher(id);
+  if (!owned || owned.userId !== interaction.user.id || owned.guildId !== interaction.guildId) {
+    await interaction.reply({ content: "That's not your ticket.", ...EPHEMERAL });
+    return;
+  }
   await interaction.deferUpdate();
   const claimed = await redeemScratcher(id, to);
   if (!claimed) {

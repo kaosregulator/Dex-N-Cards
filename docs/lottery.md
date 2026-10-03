@@ -24,10 +24,22 @@ Lottery games funded by **UnbelievaBoat** currency. Ticket spend goes into a **p
 ## Admin — `/lotteryadmin`
 
 - Set announce channel (live reveals + jackpot boards)  
+- **Prices** — per-game ticket price + seed jackpot  
+- **Buy hours** — per-game UTC start/end hour + weekdays (`all` or `0,1,2…`)  
 - **Start / announce** — post flashy jackpot board for Powerball / Mega / Classic  
 - **Live draw now** — animated ball-by-ball reveal in channel, score tickets, pay winners, reset/roll pool  
 - Weekly schedule (UTC day + hour) — sweeper auto-runs draws when due  
 - Enable/disable suite  
+
+## Privacy & safeguards
+
+- `/lottery` store, number picking, previews, scratch cards, and redeems are **ephemeral** (only the buyer sees them)  
+- Buy checks: suite enabled · game enabled · pool `open` · UTC buy window · ownership on scratch/redeem  
+- Public channel only gets jackpot boards, live ball drops, and winner announcements  
+
+## Ties / multi-winners
+
+When 2+ tickets share the top prize (e.g. split jackpot), the announce channel posts an exciting **“IT'S A TIE — N WINNERS!”** message with each Discord mention, their **ticket numbers**, ticket id, and share amount, plus a celebration GIF with **avatars**.
 
 ## Money
 
@@ -37,4 +49,5 @@ Lottery games funded by **UnbelievaBoat** currency. Ticket spend goes into a **p
 
 ## Tables
 
-`ub_lottery_settings`, `ub_lottery_pools`, `ub_lottery_tickets`, `ub_lottery_draws`, `ub_lottery_scratchers` — created via boot / production `CREATE TABLE IF NOT EXISTS`.
+`ub_lottery_settings`, `ub_lottery_pools`, `ub_lottery_tickets`, `ub_lottery_draws`, `ub_lottery_scratchers` — created via boot / production `CREATE TABLE IF NOT EXISTS`.  
+Per-game prices/windows live in `ub_lottery_settings.game_config` JSON.

@@ -27,13 +27,23 @@ import {
   updateLotterySettings,
   ensurePools,
   getPool,
+  setPoolAmount,
   setPoolStatus,
+  patchGameConfig,
 } from "../../../lib/lottery/db.js";
+import {
+  resolveGameConfig,
+  formatBuyWindow,
+  parseBuyDays,
+} from "../../../lib/lottery/config.js";
 import { fmtCash, requireEconomy } from "../cash.js";
 import { postJackpotBoard, runLiveDraw } from "./draw.js";
 import { buildLotteryAdminCommandJson, buildLotteryCommandJson } from "./definition.js";
+import type { LotteryGameKey } from "./catalog.js";
 
 export { buildLotteryAdminCommandJson, buildLotteryCommandJson };
+
+const ALL_GAMES: LotteryGameKey[] = ["classic", "powerball", "mega", "scratch"];
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 
@@ -235,6 +245,189 @@ export async function handleLotteryAdminComponent(
     });
     return;
   }
+  if (id === "lottoadmin:prices" && interaction.isButton()) {
+    await interaction.update({
+      content: "Pick a game to edit **ticket price** and **seed jackpot**:",
+      embeds: [],
+      components: [
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("lottoadmin:prices_game")
+            .setPlaceholder("Game to price…")
+            .addOptions(
+              ...ALL_GAMES.map(k => ({
+                label: GAME_DEFS[k].name,
+                value: k,
+                emoji: GAME_DEFS[k].emoji,
+              })),
+            ),
+        ),
+        backRow(),
+      ],
+    });
+    return;
+  }
+  if (id === "lottoadmin:prices_game" && interaction.isStringSelectMenu()) {
+    const game = interaction.values[0] as LotteryGameKey;
+    const settings = await getOrCreateLotterySettings(interaction.guildId!);
+    const cfg = resolveGameConfig(settings, game);
+    await interaction.showModal(
+      new ModalBuilder()
+        .setCustomId(`lottoadmin:modal:prices:${game}`)
+        .setTitle(`${GAME_DEFS[game].name} prices`.slice(0, 45))
+        .addComponents(
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder()
+              .setCustomId("ticket")
+              .setLabel("Ticket price (UB)")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setValue(String(cfg.ticketPrice)),
+          ),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder()
+              .setCustomId("seed")
+              .setLabel("Seed jackpot / pool floor (UB)")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setValue(String(cfg.seedJackpot)),
+          ),
+        ),
+    );
+    return;
+  }
+  if (id.startsWith("lottoadmin:modal:prices:") && interaction.isModalSubmit()) {
+    const game = id.slice("lottoadmin:modal:prices:".length) as LotteryGameKey;
+    const ticket = Number.parseInt(interaction.fields.getTextInputValue("ticket"), 10);
+    const seed = Number.parseInt(interaction.fields.getTextInputValue("seed"), 10);
+    if (!Number.isFinite(ticket) || ticket < 1 || ticket > 10_000_000) {
+      await interaction.reply({ content: "Ticket price must be 1–10,000,000.", ...EPHEMERAL });
+      return;
+    }
+    if (!Number.isFinite(seed) || seed < 0 || seed > 100_000_000) {
+      await interaction.reply({ content: "Seed must be 0–100,000,000.", ...EPHEMERAL });
+      return;
+    }
+    await patchGameConfig(interaction.guildId!, game, {
+      ticketPrice: ticket,
+      seedJackpot: seed,
+    });
+    await ensurePools(interaction.guildId!);
+    // If pool is below new seed, top it up to the floor.
+    const pool = await getPool(interaction.guildId!, game);
+    if (pool.poolAmount < seed) {
+      await setPoolAmount(interaction.guildId!, game, seed);
+    }
+    await interaction.reply({
+      content:
+        `Updated **${GAME_DEFS[game].name}**: ticket **${fmtCash(ticket)}**, seed **${fmtCash(seed)}**.`,
+      ...EPHEMERAL,
+    });
+    return;
+  }
+  if (id === "lottoadmin:hours" && interaction.isButton()) {
+    await interaction.update({
+      content: "Pick a game to set **when players can buy** (UTC hours + days):",
+      embeds: [],
+      components: [
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("lottoadmin:hours_game")
+            .setPlaceholder("Game buy window…")
+            .addOptions(
+              ...ALL_GAMES.map(k => ({
+                label: GAME_DEFS[k].name,
+                value: k,
+                emoji: GAME_DEFS[k].emoji,
+              })),
+            ),
+        ),
+        backRow(),
+      ],
+    });
+    return;
+  }
+  if (id === "lottoadmin:hours_game" && interaction.isStringSelectMenu()) {
+    const game = interaction.values[0] as LotteryGameKey;
+    const settings = await getOrCreateLotterySettings(interaction.guildId!);
+    const cfg = resolveGameConfig(settings, game);
+    await interaction.showModal(
+      new ModalBuilder()
+        .setCustomId(`lottoadmin:modal:hours:${game}`)
+        .setTitle(`${GAME_DEFS[game].name} buy window`.slice(0, 45))
+        .addComponents(
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder()
+              .setCustomId("start")
+              .setLabel("Start hour UTC (0–23) or blank=always")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+              .setValue(cfg.buyStartHourUtc == null ? "" : String(cfg.buyStartHourUtc)),
+          ),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder()
+              .setCustomId("end")
+              .setLabel("End hour UTC (0–23) or blank=always")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+              .setValue(cfg.buyEndHourUtc == null ? "" : String(cfg.buyEndHourUtc)),
+          ),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder()
+              .setCustomId("days")
+              .setLabel("Days 0=Sun…6=Sat (all or 1,2,3)")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+              .setValue(cfg.buyDaysUtc.length ? cfg.buyDaysUtc.join(",") : "all"),
+          ),
+        ),
+    );
+    return;
+  }
+  if (id.startsWith("lottoadmin:modal:hours:") && interaction.isModalSubmit()) {
+    const game = id.slice("lottoadmin:modal:hours:".length) as LotteryGameKey;
+    const startRaw = interaction.fields.getTextInputValue("start").trim();
+    const endRaw = interaction.fields.getTextInputValue("end").trim();
+    const daysRaw = interaction.fields.getTextInputValue("days").trim();
+    const days = parseBuyDays(daysRaw || "all");
+    if (days == null) {
+      await interaction.reply({
+        content: "Days must be `all` or numbers 0–6 separated by commas.",
+        ...EPHEMERAL,
+      });
+      return;
+    }
+    let buyStartHourUtc: number | null = null;
+    let buyEndHourUtc: number | null = null;
+    if (startRaw || endRaw) {
+      const start = Number.parseInt(startRaw, 10);
+      const end = Number.parseInt(endRaw, 10);
+      if (
+        !Number.isInteger(start) || start < 0 || start > 23 ||
+        !Number.isInteger(end) || end < 0 || end > 23
+      ) {
+        await interaction.reply({
+          content: "Start and end hours must both be integers 0–23 (or both blank for always).",
+          ...EPHEMERAL,
+        });
+        return;
+      }
+      buyStartHourUtc = start;
+      buyEndHourUtc = end;
+    }
+    await patchGameConfig(interaction.guildId!, game, {
+      buyStartHourUtc,
+      buyEndHourUtc,
+      buyDaysUtc: days,
+    });
+    const settings = await getOrCreateLotterySettings(interaction.guildId!);
+    const cfg = resolveGameConfig(settings, game);
+    await interaction.reply({
+      content: `Buy window for **${GAME_DEFS[game].name}**: ${formatBuyWindow(cfg)}`,
+      ...EPHEMERAL,
+    });
+    return;
+  }
   if (id === "lottoadmin:toggle" && interaction.isButton()) {
     const s = await getOrCreateLotterySettings(interaction.guildId!);
     await updateLotterySettings(interaction.guildId!, { enabled: !s.enabled });
@@ -259,8 +452,14 @@ async function showAdminHub(
   try { ({ symbol } = await requireEconomy(guildId)); } catch { /* */ }
 
   const poolLines = pools.map(p => {
-    const def = GAME_DEFS[p.gameKey as keyof typeof GAME_DEFS];
-    return `${def?.emoji ?? "•"} **${def?.name ?? p.gameKey}** — ${symbol}${fmtCash(p.poolAmount)} (ticket ${symbol}${fmtCash(p.ticketPrice)}, seed ${symbol}${fmtCash(p.seedAmount)}) · \`${p.status}\``;
+    const key = p.gameKey as LotteryGameKey;
+    const def = GAME_DEFS[key];
+    const cfg = resolveGameConfig(settings, key);
+    return (
+      `${def?.emoji ?? "•"} **${def?.name ?? p.gameKey}** — pool ${symbol}${fmtCash(p.poolAmount)}` +
+      ` · ticket ${symbol}${fmtCash(p.ticketPrice)} · seed ${symbol}${fmtCash(p.seedAmount)} · \`${p.status}\`\n` +
+      `└ Buy: ${formatBuyWindow(cfg)}`
+    );
   });
 
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -276,7 +475,8 @@ async function showAdminHub(
         "",
         ...poolLines,
         "",
-        "Players use `/lottery`. Ticket spend feeds the pool. Live draws animate balls in the announce channel.",
+        "Configure **prices** and **buy hours**, then Start / Live draw.",
+        "Player picks stay **ephemeral**; draws & multi-winner ties are public.",
       ].join("\n"),
     );
 
@@ -287,7 +487,11 @@ async function showAdminHub(
       new ButtonBuilder().setCustomId("lottoadmin:channel").setLabel("Set channel").setEmoji("📢").setStyle(ButtonStyle.Primary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("lottoadmin:schedule").setLabel("Weekly schedule").setEmoji("📅").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("lottoadmin:prices").setLabel("Prices").setEmoji("💵").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("lottoadmin:hours").setLabel("Buy hours").setEmoji("⏰").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("lottoadmin:schedule").setLabel("Weekly draw").setEmoji("📅").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("lottoadmin:toggle").setLabel(settings.enabled ? "Disable" : "Enable").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("lottoadmin:hub").setLabel("Refresh").setStyle(ButtonStyle.Secondary),
     ),

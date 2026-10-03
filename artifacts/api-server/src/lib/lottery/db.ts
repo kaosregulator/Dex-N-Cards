@@ -12,7 +12,8 @@ import {
   type UbLotteryDraw,
   type UbLotteryScratcher,
 } from "@workspace/db";
-import { GAME_DEFS, DRAW_GAMES, type DrawGameKey, type LotteryGameKey } from "./catalog.js";
+import { DRAW_GAMES, type DrawGameKey, type LotteryGameKey } from "./catalog.js";
+import { resolveGameConfig } from "./config.js";
 
 export async function getOrCreateLotterySettings(guildId: string): Promise<UbLotterySettings> {
   const existing = await db
@@ -52,10 +53,9 @@ export async function ensurePools(guildId: string): Promise<UbLotteryPool[]> {
   const settings = await getOrCreateLotterySettings(guildId);
   const out: UbLotteryPool[] = [];
   for (const key of [...DRAW_GAMES, "scratch"] as LotteryGameKey[]) {
-    const def = GAME_DEFS[key];
-    const cfg = settings.gameConfig?.[key] ?? {};
-    const seed = typeof cfg.seedJackpot === "number" ? cfg.seedJackpot : def.seedJackpot;
-    const price = typeof cfg.ticketPrice === "number" ? cfg.ticketPrice : def.ticketPrice;
+    const cfg = resolveGameConfig(settings, key);
+    const seed = cfg.seedJackpot;
+    const price = cfg.ticketPrice;
 
     const existing = await db
       .select()
@@ -90,6 +90,19 @@ export async function ensurePools(guildId: string): Promise<UbLotteryPool[]> {
     }
   }
   return out;
+}
+
+/** Merge fields into settings.gameConfig[gameKey]. */
+export async function patchGameConfig(
+  guildId: string,
+  gameKey: LotteryGameKey,
+  patch: Record<string, unknown>,
+): Promise<UbLotterySettings> {
+  const settings = await getOrCreateLotterySettings(guildId);
+  const prev = { ...(settings.gameConfig ?? {}) };
+  const gamePrev = { ...(prev[gameKey] ?? {}) };
+  prev[gameKey] = { ...gamePrev, ...patch };
+  return updateLotterySettings(guildId, { gameConfig: prev });
 }
 
 export async function getPool(guildId: string, gameKey: string): Promise<UbLotteryPool> {

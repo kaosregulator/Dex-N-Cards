@@ -29,7 +29,7 @@ import {
   listGuildsDueForWeeklyDraw,
 } from "../../../lib/lottery/db.js";
 import { earnCash, fmtCash, requireEconomy } from "../cash.js";
-import { renderBallRevealGif, renderLotteryWinnerGif } from "./render.js";
+import { renderBallRevealGif, renderLotteryWinnersGif, type WinnerPortrait } from "./render.js";
 import { getBotClient } from "../../client-holder.js";
 import { logger } from "../../../lib/logger.js";
 
@@ -162,10 +162,16 @@ export async function runLiveDraw(
   }
 
   // Score & pay
-  type WinRow = { userId: string; ticketId: number; tier: string; amount: number };
+  type WinRow = {
+    userId: string;
+    ticketId: number;
+    tier: string;
+    amount: number;
+    numbers: number[];
+    powerball: number | null;
+  };
   const wins: WinRow[] = [];
   let poolLeft = pool.poolAmount;
-  const jackpotClaimed: string[] = [];
 
   for (const ticket of tickets) {
     const result = scoreTicket(
@@ -176,32 +182,51 @@ export async function runLiveDraw(
       bonus,
     );
     if (!result) continue;
-    let amount = 0;
     if (result.shareOfPool >= 1) {
-      // Split jackpot among all jackpot winners later
-      jackpotClaimed.push(ticket.userId);
-      wins.push({ userId: ticket.userId, ticketId: ticket.id, tier: result.tier, amount: -1 });
+      wins.push({
+        userId: ticket.userId,
+        ticketId: ticket.id,
+        tier: result.tier,
+        amount: -1,
+        numbers: ticket.numbers,
+        powerball: ticket.powerball ?? null,
+      });
     } else if (result.shareOfPool > 0) {
-      amount = Math.floor(pool.poolAmount * result.shareOfPool);
+      let amount = Math.floor(pool.poolAmount * result.shareOfPool);
       amount = Math.min(amount, poolLeft);
       poolLeft -= amount;
-      wins.push({ userId: ticket.userId, ticketId: ticket.id, tier: result.tier, amount });
+      wins.push({
+        userId: ticket.userId,
+        ticketId: ticket.id,
+        tier: result.tier,
+        amount,
+        numbers: ticket.numbers,
+        powerball: ticket.powerball ?? null,
+      });
     } else {
-      amount = ticket.cost * result.fixedMultiplier;
+      let amount = ticket.cost * result.fixedMultiplier;
       amount = Math.min(amount, poolLeft);
       poolLeft -= amount;
-      if (amount > 0) wins.push({ userId: ticket.userId, ticketId: ticket.id, tier: result.tier, amount });
+      if (amount > 0) {
+        wins.push({
+          userId: ticket.userId,
+          ticketId: ticket.id,
+          tier: result.tier,
+          amount,
+          numbers: ticket.numbers,
+          powerball: ticket.powerball ?? null,
+        });
+      }
     }
   }
 
-  // Resolve jackpot splits
-  if (jackpotClaimed.length > 0) {
-    const share = Math.floor(poolLeft / jackpotClaimed.length);
-    for (const w of wins) {
-      if (w.amount === -1) {
-        w.amount = share;
-        poolLeft -= share;
-      }
+  // Resolve jackpot splits across every jackpot ticket (ties).
+  const jackpotWins = wins.filter(w => w.amount === -1);
+  if (jackpotWins.length > 0) {
+    const share = Math.floor(poolLeft / jackpotWins.length);
+    for (const w of jackpotWins) {
+      w.amount = share;
+      poolLeft -= share;
     }
   }
 
@@ -215,41 +240,95 @@ export async function runLiveDraw(
     }
   }
 
-  // Reset pool to seed (plus leftover crumbs)
   const seed = pool.seedAmount;
   const nextPool = Math.max(seed, poolLeft);
-  // If jackpot was fully won, hard reset to seed.
   const hadJackpot = wins.some(w => w.tier.toLowerCase().includes("jackpot"));
   await setPoolAmount(guild.id, gameKey, hadJackpot ? seed : nextPool);
   await setPoolStatus(guild.id, gameKey, "open");
 
-  const winnerLines = wins.length
-    ? wins.map(w => `• <@${w.userId}> — **${w.tier}** · ${symbol}${fmtCash(w.amount)}`).join("\n")
-    : "_No winning tickets this draw — jackpot rolls on._";
+  // Top tier for “exciting tie” celebration (same payout + same tier).
+  const paid = wins.filter(w => w.amount > 0).sort((a, b) => b.amount - a.amount);
+  const topAmount = paid[0]?.amount ?? 0;
+  const topTier = paid[0]?.tier ?? "";
+  const tiedTop = paid.filter(w => w.amount === topAmount && w.tier === topTier);
+  const isTie = tiedTop.length >= 2;
+
+  const portraits: WinnerPortrait[] = [];
+  for (const w of (isTie ? tiedTop : paid.slice(0, 1))) {
+    const member = await guild.members.fetch(w.userId).catch(() => null);
+    portraits.push({
+      displayName: member?.displayName ?? w.userId,
+      avatarUrl: member?.displayAvatarURL({ extension: "png", size: 128 }) ?? null,
+      amount: w.amount,
+      numbersLine: formatNums(w.numbers, w.powerball, def.bonusLabel),
+      ticketId: w.ticketId,
+      tier: w.tier,
+    });
+  }
 
   let winnerFile: AttachmentBuilder[] = [];
-  const top = wins.sort((a, b) => b.amount - a.amount)[0];
-  if (top && top.amount > 0) {
-    const member = await guild.members.fetch(top.userId).catch(() => null);
-    const gif = await renderLotteryWinnerGif({
-      displayName: member?.displayName ?? top.userId,
-      title: hadJackpot ? "JACKPOT!" : "WINNER!",
-      amount: top.amount,
+  if (portraits.length > 0) {
+    const title = isTie
+      ? `🎉 ${tiedTop.length} WINNERS!`
+      : hadJackpot
+        ? "JACKPOT!"
+        : "WINNER!";
+    const gif = await renderLotteryWinnersGif({
+      title,
       symbol,
-      numbersLine: formatNums(numbers, bonus, def.bonusLabel),
+      winners: portraits,
     });
     if (gif) winnerFile = [new AttachmentBuilder(gif, { name: "lottery-winner.gif" })];
   }
 
+  const winnerLines = paid.length
+    ? paid.map(w => {
+      const ticketLine = formatNums(w.numbers, w.powerball, def.bonusLabel);
+      return (
+        `• <@${w.userId}> — **${w.tier}** · ${symbol}${fmtCash(w.amount)}\n` +
+        `  Ticket #${w.ticketId}: ${ticketLine}`
+      );
+    }).join("\n")
+    : "_No winning tickets this draw — jackpot rolls on._";
+
+  if (isTie) {
+    const tease = await text.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle(`🔥 IT'S A TIE — ${tiedTop.length} WINNERS!`)
+          .setDescription(
+            [
+              `**${def.name}** just hit a split!`,
+              `Winning numbers: ${formatNums(numbers, bonus, def.bonusLabel)}`,
+              "",
+              ...tiedTop.map((w, i) =>
+                `**Winner ${i + 1}:** <@${w.userId}> · Ticket #${w.ticketId}\n` +
+                `└ ${formatNums(w.numbers, w.powerball, def.bonusLabel)} · **${symbol}${fmtCash(w.amount)}**`,
+              ),
+              "",
+              "Scroll for the celebration card ⬇️",
+            ].join("\n"),
+          ),
+      ],
+    });
+    void tease;
+  }
+
   const finalEmbed = new EmbedBuilder()
     .setColor(def.color)
-    .setTitle(`${def.emoji} ${def.name} — Results`)
+    .setTitle(
+      isTie
+        ? `${def.emoji} ${def.name} — ${tiedTop.length}-WAY SPLIT!`
+        : `${def.emoji} ${def.name} — Results`,
+    )
     .setDescription(
       [
-        `**Winning numbers:** ${formatNums(numbers, bonus, def.bonusLabel)}`,
+        `**Drawn numbers:** ${formatNums(numbers, bonus, def.bonusLabel)}`,
         `Pool at draw: **${symbol}${fmtCash(pool.poolAmount)}**`,
         `Next pool: **${symbol}${fmtCash(hadJackpot ? seed : nextPool)}**`,
         "",
+        isTie ? `🏆 **${tiedTop.length} winners** share the top prize:\n` : "**Winners:**\n",
         winnerLines,
       ].join("\n"),
     );
@@ -258,7 +337,14 @@ export async function runLiveDraw(
   const finalMsg = await text.send({ embeds: [finalEmbed], files: winnerFile });
   await completeDraw(
     draw.id,
-    wins.map(w => ({ ...w })),
+    wins.map(w => ({
+      userId: w.userId,
+      ticketId: w.ticketId,
+      tier: w.tier,
+      amount: w.amount,
+      numbers: w.numbers,
+      powerball: w.powerball,
+    })),
     finalMsg.id,
   );
 

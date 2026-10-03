@@ -1,8 +1,9 @@
 import {
   encodeAnimation, getCanvas, hexToRgba, roundRectPath, clamp01, easeOutCubic,
-  type Ctx,
+  type Ctx, type CanvasMod,
 } from "../../animations/engine.js";
 import { drawConfetti } from "../../animations/particles.js";
+import { loadArt } from "../../animations/effects.js";
 import { GAME_DEFS, type LotteryGameKey } from "./catalog.js";
 
 const W = 720;
@@ -282,49 +283,155 @@ export async function renderScratchGif(opts: {
   }
 }
 
+async function drawAvatarCircle(
+  ctx: Ctx,
+  mod: CanvasMod,
+  url: string | null | undefined,
+  x: number,
+  y: number,
+  size: number,
+): Promise<void> {
+  const img = await loadArt(mod, url ?? null);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  if (img) ctx.drawImage(img, x, y, size, size);
+  else {
+    ctx.fillStyle = "#2b2d31";
+    ctx.fillRect(x, y, size, size);
+  }
+  ctx.restore();
+  ctx.strokeStyle = "#fee75c";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(x + size / 2, y + size / 2, size / 2 + 1, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+export type WinnerPortrait = {
+  displayName: string;
+  avatarUrl?: string | null;
+  amount: number;
+  numbersLine: string;
+  ticketId: number;
+  tier: string;
+};
+
 export async function renderLotteryWinnerGif(opts: {
   displayName: string;
   title: string;
   amount: number;
   symbol: string;
   numbersLine: string;
+  avatarUrl?: string | null;
 }): Promise<Buffer | null> {
+  return renderLotteryWinnersGif({
+    title: opts.title,
+    symbol: opts.symbol,
+    winners: [{
+      displayName: opts.displayName,
+      avatarUrl: opts.avatarUrl,
+      amount: opts.amount,
+      numbersLine: opts.numbersLine,
+      ticketId: 0,
+      tier: "Winner",
+    }],
+  });
+}
+
+/** One or many winners (ties) — public celebration card with Discord avatars. */
+export async function renderLotteryWinnersGif(opts: {
+  title: string;
+  symbol: string;
+  winners: WinnerPortrait[];
+}): Promise<Buffer | null> {
+  const winners = opts.winners.slice(0, 3);
+  if (winners.length === 0) return null;
+  const multi = winners.length > 1;
   try {
     const result = await encodeAnimation({
-      width: W,
-      height: H,
+      width: multi ? 840 : W,
+      height: multi ? 460 : H,
       speed: 1,
-      durationMs: 2400,
+      durationMs: 2600,
       maxFrames: 18,
       quality: 12,
-      render: async ({ ctx, t, frameIndex }) => {
+      render: async ({ ctx, t, frameIndex, mod }) => {
+        const width = multi ? 840 : W;
+        const height = multi ? 460 : H;
         bg(ctx, "#1a1440", "#0f2a3d");
-        drawConfetti(ctx, W, H, {
-          count: 60,
+        // stretch bg if wider
+        if (multi) {
+          const g = ctx.createLinearGradient(0, 0, width, height);
+          g.addColorStop(0, "#1a1440");
+          g.addColorStop(1, "#0f2a3d");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, width, height);
+        }
+        drawConfetti(ctx, width, height, {
+          count: multi ? 80 : 60,
           seed: `lotto-win-${frameIndex}`,
           colors: [0xff5e78, 0xffd54a, 0x4ad991, 0x4a9ff5, 0xb56bff, 0xffffff],
         });
         const pop = easeOutCubic(clamp01(t * 1.3));
-        roundRectPath(ctx, 70, 50, W - 140, H - 100, 24);
         ctx.globalAlpha = pop;
-        ctx.fillStyle = "rgba(15,18,28,0.85)";
+        roundRectPath(ctx, 40, 30, width - 80, height - 60, 24);
+        ctx.fillStyle = "rgba(15,18,28,0.88)";
         ctx.fill();
         ctx.strokeStyle = "#fee75c";
         ctx.lineWidth = 3;
         ctx.stroke();
+
         ctx.fillStyle = "#fee75c";
-        ctx.font = "bold 34px Orbitron, sans-serif";
+        ctx.font = multi ? "bold 36px Orbitron, sans-serif" : "bold 34px Orbitron, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(opts.title, W / 2, 120);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 28px sans-serif";
-        ctx.fillText(opts.displayName, W / 2, 170);
-        ctx.fillStyle = "#57f287";
-        ctx.font = "bold 40px Orbitron, sans-serif";
-        ctx.fillText(`${opts.symbol}${opts.amount.toLocaleString()}`, W / 2, 230);
-        ctx.fillStyle = "#dbdee1";
-        ctx.font = "18px sans-serif";
-        ctx.fillText(opts.numbersLine.slice(0, 60), W / 2, 290);
+        ctx.fillText(opts.title, width / 2, 78);
+
+        if (!multi) {
+          const w0 = winners[0]!;
+          await drawAvatarCircle(ctx, mod, w0.avatarUrl, width / 2 - 48, 100, 96);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 26px sans-serif";
+          ctx.fillText(w0.displayName.slice(0, 24), width / 2, 230);
+          ctx.fillStyle = "#57f287";
+          ctx.font = "bold 36px Orbitron, sans-serif";
+          ctx.fillText(`${opts.symbol}${w0.amount.toLocaleString()}`, width / 2, 275);
+          ctx.fillStyle = "#dbdee1";
+          ctx.font = "16px sans-serif";
+          ctx.fillText(w0.numbersLine.slice(0, 64), width / 2, 315);
+          if (w0.ticketId) {
+            ctx.fillStyle = "#949ba4";
+            ctx.fillText(`Ticket #${w0.ticketId} · ${w0.tier}`, width / 2, 350);
+          }
+        } else {
+          const slotW = (width - 100) / winners.length;
+          for (let i = 0; i < winners.length; i++) {
+            const w = winners[i]!;
+            const cx = 50 + slotW * i + slotW / 2;
+            await drawAvatarCircle(ctx, mod, w.avatarUrl, cx - 44, 110, 88);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 20px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(w.displayName.slice(0, 18), cx, 230);
+            ctx.fillStyle = "#57f287";
+            ctx.font = "bold 24px Orbitron, sans-serif";
+            ctx.fillText(`${opts.symbol}${w.amount.toLocaleString()}`, cx, 262);
+            ctx.fillStyle = "#fee75c";
+            ctx.font = "14px sans-serif";
+            ctx.fillText(w.tier, cx, 288);
+            ctx.fillStyle = "#dbdee1";
+            ctx.font = "13px sans-serif";
+            const nums = w.numbersLine.replace(/\*\*/g, "").slice(0, 42);
+            ctx.fillText(nums, cx, 318);
+            ctx.fillStyle = "#949ba4";
+            ctx.fillText(`Ticket #${w.ticketId}`, cx, 345);
+          }
+          ctx.fillStyle = "#ed4245";
+          ctx.font = "bold 18px Orbitron, sans-serif";
+          ctx.fillText("TIE — JACKPOT SPLIT!", width / 2, 390);
+        }
         ctx.globalAlpha = 1;
       },
     });
