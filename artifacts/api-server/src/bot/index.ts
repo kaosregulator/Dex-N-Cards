@@ -47,6 +47,7 @@ import { handleGiveawayComponent } from "./giveaway/manager.js";
 import { handleGiveawayMessage } from "./giveaway/message-hook.js";
 import { startGiveawayMaintenance } from "./giveaway/sweeper.js";
 import { startTriviaMaintenance } from "./trivia/sweeper.js";
+import { startLotteryMaintenance } from "./unbelievaboat/lottery/draw.js";
 import { handleHelpHubComponent } from "./commands/help-hub.js";
 import { buildBattleStatsEmbed, battleStatsLevelJumpRow } from "./battle/stats-view.js";
 import { buildCardLevelEmbed } from "./cards/level-command.js";
@@ -169,6 +170,7 @@ export async function startBot() {
       startMarketMaintenance();
       startGiveawayMaintenance();
       startTriviaMaintenance();
+      startLotteryMaintenance();
       await registerCommands(c.user.id, token, client);
       // AFK Secretary: start the timed auto-remove sweeper (clears "timed" AFKs
       // once their countdown elapses; presence/messages can't cover this).
@@ -417,6 +419,34 @@ export async function startBot() {
       if (interaction.isButton() && interaction.customId.startsWith("memberdate:")) {
         const { handleMemberDateComponent } = await import("./memberdate/command.js");
         await handleMemberDateComponent(interaction);
+        return;
+      }
+      // ── UB Lottery store + admin (lottery: / lottoadmin:) ───────────────────
+      if (
+        (interaction.isButton() || interaction.isStringSelectMenu()) &&
+        interaction.customId.startsWith("lottery:")
+      ) {
+        const { handleLotteryComponent } = await import("./unbelievaboat/lottery/store.js");
+        await handleLotteryComponent(interaction);
+        return;
+      }
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("lottery:")) {
+        const { handleLotteryComponent } = await import("./unbelievaboat/lottery/store.js");
+        await handleLotteryComponent(interaction);
+        return;
+      }
+      if (
+        (interaction.isButton() || interaction.isStringSelectMenu()
+          || interaction.isChannelSelectMenu()) &&
+        interaction.customId.startsWith("lottoadmin:")
+      ) {
+        const { handleLotteryAdminComponent } = await import("./unbelievaboat/lottery/admin.js");
+        await handleLotteryAdminComponent(interaction);
+        return;
+      }
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("lottoadmin:")) {
+        const { handleLotteryAdminComponent } = await import("./unbelievaboat/lottery/admin.js");
+        await handleLotteryAdminComponent(interaction);
         return;
       }
       if (interaction.isButton() && interaction.customId.startsWith("unbgame:")) {
@@ -1147,6 +1177,12 @@ export async function startBot() {
       } else if (cmd === "memberdate") {
         const { handleMemberDateCommand } = await import("./memberdate/command.js");
         await handleMemberDateCommand(interaction);
+      } else if (cmd === "lottery") {
+        const { handleLotteryCommand } = await import("./unbelievaboat/lottery/store.js");
+        await handleLotteryCommand(interaction);
+      } else if (cmd === "lotteryadmin") {
+        const { handleLotteryAdminCommand } = await import("./unbelievaboat/lottery/admin.js");
+        await handleLotteryAdminCommand(interaction);
       } else if (cmd === "casino") {
         const { handleCasinoCommand } = await import("./unbelievaboat/casino.js");
         await handleCasinoCommand(interaction);
@@ -1198,6 +1234,7 @@ export async function startBot() {
     "quote",
     "collection_hub", "hq", "hqadmin", "hqbuild",
     "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu", "trivia", "memberdate",
+    "lottery", "lotteryadmin",
     "casino", "vaultvalue", "cardadmin", "secret",
     "daily_ub", "collect_ub", "bal_ub", "deposit_ub", "withdraw_ub",
     "slots_ub", "blackjack_ub", "roulette_ub", "uno_ub", "higherlower_ub", "redblack_ub",

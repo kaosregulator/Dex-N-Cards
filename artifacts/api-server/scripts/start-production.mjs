@@ -420,9 +420,90 @@ async function ensureUbAndTatsuTables(pool) {
     await pool.query(`CREATE INDEX IF NOT EXISTS member_role_grants_guild_role_idx ON member_role_grants (guild_id, role_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS member_role_grants_guild_user_idx ON member_role_grants (guild_id, user_id)`);
 
-    console.log("UnbelievaBoat + Tatsu + Trivia + MemberDate tables ready");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ub_lottery_settings (
+        id                      SERIAL PRIMARY KEY,
+        guild_id                TEXT NOT NULL UNIQUE,
+        enabled                 BOOLEAN NOT NULL DEFAULT TRUE,
+        announce_channel_id     TEXT,
+        weekly_draw_day         INTEGER NOT NULL DEFAULT 6,
+        weekly_draw_hour_utc    INTEGER NOT NULL DEFAULT 20,
+        last_draw_date          TEXT,
+        game_config             JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ub_lottery_pools (
+        id                      SERIAL PRIMARY KEY,
+        guild_id                TEXT NOT NULL,
+        game_key                TEXT NOT NULL,
+        pool_amount             INTEGER NOT NULL DEFAULT 0,
+        seed_amount             INTEGER NOT NULL DEFAULT 0,
+        ticket_price            INTEGER NOT NULL DEFAULT 250,
+        status                  TEXT NOT NULL DEFAULT 'open',
+        updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ub_lottery_pools_guild_game_uidx ON ub_lottery_pools (guild_id, game_key)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_pools_guild_idx ON ub_lottery_pools (guild_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ub_lottery_draws (
+        id                      SERIAL PRIMARY KEY,
+        guild_id                TEXT NOT NULL,
+        game_key                TEXT NOT NULL,
+        status                  TEXT NOT NULL DEFAULT 'scheduled',
+        winning_numbers         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        powerball               INTEGER,
+        pool_at_draw            INTEGER NOT NULL DEFAULT 0,
+        channel_id              TEXT,
+        message_id              TEXT,
+        winners                 JSONB NOT NULL DEFAULT '[]'::jsonb,
+        scheduled_at            TIMESTAMP,
+        drawn_at                TIMESTAMP,
+        created_at              TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_draws_guild_idx ON ub_lottery_draws (guild_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_draws_status_idx ON ub_lottery_draws (status)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ub_lottery_tickets (
+        id                      SERIAL PRIMARY KEY,
+        guild_id                TEXT NOT NULL,
+        game_key                TEXT NOT NULL,
+        user_id                 TEXT NOT NULL,
+        numbers                 JSONB NOT NULL DEFAULT '[]'::jsonb,
+        powerball               INTEGER,
+        cost                    INTEGER NOT NULL DEFAULT 0,
+        draw_id                 INTEGER,
+        prize_paid              INTEGER NOT NULL DEFAULT 0,
+        created_at              TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_tickets_guild_game_idx ON ub_lottery_tickets (guild_id, game_key)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_tickets_user_idx ON ub_lottery_tickets (guild_id, user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_tickets_draw_idx ON ub_lottery_tickets (draw_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ub_lottery_scratchers (
+        id                      SERIAL PRIMARY KEY,
+        guild_id                TEXT NOT NULL,
+        user_id                 TEXT NOT NULL,
+        cost                    INTEGER NOT NULL DEFAULT 0,
+        prize                   INTEGER NOT NULL DEFAULT 0,
+        cells                   JSONB NOT NULL DEFAULT '[]'::jsonb,
+        revealed_count          INTEGER NOT NULL DEFAULT 0,
+        fully_revealed          BOOLEAN NOT NULL DEFAULT FALSE,
+        redeemed                BOOLEAN NOT NULL DEFAULT FALSE,
+        redeem_to               TEXT,
+        created_at              TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_scratchers_guild_user_idx ON ub_lottery_scratchers (guild_id, user_id)`);
+
+    console.log("UnbelievaBoat + Tatsu + Trivia + MemberDate + Lottery tables ready");
   } catch (err) {
-    console.error("Failed to ensure ub_*/tatsu_*/trivia_*/member_* tables:", err?.message ?? err);
+    console.error("Failed to ensure ub_*/tatsu_*/trivia_*/member_*/lottery tables:", err?.message ?? err);
     // Non-fatal — boot migrations in the app also try; start anyway.
   }
 }
