@@ -17,6 +17,10 @@ import { buildUbSlashCommandJsons } from "../unbelievaboat/ub-slash.js";
 import { buildTatsuAdminCommandJson } from "../tatsu/discord-admin.js";
 import { buildTriviaAdminCommandJson } from "../trivia/discord-admin.js";
 import { buildMemberDateCommandJson } from "../memberdate/definition.js";
+import {
+  buildLotteryCommandJson,
+  buildLotteryAdminCommandJson,
+} from "../unbelievaboat/lottery/definition.js";
 import { buildVaultValueCommandJson } from "./vaultvalue-hub.js";
 import { buildTradeHubCommandJson } from "./trade-hub.js";
 import { buildCardAdminCommandJson } from "./cardadmin-hub.js";
@@ -77,6 +81,8 @@ function buildLegacyCommands() {
     buildTatsuAdminCommandJson(),
     buildTriviaAdminCommandJson(),
     buildMemberDateCommandJson(),
+    buildLotteryCommandJson(),
+    buildLotteryAdminCommandJson(),
 
     cmd("info", "Details, worth, and drop chance", s => s
       .addStringOption(o => o.setName("name").setDescription("Name to look up").setRequired(true).setAutocomplete(true))),

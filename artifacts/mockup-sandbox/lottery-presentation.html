@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>/lottery — presentation</title>
+<style>
+  body { margin:0; font-family:"gg sans",Segoe UI,system-ui,sans-serif; background:#12081c; color:#dbdee1; }
+  header { padding:28px 32px; background:linear-gradient(135deg,#2a1030,#0f1a2a 55%,#1a0530); }
+  h1 { margin:0 0 6px; font-size:28px; color:#fee75c; }
+  p { margin:0; color:#e0b0ff; max-width:720px; }
+  .page { max-width:1000px; margin:0 auto; padding:24px 20px 64px; display:grid; gap:28px; }
+  .label { font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#949ba4; margin-bottom:10px; }
+  .msg { background:#313338; border-radius:12px; padding:16px 18px; box-shadow:0 8px 24px #0006; }
+  .embed { border-left:4px solid #fee75c; background:#2b2d31; border-radius:4px; padding:12px 14px; max-width:520px; }
+  .embed.red { border-left-color:#ed4245; }
+  .embed.pink { border-left-color:#eb459e; }
+  .title { font-weight:700; color:#fff; font-size:16px; margin-bottom:8px; }
+  .desc { white-space:pre-wrap; font-size:14px; line-height:1.45; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .btn { background:#4e5058; color:#fff; border-radius:3px; padding:8px 12px; font-size:14px; }
+  .btn.ok { background:#248046; } .btn.pri { background:#5865f2; } .btn.danger { background:#da373c; }
+  .select { background:#4e5058; color:#fff; border-radius:3px; padding:8px 12px; min-width:260px; }
+  .card {
+    margin-top:10px; border-radius:12px; height:160px; max-width:420px;
+    background:linear-gradient(135deg,#1a0f2e,#0d1020);
+    border:2px solid #fee75c; display:grid; place-items:center; text-align:center;
+  }
+  .card h2 { margin:0; color:#fee75c; font-size:22px; }
+  .card .jp { color:#57f287; font-weight:800; font-size:28px; }
+  .foil {
+    display:grid; grid-template-columns:repeat(3,1fr); gap:8px; max-width:360px; margin-top:10px;
+  }
+  .cell { height:56px; border-radius:8px; display:grid; place-items:center; font-weight:700; font-size:12px; }
+  .cell.hid { background:linear-gradient(135deg,#7b3fa0,#3d1f55); color:#fff9; }
+  .cell.win { background:#1a3d2e; color:#57f287; border:1px solid #57f287; }
+  .cell.try { background:#2b2d31; color:#dbdee1; }
+  .balls { display:flex; gap:10px; margin-top:12px; }
+  .ball {
+    width:48px; height:48px; border-radius:50%; display:grid; place-items:center;
+    font-weight:800; color:#111; background:radial-gradient(circle at 30% 30%,#fff,#ddd 40%,#888);
+  }
+  .ball.red { background:radial-gradient(circle at 30% 30%,#fff,#ed4245 45%,#7a1214); color:#fff; }
+  .grid2 { display:grid; gap:28px; }
+  @media(min-width:900px){ .grid2 { grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎱 UB Lottery Suite</h1>
+  <p>Ticket store, step-by-step number picks, spam-scratch cards, seeded pools, and live Powerball ball drops — all paid with UnbelievaBoat cash.</p>
+</header>
+<div class="page">
+  <section>
+    <div class="label">1 · Player store · /lottery</div>
+    <div class="msg">
+      <div class="embed">
+        <div class="title">🎱 Lottery Ticket Store</div>
+        <div class="desc">Buy with <strong>UnbelievaBoat</strong> cash/bank. Every ticket feeds the prize pool.
+
+🔴 <strong>Powerball</strong> — jackpot/pool <strong>¢75,000</strong> · ticket <strong>¢500</strong>
+💎 <strong>Mega Millionaire</strong> — <strong>¢150,000</strong> · ticket <strong>¢750</strong>
+🎟️ <strong>Classic Lottery</strong> — <strong>¢15,000</strong> · ticket <strong>¢250</strong>
+🎫 <strong>Scratch Ticket</strong> — pool <strong>¢5,000</strong> · <strong>¢100</strong> instant</div>
+        <div class="card"><div><h2>🔴 POWERBALL</h2><div class="jp">JACKPOT ¢75,000</div><div>Ticket ¢500</div></div></div>
+      </div>
+      <div class="row"><span class="select">Choose what to play… ▾</span></div>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section>
+      <div class="label">2 · Number pick steps (ephemeral)</div>
+      <div class="msg">
+        <div class="embed red">
+          <div class="title">🔴 Powerball — pick your numbers</div>
+          <div class="desc">So far: `07` · `14` · `21`
+
+Next: enter number <strong>4</strong> of <strong>5</strong> (1–69).</div>
+        </div>
+        <div class="row">
+          <span class="btn pri">Enter number 4</span>
+          <span class="btn">Cancel</span>
+        </div>
+      </div>
+    </section>
+    <section>
+      <div class="label">3 · Preview before UB deduct</div>
+      <div class="msg">
+        <div class="embed">
+          <div class="title">🎟️ Preview — confirm purchase</div>
+          <div class="desc"><strong>Powerball</strong>
+Numbers: `07` · `14` · `21` · `28` · `35`  +  <strong>Powerball</strong> `09`
+
+Cost: <strong>¢500</strong>
+Jackpot after your ticket: <strong>¢75,500</strong></div>
+        </div>
+        <div class="row">
+          <span class="btn ok">✅ Buy ticket</span>
+          <span class="btn danger">Cancel</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section>
+      <div class="label">4 · Scratch · spam Scratch!</div>
+      <div class="msg">
+        <div class="embed pink">
+          <div class="title">🎫 Keep scratching…</div>
+          <div class="desc"><strong>5/9</strong> cells open — hit Scratch! again.</div>
+          <div class="foil">
+            <div class="cell win">WIN<br>¢500</div>
+            <div class="cell try">—</div>
+            <div class="cell hid">SCRATCH</div>
+            <div class="cell try">TRY</div>
+            <div class="cell hid">SCRATCH</div>
+            <div class="cell hid">SCRATCH</div>
+            <div class="cell win">WIN<br>¢500</div>
+            <div class="cell hid">SCRATCH</div>
+            <div class="cell hid">SCRATCH</div>
+          </div>
+        </div>
+        <div class="row"><span class="btn ok">✨ Scratch!</span></div>
+      </div>
+    </section>
+    <section>
+      <div class="label">5 · Live weekly Powerball reveal</div>
+      <div class="msg">
+        <div class="embed red">
+          <div class="title">🔴 Powerball — LIVE DRAW</div>
+          <div class="desc">Jackpot on the line: <strong>¢82,500</strong>
+Tickets in drum: <strong>14</strong>
+
+Drawing ball <strong>4</strong> of <strong>6</strong>…</div>
+          <div class="balls">
+            <div class="ball">07</div>
+            <div class="ball">14</div>
+            <div class="ball">21</div>
+            <div class="ball">??</div>
+            <div class="ball">??</div>
+            <div class="ball red">??</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <div class="label">6 · Admin · /lotteryadmin</div>
+    <div class="msg">
+      <div class="embed red">
+        <div class="title">🎱 Lottery Admin</div>
+        <div class="desc">Announce channel: #lottery-live
+Weekly draw: <strong>Sat</strong> @ <strong>20:00 UTC</strong>
+
+Start / announce · Live draw now · Set channel · Weekly schedule</div>
+      </div>
+      <div class="row">
+        <span class="btn ok">🚀 Start / announce</span>
+        <span class="btn danger">🔴 Live draw now</span>
+        <span class="btn pri">📢 Set channel</span>
+        <span class="btn">📅 Weekly schedule</span>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

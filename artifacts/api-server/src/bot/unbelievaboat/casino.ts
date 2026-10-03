@@ -103,7 +103,7 @@ function hubEmbed(balLine: string): EmbedBuilder {
       "**Tables** — slots · blackjack · roulette · UNO · more",
       "**Quick slash** — `/daily_ub` `/slots_ub` `/blackjack_ub` … (same games, ends with `_ub`)",
       "**Hustle** — work · crime · beg · rob · russian",
-      "**Board** — leaderboard · store · games menu",
+      "**Board** — leaderboard · store · **lottery** · games menu",
     ].join("\n"),
   );
 }
@@ -134,6 +134,7 @@ function hubRows() {
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("casinohub:top").setLabel("Leaderboard").setEmoji("🏆").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("casinohub:store").setLabel("Store").setEmoji("🛒").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("casinohub:lottery").setLabel("Lottery").setEmoji("🎱").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("casinohub:games").setLabel("Games menu").setEmoji("📋").setStyle(ButtonStyle.Secondary),
     ),
   ];
@@ -375,6 +376,11 @@ export async function handleCasinoHubComponent(
   }
   if (id === "casinohub:top" && interaction.isButton()) {
     await handleCasinoTop(interaction as unknown as ChatInputCommandInteraction);
+    return;
+  }
+  if (id === "casinohub:lottery" && interaction.isButton()) {
+    const { openLotteryFromCasino } = await import("./lottery/store.js");
+    await openLotteryFromCasino(interaction);
     return;
   }
   if (id === "casinohub:store" && interaction.isButton()) {
