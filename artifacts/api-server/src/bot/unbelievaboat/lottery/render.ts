@@ -1,5 +1,5 @@
 import {
-  encodeAnimation, getCanvas, hexToRgba, roundRectPath, clamp01, easeOutCubic,
+  encodeAnimation, getCanvas, hexToRgba, roundRectPath, clamp01,
   type Ctx, type CanvasMod,
 } from "../../animations/engine.js";
 import { drawConfetti } from "../../animations/particles.js";
@@ -8,6 +8,12 @@ import { GAME_DEFS, type LotteryGameKey } from "./catalog.js";
 
 const W = 720;
 const H = 400;
+
+/** Local ease-out cubic (engine exports easeInOutCubic / easeOutBack, not this). */
+function easeOutCubic(x: number): number {
+  const t = clamp01(x);
+  return 1 - (1 - t) ** 3;
+}
 
 function bg(ctx: Ctx, c0: string, c1: string) {
   const g = ctx.createLinearGradient(0, 0, W, H);
