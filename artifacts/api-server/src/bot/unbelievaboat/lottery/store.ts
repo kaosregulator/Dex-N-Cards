@@ -1,4 +1,4 @@
-// /lottery — player ticket store + step-by-step pick + scratchers.
+// /lottery — player ticket store + step-by-step pick + scratch shop.
 
 import type {
   ChatInputCommandInteraction,
@@ -20,12 +20,16 @@ import {
 } from "discord.js";
 import {
   GAME_DEFS,
+  SCRATCH_TIERS,
+  SCRATCH_TIER_KEYS,
   formatNums,
-  rollScratchPrize,
+  rollScratchPrizeForTier,
   buildScratchCells,
   isDrawGame,
+  isScratchTier,
   type DrawGameKey,
   type LotteryGameKey,
+  type ScratchTierKey,
 } from "./catalog.js";
 import {
   ensurePools,
@@ -39,6 +43,9 @@ import {
   redeemScratcher,
   countOpenTickets,
   getOrCreateLotterySettings,
+  getScratchStock,
+  consumeScratchStock,
+  restoreScratchStock,
 } from "../../../lib/lottery/db.js";
 import {
   resolveGameConfig,
@@ -46,9 +53,14 @@ import {
   formatBuyWindow,
 } from "../../../lib/lottery/config.js";
 import { CashError, spendFunds, earnCash, depositCash, fmtCash, requireEconomy } from "../cash.js";
-import { renderStoreCardGif, renderScratchGif } from "./render.js";
+import { plainCashLabel } from "../currency-canvas.js";
+import {
+  renderLotteryStoreGif,
+  renderScratchGif,
+  renderScratchShopGif,
+} from "./render.js";
 
-/** Private-only replies — number picks / scratch must never be public. */
+/** Private-only replies — number picks / private scratch must never be public. */
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const COLOR = 0xfee75c;
 
@@ -77,7 +89,7 @@ type PickDraft = {
   gameKey: DrawGameKey;
   numbers: number[];
   powerball?: number;
-  step: number; // 0-based index into picks; after mains, bonus step
+  step: number;
   expires: number;
 };
 
@@ -103,7 +115,13 @@ export async function handleLotteryComponent(
 ): Promise<void> {
   const id = interaction.customId;
   if (id === "lottery:store" && interaction.isButton()) {
-    await interaction.deferUpdate();
+    // Public scratch messages must not turn into a public store — open ephemeral instead.
+    const flags = interaction.message.flags;
+    const isEph = typeof flags?.has === "function"
+      ? flags.has(MessageFlags.Ephemeral)
+      : Boolean(Number(flags) & MessageFlags.Ephemeral);
+    if (isEph) await interaction.deferUpdate();
+    else await interaction.deferReply(EPHEMERAL);
     await showStore(interaction);
     return;
   }
@@ -115,13 +133,34 @@ export async function handleLotteryComponent(
       return;
     }
     if (game === "scratch") {
-      await beginScratchPurchase(interaction);
+      await showScratchShop(interaction);
       return;
     }
     if (isDrawGame(game)) {
       await beginPickFlow(interaction, game);
       return;
     }
+  }
+  if (id === "lottery:scratch_tier" && interaction.isStringSelectMenu()) {
+    const tier = interaction.values[0]!;
+    if (!isScratchTier(tier)) {
+      await interaction.reply({ content: "Unknown scratcher tier.", ...EPHEMERAL });
+      return;
+    }
+    await showScratchVisibilityPrompt(interaction, tier);
+    return;
+  }
+  if (id.startsWith("lottery:scratch_vis:") && interaction.isButton()) {
+    // lottery:scratch_vis:<pub|priv>:<tier>
+    const parts = id.split(":");
+    const vis = parts[2] === "pub" ? "pub" : "priv";
+    const tier = parts[3]!;
+    if (!isScratchTier(tier)) {
+      await interaction.reply({ content: "Unknown scratcher tier.", ...EPHEMERAL });
+      return;
+    }
+    await beginScratchPurchase(interaction, tier, vis);
+    return;
   }
   if (id.startsWith("lottery:num:") && interaction.isButton()) {
     await interaction.showModal(numberModal(id.slice("lottery:num:".length)));
@@ -159,7 +198,7 @@ async function showStore(
   interaction: ChatInputCommandInteraction | ButtonInteraction,
 ): Promise<void> {
   const guildId = interaction.guildId!;
-  let symbol = "¢";
+  let symbol = "💵";
   try {
     ({ symbol } = await requireEconomy(guildId));
   } catch {
@@ -167,61 +206,93 @@ async function showStore(
   }
   const settings = await getOrCreateLotterySettings(guildId);
   const pools = await ensurePools(guildId);
+  const stock = await getScratchStock(guildId);
 
-  const lines = pools.map(p => {
+  const rows = pools.map(p => {
     const key = p.gameKey as LotteryGameKey;
     const def = GAME_DEFS[key];
     if (!def) return null;
     const cfg = resolveGameConfig(settings, key);
     const win = checkBuyWindow(cfg);
-    const openTag = win.ok ? "🟢 open" : "🔴 closed";
-    return (
-      `${def.emoji} **${def.name}** — jackpot **${symbol}${fmtCash(p.poolAmount)}**` +
-      ` · ticket **${symbol}${fmtCash(p.ticketPrice)}** · ${openTag}\n` +
-      `└ Buy: ${formatBuyWindow(cfg)}`
-    );
-  }).filter(Boolean);
+    return {
+      gameKey: key,
+      jackpot: key === "scratch"
+        ? Math.min(...SCRATCH_TIER_KEYS.map(t => SCRATCH_TIERS[t].price))
+        : p.poolAmount,
+      ticketPrice: p.ticketPrice,
+      open: win.ok && p.status === "open" && settings.enabled,
+    };
+  }).filter((r): r is NonNullable<typeof r> => Boolean(r));
 
-  const featured = pools.find(p => p.gameKey === "powerball") ?? pools[0]!;
-  const featDef = GAME_DEFS[featured.gameKey as LotteryGameKey];
-  const gif = await renderStoreCardGif({
-    gameKey: featured.gameKey as LotteryGameKey,
-    jackpot: featured.poolAmount,
-    ticketPrice: featured.ticketPrice,
-    symbol,
-  });
+  // For scratch tile, show pool as "jackpot" context (seed pot) on board.
+  const scratchPool = pools.find(p => p.gameKey === "scratch");
+  const scratchRow = rows.find(r => r.gameKey === "scratch");
+  if (scratchRow && scratchPool) {
+    scratchRow.jackpot = scratchPool.poolAmount;
+  }
+
+  const gif = await renderLotteryStoreGif({ rows, symbol });
   const files = gif ? [new AttachmentBuilder(gif, { name: "lottery-store.gif" })] : [];
+
+  const stockLine = SCRATCH_TIER_KEYS
+    .map(k => {
+      const t = SCRATCH_TIERS[k];
+      const left = stock.remaining[k] ?? 0;
+      return `${t.emoji} ${left}/${t.dailyStock}`;
+    })
+    .join(" · ");
 
   const embed = new EmbedBuilder()
     .setColor(COLOR)
     .setTitle("🎱 Lottery Ticket Store")
     .setDescription(
       [
-        "🔒 **Private** — your number picks & scratch cards are only visible to you.",
+        "🔒 **Private store** — number picks stay between you and the bot.",
         "Buy with **UnbelievaBoat** cash/bank. Ticket money feeds the prize pool.",
         settings.enabled ? "" : "⚠️ Lottery is **disabled** by staff.",
         "",
-        ...lines,
+        `🎫 **Scratch stock today:** ${stockLine}`,
+        "_Restocks automatically at 00:00 UTC._",
         "",
-        "Pick a game → enter numbers privately → preview → pay.",
+        "Pick a game below → private numbers **or** open the Scratch Shop.",
       ].filter(Boolean).join("\n"),
     )
-    .setFooter({ text: "UB Lottery · only you see this panel" });
+    .setFooter({ text: "UnbelievaBoat Lottery · only you see this panel" });
   if (gif) embed.setImage("attachment://lottery-store.gif");
-  else embed.setAuthor({ name: featDef.name });
 
+  // Select descriptions must NOT include custom emoji markup (Discord shows the raw code).
   const menu = new StringSelectMenuBuilder()
     .setCustomId("lottery:pick_game")
     .setPlaceholder("Choose what to play…")
     .addOptions(
-      { label: "Classic Lottery", value: "classic", emoji: "🎟️", description: `Pick 5 · ${symbol}${pools.find(p => p.gameKey === "classic")?.ticketPrice ?? GAME_DEFS.classic.ticketPrice}` },
-      { label: "Powerball", value: "powerball", emoji: "🔴", description: `5 + PB · ${symbol}${pools.find(p => p.gameKey === "powerball")?.ticketPrice ?? GAME_DEFS.powerball.ticketPrice}` },
-      { label: "Mega Millionaire", value: "mega", emoji: "💎", description: `5 + Mega · ${symbol}${pools.find(p => p.gameKey === "mega")?.ticketPrice ?? GAME_DEFS.mega.ticketPrice}` },
-      { label: "Scratch Ticket", value: "scratch", emoji: "🎫", description: `Instant · ${symbol}${pools.find(p => p.gameKey === "scratch")?.ticketPrice ?? GAME_DEFS.scratch.ticketPrice}` },
+      {
+        label: "Classic Lottery",
+        value: "classic",
+        emoji: "🎟️",
+        description: `Pick 5 · ${plainCashLabel(pools.find(p => p.gameKey === "classic")?.ticketPrice ?? GAME_DEFS.classic.ticketPrice)}`.slice(0, 100),
+      },
+      {
+        label: "Powerball",
+        value: "powerball",
+        emoji: "🔴",
+        description: `5 + PB · ${plainCashLabel(pools.find(p => p.gameKey === "powerball")?.ticketPrice ?? GAME_DEFS.powerball.ticketPrice)}`.slice(0, 100),
+      },
+      {
+        label: "Mega Millionaire",
+        value: "mega",
+        emoji: "💎",
+        description: `5 + Mega · ${plainCashLabel(pools.find(p => p.gameKey === "mega")?.ticketPrice ?? GAME_DEFS.mega.ticketPrice)}`.slice(0, 100),
+      },
+      {
+        label: "Scratch Shop",
+        value: "scratch",
+        emoji: "🎫",
+        description: "Copper · Silver · Gold · Diamond · daily stock".slice(0, 100),
+      },
     );
 
   const payload = {
-    content: null as string | null,
+    content: undefined as string | undefined,
     embeds: [embed],
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
     files,
@@ -232,6 +303,135 @@ async function showStore(
   } else {
     await interaction.reply({ ...payload, ...EPHEMERAL });
   }
+}
+
+async function showScratchShop(interaction: StringSelectMenuInteraction): Promise<void> {
+  await interaction.deferUpdate();
+  const guildId = interaction.guildId!;
+  let symbol = "💵";
+  try { ({ symbol } = await requireEconomy(guildId)); } catch { /* */ }
+  const stock = await getScratchStock(guildId);
+  const gif = await renderScratchShopGif({
+    symbol,
+    stock: stock.remaining,
+  });
+  const files = gif ? [new AttachmentBuilder(gif, { name: "scratch-shop.gif" })] : [];
+
+  const lines = SCRATCH_TIER_KEYS.map(k => {
+    const t = SCRATCH_TIERS[k];
+    const left = stock.remaining[k] ?? 0;
+    const tag = left > 0 ? `🟢 ${left} left` : "🔴 sold out";
+    return (
+      `${t.emoji} **${t.name}** — **${symbol}${fmtCash(t.price)}** · ${tag}\n` +
+      `└ ${t.blurb}`
+    );
+  });
+
+  const embed = new EmbedBuilder()
+    .setColor(GAME_DEFS.scratch.color)
+    .setTitle("🎫 Scratch Shop")
+    .setDescription(
+      [
+        "Choose a tier, then scratch **in public** or **privately** (like pack opens).",
+        "Stock restocks every day at **00:00 UTC**.",
+        "",
+        ...lines,
+      ].join("\n"),
+    )
+    .setFooter({ text: "UnbelievaBoat Scratch · daily stock" });
+  if (gif) embed.setImage("attachment://scratch-shop.gif");
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("lottery:scratch_tier")
+    .setPlaceholder("Choose a scratcher…")
+    .addOptions(
+      SCRATCH_TIER_KEYS.map(k => {
+        const t = SCRATCH_TIERS[k];
+        const left = stock.remaining[k] ?? 0;
+        return {
+          label: t.name,
+          value: t.key,
+          emoji: t.emoji,
+          description: `${plainCashLabel(t.price)} · ${left > 0 ? `${left} left today` : "sold out"}`.slice(0, 100),
+        };
+      }),
+    );
+
+  await interaction.editReply({
+    content: undefined,
+    embeds: [embed],
+    files,
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("lottery:store").setLabel("Back to store").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showScratchVisibilityPrompt(
+  interaction: StringSelectMenuInteraction,
+  tierKey: ScratchTierKey,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const tier = SCRATCH_TIERS[tierKey];
+  const stock = await getScratchStock(interaction.guildId!);
+  const left = stock.remaining[tierKey] ?? 0;
+  if (left <= 0) {
+    await interaction.editReply({
+      content: `**${tier.name}** is sold out today. Stock restocks at **00:00 UTC**.`,
+      embeds: [],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("lottery:store").setLabel("Back to store").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+      files: [],
+    });
+    return;
+  }
+
+  let symbol = "💵";
+  try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
+
+  const embed = new EmbedBuilder()
+    .setColor(tier.color)
+    .setTitle(`${tier.emoji} ${tier.name}`)
+    .setDescription(
+      [
+        `Price **${symbol}${fmtCash(tier.price)}** · **${left}** left in today's stock.`,
+        "",
+        "**Scratch Publicly** shows your card in the channel.",
+        "**Scratch Privately** keeps the foil between you and the bot.",
+        "",
+        "_Nothing is charged until you pick._",
+      ].join("\n"),
+    );
+
+  await interaction.editReply({
+    content: undefined,
+    embeds: [embed],
+    files: [],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`lottery:scratch_vis:pub:${tierKey}`)
+          .setLabel("Scratch Publicly")
+          .setEmoji("📢")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`lottery:scratch_vis:priv:${tierKey}`)
+          .setLabel("Scratch Privately")
+          .setEmoji("🙈")
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId("lottery:store")
+          .setLabel("Cancel")
+          .setStyle(ButtonStyle.Danger),
+      ),
+    ],
+  });
 }
 
 async function beginPickFlow(
@@ -249,10 +449,11 @@ async function beginPickFlow(
   const def = GAME_DEFS[gameKey];
   const settings = await getOrCreateLotterySettings(interaction.guildId!);
   const cfg = resolveGameConfig(settings, gameKey);
-  // Stay on the same ephemeral store message — never post picks publicly.
+  let symbol = "💵";
+  try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
   await interaction.deferUpdate();
   await interaction.editReply({
-    content: null,
+    content: undefined,
     files: [],
     embeds: [
       new EmbedBuilder()
@@ -262,8 +463,8 @@ async function beginPickFlow(
           [
             "🔒 **Only you can see this** — your numbers stay private until the public draw.",
             "",
-            `Ticket price: **${fmtCash(pool.ticketPrice)}** (cash first, then bank)`,
-            `Current jackpot: **${fmtCash(pool.poolAmount)}**`,
+            `Ticket price: **${symbol}${fmtCash(pool.ticketPrice)}** (cash first, then bank)`,
+            `Current jackpot: **${symbol}${fmtCash(pool.poolAmount)}**`,
             `Buy window: ${formatBuyWindow(cfg)}`,
             "",
             `Enter **${def.pickCount}** numbers from **1–${def.mainMax}**` +
@@ -315,7 +516,6 @@ async function onNumberModal(interaction: ModalSubmitInteraction): Promise<void>
     await interaction.reply({ content: "Session expired — open `/lottery` again.", ...EPHEMERAL });
     return;
   }
-  // Re-check buy window mid-flow so sales can close cleanly.
   const gate = await assertCanBuy(interaction.guildId!, draft.gameKey);
   if (!gate.ok) {
     drafts.delete(key);
@@ -457,6 +657,8 @@ async function confirmPurchase(interaction: ButtonInteraction): Promise<void> {
     drafts.delete(key);
     const open = await countOpenTickets(interaction.guildId!, draft.gameKey);
     const nextPool = await getPool(interaction.guildId!, draft.gameKey);
+    let symbol = "";
+    try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
@@ -467,9 +669,9 @@ async function confirmPurchase(interaction: ButtonInteraction): Promise<void> {
               `**${def.name}** #${ticket.id}`,
               formatNums(ticket.numbers, ticket.powerball, def.bonusLabel),
               "",
-              `Paid **${fmtCash(pool.ticketPrice)}**` +
+              `Paid **${symbol}${fmtCash(pool.ticketPrice)}**` +
                 (spent.fromBank > 0 ? ` (${fmtCash(spent.fromCash)} cash + ${fmtCash(spent.fromBank)} bank)` : ""),
-              `Pool now **${fmtCash(nextPool.poolAmount)}** · **${open}** open ticket(s) for next draw`,
+              `Pool now **${symbol}${fmtCash(nextPool.poolAmount)}** · **${open}** open ticket(s) for next draw`,
             ].join("\n"),
           ),
       ],
@@ -486,25 +688,74 @@ async function confirmPurchase(interaction: ButtonInteraction): Promise<void> {
   }
 }
 
-async function beginScratchPurchase(interaction: StringSelectMenuInteraction): Promise<void> {
-  // Keep scratch on the private ephemeral store message.
-  await interaction.deferUpdate();
+async function beginScratchPurchase(
+  interaction: ButtonInteraction,
+  tierKey: ScratchTierKey,
+  vis: "pub" | "priv",
+): Promise<void> {
   const guildId = interaction.guildId!;
-  const pool = await getPool(guildId, "scratch");
+  const tier = SCRATCH_TIERS[tierKey];
+  const gate = await assertCanBuy(guildId, "scratch");
+  if (!gate.ok) {
+    await interaction.reply({ content: gate.message, ...EPHEMERAL });
+    return;
+  }
+
+  // Stock gate before charging — pack-style: charge only after visibility choice.
+  const stock = await getScratchStock(guildId);
+  if ((stock.remaining[tierKey] ?? 0) <= 0) {
+    await interaction.reply({
+      content: `**${tier.name}** is sold out today. Comes back at **00:00 UTC**.`,
+      ...EPHEMERAL,
+    });
+    return;
+  }
+
+  if (vis === "priv") {
+    await interaction.deferUpdate();
+  } else {
+    // Public reveal → fresh channel message (like pack:open:pub).
+    await interaction.deferReply().catch(() => {});
+    // Soft-update the ephemeral prompt so it doesn't look stuck.
+    await interaction.message.edit({
+      content: `📢 Scratching **${tier.name}** publicly…`,
+      embeds: [],
+      components: [],
+      files: [],
+    }).catch(() => {});
+  }
+
+  const consumed = await consumeScratchStock(guildId, tierKey);
+  if ("soldOut" in consumed) {
+    const payload = {
+      content: `**${tier.name}** just sold out. Stock restocks at **00:00 UTC**.`,
+      embeds: [],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("lottery:store").setLabel("Back to store").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+      files: [] as AttachmentBuilder[],
+    };
+    await interaction.editReply(payload);
+    return;
+  }
+
   try {
-    await spendFunds(guildId, interaction.user.id, pool.ticketPrice, "Scratch ticket");
-    await addToPool(guildId, "scratch", pool.ticketPrice);
+    await spendFunds(guildId, interaction.user.id, tier.price, `${tier.name}`);
+    await addToPool(guildId, "scratch", tier.price);
     const refreshed = await getPool(guildId, "scratch");
-    const prize = rollScratchPrize(pool.ticketPrice, refreshed.poolAmount);
-    const cells = buildScratchCells(prize, pool.ticketPrice);
+    const prize = rollScratchPrizeForTier(tierKey, refreshed.poolAmount);
+    const cells = buildScratchCells(prize, tier.price);
     const card = await createScratcher({
       guildId,
       userId: interaction.user.id,
-      cost: pool.ticketPrice,
+      tierKey,
+      cost: tier.price,
       prize,
       cells,
+      publicReveal: vis === "pub",
     });
-    // Escrow prize from pool immediately so we don't oversell.
     if (prize > 0) {
       await setPoolAmount(guildId, "scratch", Math.max(refreshed.seedAmount, refreshed.poolAmount - prize));
     }
@@ -515,18 +766,24 @@ async function beginScratchPurchase(interaction: StringSelectMenuInteraction): P
       revealedCount: 0,
       prize: card.prize,
       symbol,
+      tierKey,
     });
     const files = gif ? [new AttachmentBuilder(gif, { name: "scratch.gif" })] : [];
+    const privacy = vis === "pub"
+      ? "📢 **Public scratch** — the channel can watch you peel the foil."
+      : "🔒 **Only you see this card.**";
     const embed = new EmbedBuilder()
-      .setColor(GAME_DEFS.scratch.color)
-      .setTitle("🎫 Scratch ticket ready")
+      .setColor(tier.color)
+      .setTitle(`${tier.emoji} ${tier.name} ready`)
       .setDescription(
-        "🔒 **Only you see this card.**\nMash **Scratch** to peel the foil — spam until all 9 cells are open.",
+        `${privacy}\nMash **Scratch** to peel the foil — spam until all 9 cells are open.`,
       )
-      .setFooter({ text: `Paid ${symbol}${fmtCash(pool.ticketPrice)} · ticket #${card.id}` });
+      .setFooter({
+        text: `Paid ${symbol}${fmtCash(tier.price)} · #${card.id} · ${consumed.remaining} left today`,
+      });
     if (gif) embed.setImage("attachment://scratch.gif");
     await interaction.editReply({
-      content: null,
+      content: vis === "pub" ? `${interaction.user} bought a **${tier.name}**!` : undefined,
       embeds: [embed],
       files,
       components: [
@@ -540,6 +797,7 @@ async function beginScratchPurchase(interaction: StringSelectMenuInteraction): P
       ],
     });
   } catch (err) {
+    await restoreScratchStock(guildId, tierKey).catch(() => {});
     const msg = err instanceof CashError ? err.message : "Could not buy scratcher.";
     await interaction.editReply({ content: msg, embeds: [], components: [], files: [] });
   }
@@ -562,20 +820,23 @@ async function onScratchTap(interaction: ButtonInteraction): Promise<void> {
   if (!next) return;
   let symbol = "";
   try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
+  const tierKey = (isScratchTier(next.tierKey) ? next.tierKey : "silver") as ScratchTierKey;
   const gif = await renderScratchGif({
     cells: next.cells,
     revealedCount: next.revealedCount,
     prize: next.prize,
     symbol,
+    tierKey,
   });
   const files = gif ? [new AttachmentBuilder(gif, { name: "scratch.gif" })] : [];
   if (next.fullyRevealed) {
     await showRedeem(interaction, next.id, files);
     return;
   }
+  const tier = SCRATCH_TIERS[tierKey];
   const embed = new EmbedBuilder()
-    .setColor(GAME_DEFS.scratch.color)
-    .setTitle("🎫 Keep scratching…")
+    .setColor(tier.color)
+    .setTitle(`${tier.emoji} Keep scratching…`)
     .setDescription(`**${next.revealedCount}/9** cells open — hit **Scratch!** again.`)
     .setImage("attachment://scratch.gif");
   await interaction.editReply({
@@ -602,12 +863,14 @@ async function showRedeem(
   if (!card) return;
   let symbol = "";
   try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
+  const tierKey = (isScratchTier(card.tierKey) ? card.tierKey : "silver") as ScratchTierKey;
   const gifFiles = files ?? (
     await renderScratchGif({
       cells: card.cells,
       revealedCount: 9,
       prize: card.prize,
       symbol,
+      tierKey,
     }).then(b => (b ? [new AttachmentBuilder(b, { name: "scratch.gif" })] : []))
   );
   const won = card.prize > 0;
@@ -617,9 +880,9 @@ async function showRedeem(
     .setDescription(
       won
         ? `Prize **${symbol}${fmtCash(card.prize)}** — redeem to **cash** or send straight to **bank**.`
-        : "No prize on this ticket. Try another from the store!",
+        : "No prize on this ticket. Try another from the Scratch Shop!",
     )
-    .setImage(gifFiles.length ? "attachment://scratch.gif" : null);
+    .setImage(gifFiles?.length ? "attachment://scratch.gif" : null);
   const row = new ActionRowBuilder<ButtonBuilder>();
   if (won && !card.redeemed) {
     row.addComponents(
@@ -659,18 +922,19 @@ async function onRedeem(interaction: ButtonInteraction): Promise<void> {
   }
   try {
     if (to === "bank") {
-      // Credit cash then deposit to bank so UB sees a clean trail.
       await earnCash(interaction.guildId!, interaction.user.id, claimed.prize, "Scratch prize");
       await depositCash(interaction.guildId!, interaction.user.id, claimed.prize);
     } else {
       await earnCash(interaction.guildId!, interaction.user.id, claimed.prize, "Scratch prize");
     }
+    let symbol = "";
+    try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor(0x57f287)
           .setTitle("💰 Prize redeemed")
-          .setDescription(`**${fmtCash(claimed.prize)}** sent to your **${to}**.`),
+          .setDescription(`**${symbol}${fmtCash(claimed.prize)}** sent to your **${to}**.`),
       ],
       components: [
         new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -680,7 +944,6 @@ async function onRedeem(interaction: ButtonInteraction): Promise<void> {
       files: [],
     });
   } catch (err) {
-    // Roll back redeem flag? leave as redeemed to avoid double-pay; log message.
     const msg = err instanceof CashError ? err.message : "Payout failed — contact staff.";
     await interaction.editReply({ content: msg, embeds: [], components: [], files: [] });
   }

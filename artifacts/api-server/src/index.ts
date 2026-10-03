@@ -1334,6 +1334,7 @@ async function runBootMigrations() {
       id                      SERIAL PRIMARY KEY,
       guild_id                TEXT NOT NULL,
       user_id                 TEXT NOT NULL,
+      tier_key                TEXT NOT NULL DEFAULT 'silver',
       cost                    INTEGER NOT NULL DEFAULT 0,
       prize                   INTEGER NOT NULL DEFAULT 0,
       cells                   JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -1341,9 +1342,12 @@ async function runBootMigrations() {
       fully_revealed          BOOLEAN NOT NULL DEFAULT FALSE,
       redeemed                BOOLEAN NOT NULL DEFAULT FALSE,
       redeem_to               TEXT,
+      public_reveal           BOOLEAN NOT NULL DEFAULT FALSE,
       created_at              TIMESTAMP NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`ALTER TABLE ub_lottery_scratchers ADD COLUMN IF NOT EXISTS tier_key TEXT NOT NULL DEFAULT 'silver'`);
+  await pool.query(`ALTER TABLE ub_lottery_scratchers ADD COLUMN IF NOT EXISTS public_reveal BOOLEAN NOT NULL DEFAULT FALSE`);
   await pool.query(`CREATE INDEX IF NOT EXISTS ub_lottery_scratchers_guild_user_idx ON ub_lottery_scratchers (guild_id, user_id)`);
 
   await pool.query(`

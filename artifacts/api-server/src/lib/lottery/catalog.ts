@@ -61,10 +61,10 @@ export const GAME_DEFS: Record<LotteryGameKey, GameDef> = {
   },
   scratch: {
     key: "scratch",
-    name: "Scratch Ticket",
+    name: "Scratch Shop",
     emoji: "🎫",
-    blurb: "Instant play · spam Scratch · redeem cash or bank",
-    ticketPrice: 100,
+    blurb: "Pick a tier · daily stock · public or private scratch",
+    ticketPrice: 250,
     seedJackpot: 5_000,
     pickCount: 0,
     mainMax: 0,
@@ -73,6 +73,110 @@ export const GAME_DEFS: Record<LotteryGameKey, GameDef> = {
     color: 0xeb459e,
   },
 };
+
+/** Scratcher tiers — prices + daily stock (UTC restock). */
+export type ScratchTierKey = "copper" | "silver" | "gold" | "diamond";
+
+export type ScratchTierDef = {
+  key: ScratchTierKey;
+  name: string;
+  emoji: string;
+  price: number;
+  dailyStock: number;
+  /** Soft max multiplier vs ticket cost for top prize. */
+  maxMult: number;
+  color: number;
+  blurb: string;
+  canvas: {
+    bg0: string;
+    bg1: string;
+    accent: string;
+    foil0: number;
+    foil1: number;
+    title: string;
+  };
+};
+
+export const SCRATCH_TIERS: Record<ScratchTierKey, ScratchTierDef> = {
+  copper: {
+    key: "copper",
+    name: "Copper Scratch",
+    emoji: "🟤",
+    price: 50,
+    dailyStock: 80,
+    maxMult: 20,
+    color: 0xb87333,
+    blurb: "Cheap thrills · frequent small hits",
+    canvas: {
+      bg0: "#2a1810",
+      bg1: "#1a120c",
+      accent: "#cd7f32",
+      foil0: 25,
+      foil1: 40,
+      title: "COPPER SCRATCH",
+    },
+  },
+  silver: {
+    key: "silver",
+    name: "Silver Scratch",
+    emoji: "⚪",
+    price: 250,
+    dailyStock: 50,
+    maxMult: 30,
+    color: 0xc0c0c0,
+    blurb: "Mid-tier foil · solid odds",
+    canvas: {
+      bg0: "#1a1e28",
+      bg1: "#0e1218",
+      accent: "#c0c8d4",
+      foil0: 210,
+      foil1: 230,
+      title: "SILVER SCRATCH",
+    },
+  },
+  gold: {
+    key: "gold",
+    name: "Gold Scratch",
+    emoji: "🟡",
+    price: 1_000,
+    dailyStock: 25,
+    maxMult: 40,
+    color: 0xffc857,
+    blurb: "Premium ticket · bigger wins",
+    canvas: {
+      bg0: "#2a2010",
+      bg1: "#14100a",
+      accent: "#ffc857",
+      foil0: 45,
+      foil1: 55,
+      title: "GOLD SCRATCH",
+    },
+  },
+  diamond: {
+    key: "diamond",
+    name: "Diamond Scratch",
+    emoji: "💎",
+    price: 5_000,
+    dailyStock: 10,
+    maxMult: 50,
+    color: 0x67e8f9,
+    blurb: "High roller · rare stock · huge caps",
+    canvas: {
+      bg0: "#0a1a28",
+      bg1: "#061018",
+      accent: "#67e8f9",
+      foil0: 190,
+      foil1: 210,
+      title: "DIAMOND SCRATCH",
+    },
+  },
+};
+
+export const SCRATCH_TIER_KEYS: ScratchTierKey[] = ["copper", "silver", "gold", "diamond"];
+
+export function isScratchTier(key: string): key is ScratchTierKey {
+  return SCRATCH_TIER_KEYS.includes(key as ScratchTierKey);
+}
 
 export const DRAW_GAMES: DrawGameKey[] = ["classic", "powerball", "mega"];
 
@@ -86,20 +190,32 @@ export function formatNums(nums: number[], bonus?: number | null, bonusLabel?: s
   return main;
 }
 
-/** Deterministic-ish prize for a scratcher from ticket cost. */
-export function rollScratchPrize(cost: number, poolAvailable: number): number {
+/** Instant prize from ticket cost (+ optional tier max multiplier). */
+export function rollScratchPrize(
+  cost: number,
+  poolAvailable: number,
+  maxMult = 50,
+): number {
   const r = Math.random();
   let prize = 0;
-  if (r < 0.55) prize = 0;
-  else if (r < 0.80) prize = cost * 2;
-  else if (r < 0.92) prize = cost * 5;
-  else if (r < 0.98) prize = cost * 15;
-  else prize = cost * 50;
+  if (r < 0.52) prize = 0;
+  else if (r < 0.78) prize = cost * 2;
+  else if (r < 0.90) prize = cost * 5;
+  else if (r < 0.97) prize = cost * Math.min(15, maxMult);
+  else prize = cost * Math.min(maxMult, 50);
   // Never pay more than ~40% of the scratch pool in one ticket.
   const cap = Math.max(0, Math.floor(poolAvailable * 0.4));
   if (cap > 0) prize = Math.min(prize, cap);
   else if (prize > cost * 5) prize = cost * 2; // thin pool: keep small
   return prize;
+}
+
+export function rollScratchPrizeForTier(
+  tier: ScratchTierKey,
+  poolAvailable: number,
+): number {
+  const def = SCRATCH_TIERS[tier];
+  return rollScratchPrize(def.price, poolAvailable, def.maxMult);
 }
 
 export function buildScratchCells(prize: number, cost: number): Array<{ label: string; value: number }> {
