@@ -21,7 +21,15 @@ import {
   MessageFlags,
 } from "discord.js";
 import { resolveLotteryAdminAccess } from "./access.js";
-import { GAME_DEFS, DRAW_GAMES, type DrawGameKey } from "./catalog.js";
+import {
+  GAME_DEFS,
+  DRAW_GAMES,
+  SCRATCH_TIERS,
+  SCRATCH_TIER_KEYS,
+  isScratchTier,
+  type DrawGameKey,
+  type ScratchTierKey,
+} from "./catalog.js";
 import {
   getOrCreateLotterySettings,
   updateLotterySettings,
@@ -30,6 +38,9 @@ import {
   setPoolAmount,
   setPoolStatus,
   patchGameConfig,
+  summarizeOpenTickets,
+  getScratchStock,
+  restockScratchTier,
 } from "../../../lib/lottery/db.js";
 import {
   resolveGameConfig,
@@ -166,39 +177,134 @@ export async function handleLotteryAdminComponent(
     return;
   }
   if (id === "lottoadmin:draw" && interaction.isButton()) {
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId("lottoadmin:draw_game")
-      .setPlaceholder("Run live reveal now…")
-      .addOptions(
-        { label: "Powerball LIVE draw", value: "powerball", emoji: "🔴" },
-        { label: "Mega LIVE draw", value: "mega", emoji: "💎" },
-        { label: "Classic LIVE draw", value: "classic", emoji: "🎟️" },
-      );
-    await interaction.update({
-      content: "This posts the animated ball reveal and pays winners.",
-      embeds: [],
-      components: [
-        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
-        backRow(),
-      ],
-    });
+    await interaction.deferUpdate();
+    await showDrawPicker(interaction);
     return;
   }
   if (id === "lottoadmin:draw_game" && interaction.isStringSelectMenu()) {
     await interaction.deferUpdate();
     const game = interaction.values[0] as DrawGameKey;
+    await showDrawConfirm(interaction, game);
+    return;
+  }
+  if (id.startsWith("lottoadmin:draw_confirm:") && interaction.isButton()) {
+    await interaction.deferUpdate();
+    const game = id.slice("lottoadmin:draw_confirm:".length) as DrawGameKey;
     const settings = await getOrCreateLotterySettings(interaction.guildId!);
     if (!settings.announceChannelId) {
       await interaction.editReply({ content: "Set an announce channel first.", components: [backRow()] });
       return;
     }
-    await interaction.editReply({ content: `Starting **${GAME_DEFS[game].name}** live draw…`, components: [] });
+    await interaction.editReply({
+      content: `Starting **${GAME_DEFS[game].name}** live draw as **UnbelievaBoat**…`,
+      embeds: [],
+      components: [],
+    });
     const result = await runLiveDraw(interaction.guild!, game, settings.announceChannelId);
     await interaction.editReply({
       content: result
-        ? `Draw #${result.drawId} complete — **${result.winners}** winning ticket(s).`
-        : "No draw run (no tickets / channel issue).",
+        ? `Draw #${result.drawId} complete — **${result.tickets}** ticket(s) / **${result.players}** player(s) · **${result.winners}** winning ticket(s).\n_Live draw runs immediately (skips the weekly schedule wait)._`
+        : "No draw run (no open tickets / empty pool / channel issue).",
       components: [backRow()],
+    });
+    return;
+  }
+  if (id === "lottoadmin:stock" && interaction.isButton()) {
+    await interaction.deferUpdate();
+    await showScratchStockAdmin(interaction);
+    return;
+  }
+  if (id === "lottoadmin:restock_pick" && interaction.isStringSelectMenu()) {
+    const tier = interaction.values[0]!;
+    if (!isScratchTier(tier)) {
+      await interaction.reply({ content: "Unknown tier.", ...EPHEMERAL });
+      return;
+    }
+    await interaction.update({
+      content: `Restock **${SCRATCH_TIERS[tier].name}** (cap **${SCRATCH_TIERS[tier].dailyStock}**/day):`,
+      embeds: [],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`lottoadmin:restock_default:${tier}`)
+            .setLabel(`Fill to default (${SCRATCH_TIERS[tier].dailyStock})`)
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`lottoadmin:restock_add:${tier}`)
+            .setLabel("Add amount…")
+            .setStyle(ButtonStyle.Primary),
+        ),
+        backRow(),
+      ],
+    });
+    return;
+  }
+  if (id.startsWith("lottoadmin:restock_default:") && interaction.isButton()) {
+    const tier = id.slice("lottoadmin:restock_default:".length) as ScratchTierKey;
+    if (!isScratchTier(tier)) {
+      await interaction.reply({ content: "Unknown tier.", ...EPHEMERAL });
+      return;
+    }
+    await interaction.deferUpdate();
+    const stock = await restockScratchTier(interaction.guildId!, tier, "default");
+    await interaction.editReply({
+      content:
+        `Restocked **${SCRATCH_TIERS[tier].name}** to default **${stock.remaining[tier]}/${SCRATCH_TIERS[tier].dailyStock}**.`,
+      embeds: [],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("lottoadmin:stock").setLabel("Scratch stock").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("lottoadmin:hub").setLabel("Admin home").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+    });
+    return;
+  }
+  if (id.startsWith("lottoadmin:restock_add:") && interaction.isButton()) {
+    const tier = id.slice("lottoadmin:restock_add:".length);
+    if (!isScratchTier(tier)) {
+      await interaction.reply({ content: "Unknown tier.", ...EPHEMERAL });
+      return;
+    }
+    const cap = SCRATCH_TIERS[tier].dailyStock;
+    const stock = await getScratchStock(interaction.guildId!);
+    const left = stock.remaining[tier] ?? 0;
+    const room = Math.max(0, cap - left);
+    await interaction.showModal(
+      new ModalBuilder()
+        .setCustomId(`lottoadmin:modal:restock:${tier}`)
+        .setTitle(`Add ${SCRATCH_TIERS[tier].name} stock`.slice(0, 45))
+        .addComponents(
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder()
+              .setCustomId("amount")
+              .setLabel(`Add how many? (room ${room}, cap ${cap})`)
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setPlaceholder(room > 0 ? String(Math.min(10, room)) : "0"),
+          ),
+        ),
+    );
+    return;
+  }
+  if (id.startsWith("lottoadmin:modal:restock:") && interaction.isModalSubmit()) {
+    const tier = id.slice("lottoadmin:modal:restock:".length) as ScratchTierKey;
+    if (!isScratchTier(tier)) {
+      await interaction.reply({ content: "Unknown tier.", ...EPHEMERAL });
+      return;
+    }
+    const amount = Number.parseInt(interaction.fields.getTextInputValue("amount"), 10);
+    if (!Number.isFinite(amount) || amount < 1) {
+      await interaction.reply({ content: "Enter a positive whole number.", ...EPHEMERAL });
+      return;
+    }
+    const stock = await restockScratchTier(interaction.guildId!, tier, "add", amount);
+    const cap = SCRATCH_TIERS[tier].dailyStock;
+    await interaction.reply({
+      content:
+        `Added up to **${amount}** → **${SCRATCH_TIERS[tier].name}** now **${stock.remaining[tier]}/${cap}** ` +
+        `(never exceeds the daily default cap).`,
+      ...EPHEMERAL,
     });
     return;
   }
@@ -442,14 +548,157 @@ function backRow() {
   );
 }
 
+async function showDrawPicker(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const summary = await summarizeOpenTickets(interaction.guildId!);
+  let symbol = "";
+  try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
+  const lines = summary.map(s => {
+    const def = GAME_DEFS[s.gameKey];
+    return (
+      `${def.emoji} **${def.name}** — **${s.tickets}** ticket(s) · **${s.players}** player(s)\n` +
+      `└ Pool ${symbol}${fmtCash(s.poolAmount)} · ticket ${symbol}${fmtCash(s.ticketPrice)}`
+    );
+  });
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("lottoadmin:draw_game")
+    .setPlaceholder("Pick a game to preview before drawing…")
+    .addOptions(
+      { label: "Powerball LIVE draw", value: "powerball", emoji: "🔴", description: `${summary.find(s => s.gameKey === "powerball")?.tickets ?? 0} tickets` },
+      { label: "Mega LIVE draw", value: "mega", emoji: "💎", description: `${summary.find(s => s.gameKey === "mega")?.tickets ?? 0} tickets` },
+      { label: "Classic LIVE draw", value: "classic", emoji: "🎟️", description: `${summary.find(s => s.gameKey === "classic")?.tickets ?? 0} tickets` },
+    );
+  await interaction.editReply({
+    content: undefined,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xed4245)
+        .setTitle("🔴 Live draw — who's playing?")
+        .setDescription(
+          [
+            "See open tickets **before** you fire the reveal.",
+            "_Live draw now skips the weekly schedule wait._",
+            "",
+            ...lines,
+            "",
+            "Pick a game → confirm → UnbelievaBoat posts the reveal.",
+          ].join("\n"),
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu),
+      backRow(),
+    ],
+  });
+}
+
+async function showDrawConfirm(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  game: DrawGameKey,
+): Promise<void> {
+  const summary = await summarizeOpenTickets(interaction.guildId!);
+  const row = summary.find(s => s.gameKey === game)!;
+  const def = GAME_DEFS[game];
+  let symbol = "";
+  try { ({ symbol } = await requireEconomy(interaction.guildId!)); } catch { /* */ }
+  const settings = await getOrCreateLotterySettings(interaction.guildId!);
+  await interaction.editReply({
+    content: undefined,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(def.color)
+        .setTitle(`${def.emoji} Confirm ${def.name} draw`)
+        .setDescription(
+          [
+            `**${row.tickets}** open ticket(s) from **${row.players}** player(s)`,
+            `Jackpot pool: **${symbol}${fmtCash(row.poolAmount)}**`,
+            `Announce: ${settings.announceChannelId ? `<#${settings.announceChannelId}>` : "_not set_"}`,
+            "",
+            row.tickets === 0
+              ? "⚠️ No tickets yet — draw may skip if the pool is only at seed."
+              : "Ready when you are. This runs **now** (ahead of the weekly schedule).",
+          ].join("\n"),
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`lottoadmin:draw_confirm:${game}`)
+          .setLabel(row.tickets > 0 ? `Draw now (${row.tickets} tickets)` : "Draw anyway")
+          .setEmoji("🔴")
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(!settings.announceChannelId),
+        new ButtonBuilder().setCustomId("lottoadmin:draw").setLabel("Back").setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  });
+}
+
+async function showScratchStockAdmin(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const stock = await getScratchStock(interaction.guildId!);
+  const lines = SCRATCH_TIER_KEYS.map(k => {
+    const t = SCRATCH_TIERS[k];
+    const left = stock.remaining[k] ?? 0;
+    return (
+      `${t.emoji} **${t.name}** (${t.gameLabel}) — **${left}/${t.dailyStock}** left today\n` +
+      `└ ${t.blurb}`
+    );
+  });
+  await interaction.editReply({
+    content: undefined,
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xeb459e)
+        .setTitle("🎫 Scratch stock")
+        .setDescription(
+          [
+            `UTC day \`${stock.date}\` · auto-restocks at **00:00 UTC**`,
+            "Admin restock never exceeds each tier's **daily default cap**.",
+            "",
+            ...lines,
+          ].join("\n"),
+        ),
+    ],
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("lottoadmin:restock_pick")
+          .setPlaceholder("Restock a tier…")
+          .addOptions(
+            SCRATCH_TIER_KEYS.map(k => ({
+              label: SCRATCH_TIERS[k].name,
+              value: k,
+              emoji: SCRATCH_TIERS[k].emoji,
+              description: `${stock.remaining[k]}/${SCRATCH_TIERS[k].dailyStock} left · cap ${SCRATCH_TIERS[k].dailyStock}`.slice(0, 100),
+            })),
+          ),
+      ),
+      backRow(),
+    ],
+  });
+}
+
 async function showAdminHub(
   interaction: ChatInputCommandInteraction | ButtonInteraction,
 ): Promise<void> {
   const guildId = interaction.guildId!;
   const settings = await getOrCreateLotterySettings(guildId);
   const pools = await ensurePools(guildId);
+  const ticketSummary = await summarizeOpenTickets(guildId);
+  const scratchStock = await getScratchStock(guildId);
   let symbol = "";
   try { ({ symbol } = await requireEconomy(guildId)); } catch { /* */ }
+
+  const ticketLines = ticketSummary.map(s => {
+    const def = GAME_DEFS[s.gameKey];
+    return `${def.emoji} **${s.tickets}** tix · **${s.players}** players · pool ${symbol}${fmtCash(s.poolAmount)}`;
+  });
+  const stockLine = SCRATCH_TIER_KEYS
+    .map(k => `${SCRATCH_TIERS[k].emoji} ${scratchStock.remaining[k]}/${SCRATCH_TIERS[k].dailyStock}`)
+    .join(" · ");
 
   const poolLines = pools.map(p => {
     const key = p.gameKey as LotteryGameKey;
@@ -473,10 +722,15 @@ async function showAdminHub(
         `Weekly draw: **${days[settings.weeklyDrawDay]}** @ **${settings.weeklyDrawHourUtc}:00 UTC**` +
           (settings.lastDrawDate ? ` · last \`${settings.lastDrawDate}\`` : ""),
         "",
+        "**Open tickets (before draw)**",
+        ...ticketLines,
+        "",
+        `**Scratch stock today:** ${stockLine}`,
+        "",
         ...poolLines,
         "",
-        "Configure **prices** and **buy hours**, then Start / Live draw.",
-        "Player picks stay **ephemeral**; draws & multi-winner ties are public.",
+        "Public boards & draws post as **UnbelievaBoat** webhooks.",
+        "Live draw now skips the weekly wait — check the ticket summary first.",
       ].join("\n"),
     );
 
@@ -484,23 +738,23 @@ async function showAdminHub(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("lottoadmin:start").setLabel("Start / announce").setEmoji("🚀").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("lottoadmin:draw").setLabel("Live draw now").setEmoji("🔴").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("lottoadmin:channel").setLabel("Set channel").setEmoji("📢").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("lottoadmin:stock").setLabel("Scratch stock").setEmoji("🎫").setStyle(ButtonStyle.Primary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("lottoadmin:channel").setLabel("Set channel").setEmoji("📢").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("lottoadmin:prices").setLabel("Prices").setEmoji("💵").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("lottoadmin:hours").setLabel("Buy hours").setEmoji("⏰").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("lottoadmin:schedule").setLabel("Weekly draw").setEmoji("📅").setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("lottoadmin:schedule").setLabel("Weekly draw").setEmoji("📅").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("lottoadmin:toggle").setLabel(settings.enabled ? "Disable" : "Enable").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("lottoadmin:hub").setLabel("Refresh").setStyle(ButtonStyle.Secondary),
     ),
   ];
 
-  const payload = { content: null as string | null, embeds: [embed], components: rows };
+  const payload = { content: undefined as string | undefined, embeds: [embed], components: rows };
   if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
   else await interaction.reply({ ...payload, ...EPHEMERAL });
 }
 
-// silence unused
 void DRAW_GAMES;

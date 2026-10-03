@@ -92,6 +92,56 @@ export async function restoreScratchStock(
   await writeScratchStock(guildId, stock);
 }
 
+/**
+ * Admin restock. Always capped at the tier's dailyStock default.
+ * - `default`: set remaining = dailyStock
+ * - `add`: remaining = min(dailyStock, remaining + amount)
+ */
+export async function restockScratchTier(
+  guildId: string,
+  tier: ScratchTierKey,
+  mode: "default" | "add",
+  amount = 0,
+): Promise<ScratchStockState> {
+  const stock = await getScratchStock(guildId);
+  const cap = SCRATCH_TIERS[tier].dailyStock;
+  if (mode === "default") {
+    stock.remaining[tier] = cap;
+  } else {
+    const add = Math.max(0, Math.floor(amount));
+    stock.remaining[tier] = Math.min(cap, (stock.remaining[tier] ?? 0) + add);
+  }
+  await writeScratchStock(guildId, stock);
+  return stock;
+}
+
+export type OpenTicketSummary = {
+  gameKey: DrawGameKey;
+  tickets: number;
+  players: number;
+  poolAmount: number;
+  ticketPrice: number;
+};
+
+/** Small pre-draw snapshot: tickets + unique players per draw game. */
+export async function summarizeOpenTickets(guildId: string): Promise<OpenTicketSummary[]> {
+  await ensurePools(guildId);
+  const out: OpenTicketSummary[] = [];
+  for (const gameKey of DRAW_GAMES) {
+    const tickets = await listOpenTickets(guildId, gameKey);
+    const pool = await getPool(guildId, gameKey);
+    const players = new Set(tickets.map(t => t.userId)).size;
+    out.push({
+      gameKey,
+      tickets: tickets.length,
+      players,
+      poolAmount: pool.poolAmount,
+      ticketPrice: pool.ticketPrice,
+    });
+  }
+  return out;
+}
+
 export async function getOrCreateLotterySettings(guildId: string): Promise<UbLotterySettings> {
   const existing = await db
     .select()
@@ -334,9 +384,11 @@ export async function createScratcher(input: {
   guildId: string;
   userId: string;
   tierKey: ScratchTierKey;
+  gameMode: string;
   cost: number;
   prize: number;
-  cells: Array<{ label: string; value: number }>;
+  cells: Array<{ label: string; value: number; face?: string; mark?: string }>;
+  meta?: Record<string, unknown>;
   publicReveal?: boolean;
 }): Promise<UbLotteryScratcher> {
   const [row] = await db
@@ -345,13 +397,30 @@ export async function createScratcher(input: {
       guildId: input.guildId,
       userId: input.userId,
       tierKey: input.tierKey,
+      gameMode: input.gameMode,
       cost: input.cost,
       prize: input.prize,
       cells: input.cells,
+      meta: input.meta ?? {},
       publicReveal: input.publicReveal ?? false,
     })
     .returning();
   return row!;
+}
+
+export async function updateScratcherMeta(
+  id: number,
+  meta: Record<string, unknown>,
+  prize?: number,
+): Promise<UbLotteryScratcher | null> {
+  const patch: { meta: Record<string, unknown>; prize?: number } = { meta };
+  if (prize != null) patch.prize = prize;
+  const [row] = await db
+    .update(ubLotteryScratchersTable)
+    .set(patch)
+    .where(eq(ubLotteryScratchersTable.id, id))
+    .returning();
+  return row ?? null;
 }
 
 export async function getScratcher(id: number): Promise<UbLotteryScratcher | null> {

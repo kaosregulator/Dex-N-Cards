@@ -1,4 +1,5 @@
 // Live Powerball / lottery / mega weekly reveal + payout.
+// Public channel posts go out as UnbelievaBoat webhooks (not the DN bot).
 
 import {
   AttachmentBuilder,
@@ -6,6 +7,7 @@ import {
   type Client,
   type Guild,
   type TextChannel,
+  type Message,
 } from "discord.js";
 import {
   GAME_DEFS,
@@ -29,6 +31,11 @@ import {
   listGuildsDueForWeeklyDraw,
 } from "../../../lib/lottery/db.js";
 import { earnCash, fmtCash, requireEconomy } from "../cash.js";
+import { UNBELIEVABOAT_AUTHOR, UNBELIEVABOAT_COLOR } from "../branding.js";
+import {
+  sendChannelAsUnbelievaBoat,
+  editUnbelievaBoatMessage,
+} from "../webhook.js";
 import { renderBallRevealGif, renderLotteryWinnersGif, type WinnerPortrait } from "./render.js";
 import { getBotClient } from "../../client-holder.js";
 import { logger } from "../../../lib/logger.js";
@@ -38,6 +45,10 @@ let started = false;
 
 function utcDateKey(d = new Date()): string {
   return d.toISOString().slice(0, 10);
+}
+
+function brandEmbed(color: number): EmbedBuilder {
+  return new EmbedBuilder().setColor(color).setAuthor(UNBELIEVABOAT_AUTHOR);
 }
 
 export function startLotteryMaintenance(): void {
@@ -61,7 +72,6 @@ async function sweepOnce(): Promise<void> {
       try {
         const guild = await client.guilds.fetch(settings.guildId).catch(() => null);
         if (!guild) continue;
-        // Weekly: run Powerball first, then classic + mega if they have tickets.
         for (const game of DRAW_GAMES) {
           await runLiveDraw(guild, game, settings.announceChannelId).catch(err => {
             logger.warn({ err, guildId: guild.id, game }, "lottery weekly draw failed");
@@ -77,20 +87,20 @@ async function sweepOnce(): Promise<void> {
   }
 }
 
-/** Admin or weekly: animated ball reveal + pay winners. */
+/** Admin or weekly: animated ball reveal + pay winners. Skips weekly cooldown. */
 export async function runLiveDraw(
   guild: Guild,
   gameKey: DrawGameKey,
   channelId: string,
-): Promise<{ drawId: number; winners: number } | null> {
+): Promise<{ drawId: number; winners: number; tickets: number; players: number } | null> {
   const ch = await guild.channels.fetch(channelId).catch(() => null);
   if (!ch || !ch.isTextBased()) return null;
   const text = ch as TextChannel;
 
   const pool = await getPool(guild.id, gameKey);
   const tickets = await listOpenTickets(guild.id, gameKey);
+  const players = new Set(tickets.map(t => t.userId)).size;
   if (tickets.length === 0 && pool.poolAmount <= pool.seedAmount) {
-    // Still announce a fun tease? Skip empty draws with no tickets.
     return null;
   }
 
@@ -111,24 +121,27 @@ export async function runLiveDraw(
   });
   await assignTicketsToDraw(tickets.map(t => t.id), draw.id);
 
-  const intro = await text.send({
+  const intro = await sendChannelAsUnbelievaBoat(guild.client, text, {
     embeds: [
-      new EmbedBuilder()
-        .setColor(def.color)
+      brandEmbed(def.color)
         .setTitle(`${def.emoji} ${def.name} — LIVE DRAW`)
         .setDescription(
           [
             `Jackpot on the line: **${symbol}${fmtCash(pool.poolAmount)}**`,
-            `Tickets in drum: **${tickets.length}**`,
+            `Tickets in drum: **${tickets.length}** · Players: **${players}**`,
             "",
             "Balls dropping… hang tight.",
           ].join("\n"),
         ),
     ],
   });
+  if (!intro) {
+    await setPoolStatus(guild.id, gameKey, "open");
+    return null;
+  }
 
   const totalBalls = numbers.length + (bonus != null ? 1 : 0);
-  let revealMsg = intro;
+  let revealMsg: Message = intro;
   for (let revealed = 1; revealed <= totalBalls; revealed++) {
     const gif = await renderBallRevealGif({
       title: `${def.name} LIVE`,
@@ -140,28 +153,27 @@ export async function runLiveDraw(
       symbol,
     });
     const files = gif ? [new AttachmentBuilder(gif, { name: `draw-${revealed}.gif` })] : [];
-    const embed = new EmbedBuilder()
-      .setColor(def.color)
+    const embed = brandEmbed(def.color)
       .setTitle(`${def.emoji} Drawing… ${revealed}/${totalBalls}`)
       .setDescription(
         revealed >= totalBalls
           ? `**Final:** ${formatNums(numbers, bonus, def.bonusLabel)}`
-          : `Revealing ball **${revealed}**…`,
+          : `Revealing ball **${revealed}…**`,
       );
     if (gif) embed.setImage(`attachment://draw-${revealed}.gif`);
-    try {
-      if (revealed === 1) {
-        revealMsg = await text.send({ embeds: [embed], files });
-      } else {
-        await revealMsg.edit({ embeds: [embed], files });
+    if (revealed === 1) {
+      const sent = await sendChannelAsUnbelievaBoat(guild.client, text, { embeds: [embed], files });
+      if (sent) revealMsg = sent;
+    } else {
+      const edited = await editUnbelievaBoatMessage(revealMsg, { embeds: [embed], files });
+      if (!edited) {
+        const sent = await sendChannelAsUnbelievaBoat(guild.client, text, { embeds: [embed], files });
+        if (sent) revealMsg = sent;
       }
-    } catch {
-      revealMsg = await text.send({ embeds: [embed], files });
     }
     await sleep(2200);
   }
 
-  // Score & pay
   type WinRow = {
     userId: string;
     ticketId: number;
@@ -220,7 +232,6 @@ export async function runLiveDraw(
     }
   }
 
-  // Resolve jackpot splits across every jackpot ticket (ties).
   const jackpotWins = wins.filter(w => w.amount === -1);
   if (jackpotWins.length > 0) {
     const share = Math.floor(poolLeft / jackpotWins.length);
@@ -246,7 +257,6 @@ export async function runLiveDraw(
   await setPoolAmount(guild.id, gameKey, hadJackpot ? seed : nextPool);
   await setPoolStatus(guild.id, gameKey, "open");
 
-  // Top tier for “exciting tie” celebration (same payout + same tier).
   const paid = wins.filter(w => w.amount > 0).sort((a, b) => b.amount - a.amount);
   const topAmount = paid[0]?.amount ?? 0;
   const topTier = paid[0]?.tier ?? "";
@@ -292,10 +302,9 @@ export async function runLiveDraw(
     : "_No winning tickets this draw — jackpot rolls on._";
 
   if (isTie) {
-    const tease = await text.send({
+    await sendChannelAsUnbelievaBoat(guild.client, text, {
       embeds: [
-        new EmbedBuilder()
-          .setColor(0xed4245)
+        brandEmbed(0xed4245)
           .setTitle(`🔥 IT'S A TIE — ${tiedTop.length} WINNERS!`)
           .setDescription(
             [
@@ -312,11 +321,9 @@ export async function runLiveDraw(
           ),
       ],
     });
-    void tease;
   }
 
-  const finalEmbed = new EmbedBuilder()
-    .setColor(def.color)
+  const finalEmbed = brandEmbed(def.color)
     .setTitle(
       isTie
         ? `${def.emoji} ${def.name} — ${tiedTop.length}-WAY SPLIT!`
@@ -327,6 +334,7 @@ export async function runLiveDraw(
         `**Drawn numbers:** ${formatNums(numbers, bonus, def.bonusLabel)}`,
         `Pool at draw: **${symbol}${fmtCash(pool.poolAmount)}**`,
         `Next pool: **${symbol}${fmtCash(hadJackpot ? seed : nextPool)}**`,
+        `Entered: **${tickets.length}** ticket(s) · **${players}** player(s)`,
         "",
         isTie ? `🏆 **${tiedTop.length} winners** share the top prize:\n` : "**Winners:**\n",
         winnerLines,
@@ -334,7 +342,10 @@ export async function runLiveDraw(
     );
   if (winnerFile.length) finalEmbed.setImage("attachment://lottery-winner.gif");
 
-  const finalMsg = await text.send({ embeds: [finalEmbed], files: winnerFile });
+  const finalMsg = await sendChannelAsUnbelievaBoat(guild.client, text, {
+    embeds: [finalEmbed],
+    files: winnerFile,
+  });
   await completeDraw(
     draw.id,
     wins.map(w => ({
@@ -345,10 +356,10 @@ export async function runLiveDraw(
       numbers: w.numbers,
       powerball: w.powerball,
     })),
-    finalMsg.id,
+    finalMsg?.id ?? null,
   );
 
-  return { drawId: draw.id, winners: wins.length };
+  return { drawId: draw.id, winners: wins.length, tickets: tickets.length, players };
 }
 
 function sleep(ms: number) {
@@ -368,6 +379,7 @@ export async function postJackpotBoard(
   let symbol = "";
   try { ({ symbol } = await requireEconomy(guild.id)); } catch { /* */ }
   const open = await listOpenTickets(guild.id, gameKey);
+  const players = new Set(open.map(t => t.userId)).size;
   const gif = await renderBallRevealGif({
     title: `${def.name} OPEN`,
     numbers: [7, 14, 21, 28, 35].slice(0, def.pickCount),
@@ -378,21 +390,26 @@ export async function postJackpotBoard(
     symbol,
   });
   const files = gif ? [new AttachmentBuilder(gif, { name: "jackpot-board.gif" })] : [];
-  const embed = new EmbedBuilder()
-    .setColor(def.color)
+  const embed = brandEmbed(def.color)
     .setTitle(`${def.emoji} ${def.name} is LIVE`)
     .setDescription(
       [
         `💰 **Jackpot:** ${symbol}${fmtCash(pool.poolAmount)}`,
         `🎟️ **Ticket:** ${symbol}${fmtCash(pool.ticketPrice)}`,
-        `🧾 Open tickets: **${open.length}**`,
+        `🧾 Open tickets: **${open.length}** · Players: **${players}**`,
         "",
         "Buy in with `/lottery` — pick your numbers step by step.",
         "All ticket money feeds this pool. Winners take the pot.",
       ].join("\n"),
-    );
+    )
+    .setFooter({ text: "UnbelievaBoat Lottery" });
   if (gif) embed.setImage("attachment://jackpot-board.gif");
-  await (ch as TextChannel).send({ embeds: [embed], files });
+  const sent = await sendChannelAsUnbelievaBoat(guild.client, ch as TextChannel, {
+    embeds: [embed],
+    files,
+  });
+  if (!sent) throw new Error("Could not post jackpot board (webhook + channel send failed).");
+  void UNBELIEVABOAT_COLOR;
 }
 
 export async function forceWeeklyMark(client: Client, guildId: string): Promise<void> {

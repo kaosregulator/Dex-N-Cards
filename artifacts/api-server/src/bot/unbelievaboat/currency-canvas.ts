@@ -52,6 +52,11 @@ function emojiToCode(emoji: string): string {
     "⚪": "26aa",
     "🟡": "1f7e1",
     "🎱": "1f3b1",
+    "🔢": "1f522",
+    "⭐": "2b50",
+    "🍒": "1f352",
+    "🔔": "1f514",
+    "7️⃣": "37-20e3",
   };
   if (known[emoji]) return known[emoji]!;
   const cps: number[] = [];

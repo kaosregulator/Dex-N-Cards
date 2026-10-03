@@ -88,10 +88,19 @@ export const ubLotteryScratchersTable = pgTable("ub_lottery_scratchers", {
   userId: text("user_id").notNull(),
   /** copper | silver | gold | diamond */
   tierKey: text("tier_key").notNull().default("silver"),
+  /** classic | numbers | connect | pick3 */
+  gameMode: text("game_mode").notNull().default("classic"),
   cost: integer("cost").notNull().default(0),
   prize: integer("prize").notNull().default(0),
-  /** 9 cells: label + value; reveal mask tracked separately */
-  cells: jsonb("cells").$type<Array<{ label: string; value: number }>>().notNull().default([]),
+  /** 9 cells: label + value (+ optional face/mark); reveal mask tracked separately */
+  cells: jsonb("cells").$type<Array<{
+    label: string;
+    value: number;
+    face?: string;
+    mark?: string;
+  }>>().notNull().default([]),
+  /** Mode extras: luckyNumber, winLine, picks, etc. */
+  meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
   revealedCount: integer("revealed_count").notNull().default(0),
   fullyRevealed: boolean("fully_revealed").notNull().default(false),
   redeemed: boolean("redeemed").notNull().default(false),

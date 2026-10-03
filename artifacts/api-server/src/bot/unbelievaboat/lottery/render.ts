@@ -7,8 +7,11 @@ import { loadArt } from "../../animations/effects.js";
 import {
   GAME_DEFS,
   SCRATCH_TIERS,
+  SCRATCH_LEGEND,
   type LotteryGameKey,
   type ScratchTierKey,
+  type ScratchGameMode,
+  type ScratchCell,
 } from "./catalog.js";
 import {
   loadCurrencyImage,
@@ -98,16 +101,13 @@ export async function renderLotteryStoreGif(opts: {
         }));
         bg(ctx, "#0b1020", "#16102a", W, 460);
 
-        // soft sparkle dust
+        // soft sparkle dust (static-feel — no full-board fade flash)
         for (let i = 0; i < 36; i++) {
           const x = ((i * 89 + t * 90) % W);
           const y = ((i * 61 + 18) % 460);
           ctx.fillStyle = `rgba(254, 231, 92, ${0.08 + 0.2 * Math.sin(t * Math.PI * 2 + i)})`;
           ctx.fillRect(x, y, 2, 2);
         }
-
-        const pop = easeOutCubic(clamp01(t * 1.4));
-        ctx.globalAlpha = pop;
 
         // header bar
         roundRectPath(ctx, 28, 20, W - 56, 64, 16);
@@ -194,10 +194,9 @@ export async function renderLotteryStoreGif(opts: {
           } else {
             ctx.fillStyle = "#dbdee1";
             ctx.font = "bold 13px sans-serif";
-            ctx.fillText("4 tiers · daily stock", x + 30, y + bob + 128);
+            ctx.fillText("4 games · daily stock", x + 30, y + bob + 128);
           }
         }
-        ctx.globalAlpha = 1;
       },
     });
     return result?.buffer ?? null;
@@ -375,39 +374,49 @@ export async function renderBallRevealGif(opts: {
   }
 }
 
+function cellIsWin(cell: ScratchCell, mode: ScratchGameMode): boolean {
+  if (mode === "classic") return cell.mark === "win" || cell.label === "WIN";
+  if (mode === "numbers") return cell.mark === "match" || cell.label === "MATCH";
+  if (mode === "connect") return cell.mark === "line" || cell.label === "LINE";
+  return false;
+}
+
 /** Scratch card — tier-themed foil ticket with currency icons. */
 export async function renderScratchGif(opts: {
-  cells: Array<{ label: string; value: number }>;
+  cells: ScratchCell[];
   revealedCount: number;
   prize: number;
   symbol: string;
   tierKey?: ScratchTierKey | string | null;
+  gameMode?: ScratchGameMode | string | null;
+  meta?: Record<string, unknown> | null;
+  picked?: number[];
 }): Promise<Buffer | null> {
   const tier = (opts.tierKey && opts.tierKey in SCRATCH_TIERS)
     ? SCRATCH_TIERS[opts.tierKey as ScratchTierKey]
     : SCRATCH_TIERS.silver;
+  const mode = (opts.gameMode as ScratchGameMode) || tier.gameMode;
   const c = tier.canvas;
+  const picked = new Set(opts.picked ?? []);
   try {
     const result = await encodeAnimation({
       width: 640,
-      height: 440,
+      height: 460,
       speed: "normal",
       durationMs: 1200,
       maxFrames: 10,
       quality: 14,
       render: async ({ ctx, t, mod }) => {
         const symImg = await loadCurrencyImage(mod, opts.symbol);
-        bg(ctx, c.bg0, c.bg1, 640, 440);
+        bg(ctx, c.bg0, c.bg1, 640, 460);
 
-        // ticket body
-        roundRectPath(ctx, 24, 18, 592, 404, 20);
+        roundRectPath(ctx, 24, 18, 592, 424, 20);
         ctx.fillStyle = "#12141c";
         ctx.fill();
         ctx.strokeStyle = c.accent;
         ctx.lineWidth = 3;
         ctx.stroke();
 
-        // perforated stub edge
         ctx.strokeStyle = "rgba(255,255,255,0.12)";
         ctx.setLineDash([4, 6]);
         ctx.beginPath();
@@ -418,18 +427,21 @@ export async function renderScratchGif(opts: {
 
         const tierEmojiImg = await loadCurrencyImage(mod, tier.emoji);
         ctx.fillStyle = c.accent;
-        ctx.font = "bold 24px Orbitron, sans-serif";
+        ctx.font = "bold 22px Orbitron, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(c.title, 320, 52);
-        drawCurrencyIcon(ctx, tierEmojiImg, tier.emoji, 220, 66, 14);
+        ctx.fillText(c.title, 320, 48);
+        drawCurrencyIcon(ctx, tierEmojiImg, tier.emoji, 200, 64, 14);
         ctx.fillStyle = "#949ba4";
         ctx.font = "12px sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText(`${tier.name} · Instant Win`, 232, 70);
+        const subtitle = mode === "numbers" && opts.meta?.luckyNumber != null
+          ? `Lucky # ${opts.meta.luckyNumber}`
+          : `${tier.gameLabel} · ${tier.howTo.split("·")[0]!.trim()}`;
+        ctx.fillText(subtitle.slice(0, 48), 212, 68);
         ctx.textAlign = "center";
 
         const startX = 56;
-        const startY = 96;
+        const startY = 92;
         const cw = 160;
         const ch = 84;
         for (let i = 0; i < 9; i++) {
@@ -441,31 +453,53 @@ export async function renderScratchGif(opts: {
           roundRectPath(ctx, x, y, cw, ch, 12);
           if (revealed) {
             const cell = opts.cells[i]!;
-            const win = cell.label === "WIN";
+            const win = cellIsWin(cell, mode) || picked.has(i);
             ctx.fillStyle = win ? "#143528" : "#23262e";
             ctx.fill();
-            ctx.strokeStyle = win ? "#57f287" : "#3f424a";
-            ctx.lineWidth = win ? 2.5 : 1.5;
+            ctx.strokeStyle = win ? "#57f287" : picked.has(i) ? c.accent : "#3f424a";
+            ctx.lineWidth = win || picked.has(i) ? 2.5 : 1.5;
             ctx.stroke();
-            ctx.fillStyle = win ? "#57f287" : "#dbdee1";
-            ctx.font = "bold 18px Orbitron, sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText(cell.label === "—" ? "MISS" : cell.label, x + cw / 2, y + 28);
-            if (cell.value > 0) {
-              drawCurrencyAmount(
-                ctx, symImg, opts.symbol, cell.value,
-                x + cw / 2, y + 58,
-                {
-                  iconSize: 16,
-                  font: "bold 16px sans-serif",
-                  color: win ? "#fee75c" : "#dbdee1",
-                  align: "center",
-                },
-              );
+
+            if (mode === "connect" && cell.face) {
+              const faceImg = await loadCurrencyImage(mod, cell.face);
+              drawCurrencyIcon(ctx, faceImg, cell.face, x + cw / 2, y + 28, 28);
+              ctx.fillStyle = win ? "#57f287" : "#dbdee1";
+              ctx.font = "bold 14px Orbitron, sans-serif";
+              ctx.fillText(cell.label, x + cw / 2, y + 58);
+            } else if (mode === "numbers" && cell.face) {
+              ctx.fillStyle = win ? "#57f287" : "#dbdee1";
+              ctx.font = "bold 14px Orbitron, sans-serif";
+              ctx.fillText(cell.label, x + cw / 2, y + 24);
+              ctx.font = "bold 13px sans-serif";
+              const face = cell.face.length > 10 ? `${cell.face.slice(0, 8)}…` : cell.face;
+              ctx.fillText(face, x + cw / 2, y + 48);
+              if (cell.value > 0 && win) {
+                drawCurrencyAmount(
+                  ctx, symImg, opts.symbol, cell.value,
+                  x + cw / 2, y + 70,
+                  { iconSize: 12, font: "bold 12px sans-serif", color: "#fee75c", align: "center" },
+                );
+              }
             } else {
-              ctx.fillStyle = "#6d6f78";
-              ctx.font = "14px sans-serif";
-              ctx.fillText("—", x + cw / 2, y + 58);
+              ctx.fillStyle = win ? "#57f287" : "#dbdee1";
+              ctx.font = "bold 18px Orbitron, sans-serif";
+              ctx.fillText(cell.label === "—" ? "MISS" : cell.label, x + cw / 2, y + 28);
+              if (cell.value > 0) {
+                drawCurrencyAmount(
+                  ctx, symImg, opts.symbol, cell.value,
+                  x + cw / 2, y + 58,
+                  {
+                    iconSize: 16,
+                    font: "bold 16px sans-serif",
+                    color: win ? "#fee75c" : "#dbdee1",
+                    align: "center",
+                  },
+                );
+              } else {
+                ctx.fillStyle = "#6d6f78";
+                ctx.font = "14px sans-serif";
+                ctx.fillText("—", x + cw / 2, y + 58);
+              }
             }
           } else {
             const g = ctx.createLinearGradient(x, y, x + cw, y + ch);
@@ -475,7 +509,6 @@ export async function renderScratchGif(opts: {
             g.addColorStop(1, `hsl(${c.foil0}, 30%, ${shimmer - 6}%)`);
             ctx.fillStyle = g;
             ctx.fill();
-            // scratch streaks
             ctx.strokeStyle = "rgba(255,255,255,0.18)";
             ctx.lineWidth = 2;
             for (let s = 0; s < 4; s++) {
@@ -491,28 +524,90 @@ export async function renderScratchGif(opts: {
           }
         }
 
+        // Mini legend strip
+        ctx.fillStyle = "#6d6f78";
+        ctx.font = "11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("WIN pays · TRY teases · MISS blank", 320, 388);
+
         if (opts.revealedCount >= 9) {
-          if (opts.prize > 0) {
+          if (mode === "pick3" && picked.size < 3) {
             ctx.fillStyle = "#fee75c";
-            ctx.font = "bold 18px Orbitron, sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText("YOU WON", 320, 392);
+            ctx.font = "bold 16px Orbitron, sans-serif";
+            ctx.fillText(`Pick 3 cells to bank · ${picked.size}/3`, 320, 420);
+          } else if (opts.prize > 0) {
+            ctx.fillStyle = "#fee75c";
+            ctx.font = "bold 16px Orbitron, sans-serif";
+            ctx.fillText("YOU WON", 320, 408);
             drawCurrencyAmount(
               ctx, symImg, opts.symbol, opts.prize,
-              320, 418,
-              { iconSize: 22, font: "bold 22px Orbitron, sans-serif", color: "#57f287", align: "center" },
+              320, 432,
+              { iconSize: 20, font: "bold 20px Orbitron, sans-serif", color: "#57f287", align: "center" },
             );
           } else {
             ctx.fillStyle = "#949ba4";
-            ctx.font = "bold 18px Orbitron, sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText("No prize — better luck next time", 320, 408);
+            ctx.font = "bold 16px Orbitron, sans-serif";
+            ctx.fillText("No prize — better luck next time", 320, 420);
           }
         } else {
           ctx.fillStyle = "#dbdee1";
-          ctx.font = "15px sans-serif";
+          ctx.font = "14px sans-serif";
+          ctx.fillText(`Peel the foil · ${opts.revealedCount}/9 revealed`, 320, 420);
+        }
+      },
+    });
+    return result?.buffer ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Clear diagram of scratch marks for the shop / ticket help. */
+export async function renderScratchLegendGif(): Promise<Buffer | null> {
+  try {
+    const result = await encodeAnimation({
+      width: 640,
+      height: 360,
+      speed: "normal",
+      durationMs: 1600,
+      maxFrames: 8,
+      quality: 14,
+      render: async ({ ctx, t }) => {
+        bg(ctx, "#12141c", "#1a1024", 640, 360);
+        roundRectPath(ctx, 24, 20, 592, 320, 18);
+        ctx.fillStyle = "rgba(18,20,32,0.96)";
+        ctx.fill();
+        ctx.strokeStyle = "#eb459e";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = "#eb459e";
+        ctx.font = "bold 22px Orbitron, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("SCRATCH KEY", 320, 56);
+        ctx.fillStyle = "#949ba4";
+        ctx.font = "12px sans-serif";
+        ctx.fillText("What each mark means on your ticket", 320, 78);
+
+        const rows = SCRATCH_LEGEND;
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i]!;
+          const y = 100 + i * 38 + Math.sin(t * Math.PI * 2 + i) * 1.5;
+          roundRectPath(ctx, 48, y, 88, 28, 8);
+          const colors: Record<string, string> = {
+            WIN: "#57f287", TRY: "#fee75c", MISS: "#949ba4",
+            MATCH: "#67e8f9", LINE: "#ffc857", PICK: "#eb459e",
+          };
+          ctx.fillStyle = colors[r.mark] ?? "#dbdee1";
+          ctx.fill();
+          ctx.fillStyle = "#12141c";
+          ctx.font = "bold 13px Orbitron, sans-serif";
           ctx.textAlign = "center";
-          ctx.fillText(`Peel the foil · ${opts.revealedCount}/9 revealed`, 320, 408);
+          ctx.fillText(r.mark, 92, y + 19);
+          ctx.fillStyle = "#dbdee1";
+          ctx.font = "13px sans-serif";
+          ctx.textAlign = "left";
+          ctx.fillText(r.meaning, 152, y + 19);
         }
       },
     });
@@ -584,9 +679,9 @@ export async function renderScratchShopGif(opts: {
             x + tileW / 2, y + 36, 28,
           );
           ctx.fillStyle = tier.canvas.accent;
-          ctx.font = "bold 16px Orbitron, sans-serif";
+          ctx.font = "bold 15px Orbitron, sans-serif";
           ctx.textAlign = "center";
-          ctx.fillText(tier.name.replace(" Scratch", ""), x + tileW / 2, y + 68);
+          ctx.fillText(tier.gameLabel, x + tileW / 2, y + 68);
 
           ctx.fillStyle = "#949ba4";
           ctx.font = "11px sans-serif";
