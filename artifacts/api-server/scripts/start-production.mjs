@@ -404,9 +404,25 @@ async function ensureUbAndTatsuTables(pool) {
     await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_guild_idx ON trivia_role_holds (guild_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_expires_idx ON trivia_role_holds (expires_at)`);
 
-    console.log("UnbelievaBoat + Tatsu + Trivia tables ready");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS member_role_grants (
+        id                  SERIAL PRIMARY KEY,
+        guild_id            TEXT NOT NULL,
+        user_id             TEXT NOT NULL,
+        role_id             TEXT NOT NULL,
+        granted_at          TIMESTAMP NOT NULL,
+        source              TEXT NOT NULL DEFAULT 'live',
+        created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS member_role_grants_guild_user_role_uidx ON member_role_grants (guild_id, user_id, role_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS member_role_grants_guild_role_idx ON member_role_grants (guild_id, role_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS member_role_grants_guild_user_idx ON member_role_grants (guild_id, user_id)`);
+
+    console.log("UnbelievaBoat + Tatsu + Trivia + MemberDate tables ready");
   } catch (err) {
-    console.error("Failed to ensure ub_*/tatsu_*/trivia_* tables:", err?.message ?? err);
+    console.error("Failed to ensure ub_*/tatsu_*/trivia_*/member_* tables:", err?.message ?? err);
     // Non-fatal — boot migrations in the app also try; start anyway.
   }
 }
