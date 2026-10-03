@@ -13,6 +13,7 @@ import {
 import {
   loadCurrencyImage,
   drawCurrencyAmount,
+  drawCurrencyIcon,
 } from "../currency-canvas.js";
 
 const W = 720;
@@ -90,6 +91,11 @@ export async function renderLotteryStoreGif(opts: {
       quality: 14,
       render: async ({ ctx, t, mod }) => {
         const symImg = await loadCurrencyImage(mod, opts.symbol);
+        const order: LotteryGameKey[] = ["classic", "powerball", "mega", "scratch"];
+        const emojiImgs = new Map<string, Awaited<ReturnType<typeof loadCurrencyImage>>>();
+        await Promise.all(order.map(async (k) => {
+          emojiImgs.set(k, await loadCurrencyImage(mod, GAME_DEFS[k].emoji));
+        }));
         bg(ctx, "#0b1020", "#16102a", W, 460);
 
         // soft sparkle dust
@@ -119,7 +125,6 @@ export async function renderLotteryStoreGif(opts: {
         ctx.font = "14px sans-serif";
         ctx.fillText("UnbelievaBoat · pick a game · private number picks", W / 2, 72);
 
-        const order: LotteryGameKey[] = ["classic", "powerball", "mega", "scratch"];
         const byKey = new Map(opts.rows.map(r => [r.gameKey, r]));
         const tileW = 320;
         const tileH = 150;
@@ -149,10 +154,13 @@ export async function renderLotteryStoreGif(opts: {
           ctx.fillStyle = hexToRgba(def.color, 0.9);
           ctx.fillRect(x + 14, y + bob + 18, 4, tileH - 36);
 
+          drawCurrencyIcon(ctx, emojiImgs.get(key) ?? null, def.emoji, x + 42, y + bob + 36, 22);
           ctx.fillStyle = hexToRgba(def.color, 1);
-          ctx.font = "bold 20px Orbitron, sans-serif";
+          ctx.font = "bold 18px Orbitron, sans-serif";
           ctx.textAlign = "left";
-          ctx.fillText(`${def.emoji}  ${def.name}`, x + 30, y + bob + 42);
+          ctx.textBaseline = "middle";
+          ctx.fillText(def.name, x + 58, y + bob + 36);
+          ctx.textBaseline = "alphabetic";
 
           const status = row?.open === false ? "CLOSED" : "OPEN";
           ctx.fillStyle = row?.open === false ? "#ed4245" : "#57f287";
@@ -164,7 +172,7 @@ export async function renderLotteryStoreGif(opts: {
           ctx.fillStyle = "#949ba4";
           ctx.font = "13px sans-serif";
           const isScratch = key === "scratch";
-          ctx.fillText(isScratch ? "From" : "Jackpot", x + 30, y + bob + 72);
+          ctx.fillText(isScratch ? "Pool" : "Jackpot", x + 30, y + bob + 72);
 
           drawCurrencyAmount(
             ctx, symImg, opts.symbol,
@@ -173,10 +181,10 @@ export async function renderLotteryStoreGif(opts: {
             { iconSize: 22, font: "bold 24px Orbitron, sans-serif", color: "#fee75c", align: "left" },
           );
 
-          ctx.fillStyle = "#949ba4";
-          ctx.font = "13px sans-serif";
-          ctx.fillText(isScratch ? "Tiers · daily stock" : "Ticket", x + 30, y + bob + 128);
           if (!isScratch) {
+            ctx.fillStyle = "#949ba4";
+            ctx.font = "13px sans-serif";
+            ctx.fillText("Ticket", x + 30, y + bob + 128);
             drawCurrencyAmount(
               ctx, symImg, opts.symbol,
               row?.ticketPrice ?? def.ticketPrice,
@@ -186,7 +194,7 @@ export async function renderLotteryStoreGif(opts: {
           } else {
             ctx.fillStyle = "#dbdee1";
             ctx.font = "bold 13px sans-serif";
-            ctx.fillText("Copper → Diamond", x + 150, y + bob + 128);
+            ctx.fillText("4 tiers · daily stock", x + 30, y + bob + 128);
           }
         }
         ctx.globalAlpha = 1;
@@ -231,11 +239,20 @@ export async function renderStoreCardGif(opts: {
         ctx.lineWidth = 3;
         ctx.stroke();
 
-        ctx.fillStyle = hexToRgba(def.color, 1);
-        ctx.font = "bold 36px Orbitron, sans-serif";
-        ctx.textAlign = "center";
+        const titleEmoji = await loadCurrencyImage(mod, def.emoji);
         ctx.globalAlpha = pop;
-        ctx.fillText(`${def.emoji}  ${def.name}`, W / 2, 110);
+        ctx.font = "bold 34px Orbitron, sans-serif";
+        const title = def.name;
+        const tw = ctx.measureText(title).width;
+        const iconSz = 32;
+        const titleLeft = W / 2 - (iconSz + 12 + tw) / 2;
+        drawCurrencyIcon(ctx, titleEmoji, def.emoji, titleLeft + iconSz / 2, 100, iconSz);
+        ctx.fillStyle = hexToRgba(def.color, 1);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(title, titleLeft + iconSz + 12, 100);
+        ctx.textBaseline = "alphabetic";
+        ctx.textAlign = "center";
 
         ctx.fillStyle = "#949ba4";
         ctx.font = "16px sans-serif";
@@ -399,13 +416,17 @@ export async function renderScratchGif(opts: {
         ctx.stroke();
         ctx.setLineDash([]);
 
+        const tierEmojiImg = await loadCurrencyImage(mod, tier.emoji);
         ctx.fillStyle = c.accent;
         ctx.font = "bold 24px Orbitron, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(c.title, 320, 52);
+        drawCurrencyIcon(ctx, tierEmojiImg, tier.emoji, 220, 66, 14);
         ctx.fillStyle = "#949ba4";
         ctx.font = "12px sans-serif";
-        ctx.fillText(`${tier.emoji} ${tier.name} · Instant Win`, 320, 70);
+        ctx.textAlign = "left";
+        ctx.fillText(`${tier.name} · Instant Win`, 232, 70);
+        ctx.textAlign = "center";
 
         const startX = 56;
         const startY = 96;
@@ -516,6 +537,11 @@ export async function renderScratchShopGif(opts: {
       quality: 14,
       render: async ({ ctx, t, mod }) => {
         const symImg = await loadCurrencyImage(mod, opts.symbol);
+        const keys = Object.keys(SCRATCH_TIERS) as ScratchTierKey[];
+        const tierEmojiImgs = new Map<string, Awaited<ReturnType<typeof loadCurrencyImage>>>();
+        await Promise.all(keys.map(async (k) => {
+          tierEmojiImgs.set(k, await loadCurrencyImage(mod, SCRATCH_TIERS[k].emoji));
+        }));
         bg(ctx, "#140a18", "#0a1020", W, 420);
         for (let i = 0; i < 28; i++) {
           ctx.fillStyle = `rgba(235, 69, 158, ${0.1 + 0.15 * Math.sin(t * 5 + i)})`;
@@ -536,7 +562,6 @@ export async function renderScratchShopGif(opts: {
         ctx.font = "12px sans-serif";
         ctx.fillText("Daily stock · restocks 00:00 UTC", W / 2, 58);
 
-        const keys = Object.keys(SCRATCH_TIERS) as ScratchTierKey[];
         const tileW = 155;
         const gap = 12;
         const startX = (W - (tileW * 4 + gap * 3)) / 2;
@@ -554,11 +579,14 @@ export async function renderScratchShopGif(opts: {
           ctx.lineWidth = 2;
           ctx.stroke();
 
+          drawCurrencyIcon(
+            ctx, tierEmojiImgs.get(tier.key) ?? null, tier.emoji,
+            x + tileW / 2, y + 36, 28,
+          );
           ctx.fillStyle = tier.canvas.accent;
           ctx.font = "bold 16px Orbitron, sans-serif";
           ctx.textAlign = "center";
-          ctx.fillText(tier.emoji, x + tileW / 2, y + 36);
-          ctx.fillText(tier.name.replace(" Scratch", ""), x + tileW / 2, y + 62);
+          ctx.fillText(tier.name.replace(" Scratch", ""), x + tileW / 2, y + 68);
 
           ctx.fillStyle = "#949ba4";
           ctx.font = "11px sans-serif";

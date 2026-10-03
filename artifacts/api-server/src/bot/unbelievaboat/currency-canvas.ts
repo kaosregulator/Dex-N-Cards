@@ -44,6 +44,14 @@ function emojiToCode(emoji: string): string {
     "💰": "1f4b0",
     "🪙": "1fa99",
     "¢": "a2",
+    "🎟️": "1f39f",
+    "🎫": "1f3ab",
+    "🔴": "1f534",
+    "💎": "1f48e",
+    "🟤": "1f7e4",
+    "⚪": "26aa",
+    "🟡": "1f7e1",
+    "🎱": "1f3b1",
   };
   if (known[emoji]) return known[emoji]!;
   const cps: number[] = [];
