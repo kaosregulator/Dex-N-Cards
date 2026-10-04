@@ -31,6 +31,17 @@ import {
 } from "discord.js";
 import { isUbConfigured, ubApi } from "../../lib/unbelievaboat/client.js";
 import {
+  UbAction,
+  UbMatch,
+  UbReq,
+  normalizeUbItem,
+  parseActions,
+  parseRequirements,
+  summarizeActions,
+  summarizeRequirements,
+} from "./ub-items.js";
+import { syncUbStoreRoleLinks } from "./ub-sync.js";
+import {
   getOrCreateUbSettings,
   updateUbSettings,
   listCatalog,
@@ -376,61 +387,85 @@ function applyStoreImageToEmbed(embed: EmbedBuilder, imageUrl: string) {
   return embed;
 }
 
+/** Push Discord emoji choice onto the linked UnbelievaBoat store item. */
+async function syncEmojiToUbItem(
+  guildId: string,
+  ubItemId: string | null | undefined,
+  emojiRaw: string,
+): Promise<void> {
+  if (!ubItemId || !isUbConfigured()) return;
+  const settings = await getOrCreateUbSettings(guildId);
+  const icon = normalizeStoreIconInput(emojiRaw);
+  const custom = icon.imageUrl?.match(/emojis\/(\d+)\.(png|gif)/);
+  try {
+    if (custom) {
+      await ubApi.editStoreItem(settings.ubGuildId, ubItemId, {
+        emoji_id: custom[1],
+        emoji_unicode: null,
+      });
+    } else if (icon.emoji && !icon.emoji.includes("<")) {
+      await ubApi.editStoreItem(settings.ubGuildId, ubItemId, {
+        emoji_unicode: icon.emoji,
+        emoji_id: null,
+      });
+    }
+  } catch {
+    // Local icon still applies as overlay.
+  }
+}
+
 async function renderRolesEconomy(
   interaction: ButtonInteraction | StringSelectMenuInteraction,
   guildId: string,
   flash?: string,
 ): Promise<void> {
-  const [settings, roles] = await Promise.all([
-    getOrCreateUbSettings(guildId),
-    listRoleLinks(guildId),
-  ]);
+  const settings = await getOrCreateUbSettings(guildId);
+  let syncNote = "";
+  let roles = await listRoleLinks(guildId);
+  if (isUbConfigured() && settings.enabled) {
+    try {
+      const synced = await syncUbStoreRoleLinks(guildId, settings.ubGuildId, interaction.guild);
+      roles = synced.links;
+      if (synced.created || synced.updated) {
+        syncNote = `Synced UB store → **${synced.created}** new · **${synced.updated}** updated role links.`;
+      }
+    } catch (err) {
+      syncNote = `UB sync warning: ${err instanceof Error ? err.message : "failed"}`;
+    }
+  }
   const cds = readCooldowns(settings);
 
   const roleLines = roles.slice(0, 15).map(r => {
-    const m = (r.meta ?? {}) as Record<string, unknown>;
-    const req = typeof m.requirements === "string" && m.requirements.trim()
-      ? ` · req: ${m.requirements.trim().slice(0, 40)}`
-      : "";
-    const actions = typeof m.actions === "string" && m.actions.trim()
-      ? ` · act: ${m.actions.trim().slice(0, 40)}`
-      : "";
-    return `${r.enabled ? "✅" : "⏸"} ${r.emoji || "✨"} **${r.name}** — ${fmt(r.price)} · income ${fmt(r.incomeAmount ?? 0)}` +
+    const ub = r.ubItemId ? " · UB" : "";
+    const income = (r.incomeAmount ?? 0) !== 0 ? ` · collect ${fmt(r.incomeAmount ?? 0)}` : " · collect off";
+    return `${r.enabled ? "✅" : "⏸"} ${r.emoji || "✨"} **${r.name}** — ${fmt(r.price)} cash` +
+      income +
       (r.discordRoleId ? ` · <@&${r.discordRoleId}>` : "") +
-      req + actions;
-  }).join("\n") || "_No role perks yet — use **Add perk**._";
+      ub;
+  }).join("\n") || "_No roles yet — sync pulls UnbelievaBoat store role items, or use **Add perk**._";
 
   const embed = new EmbedBuilder()
     .setColor(0xe91e8c)
     .setAuthor({ name: "Roles & economy", iconURL: UB_ICON })
-    .setTitle("Server roles · income · settings")
+    .setTitle("Server roles · UB store · collect")
     .setDescription(
       [
         flash ? `${flash}\n` : null,
-        `API link **${settings.enabled ? "on" : "off"}** · Store **${settings.storeEnabled !== false ? "on" : "off"}** · Games **${settings.gamesEnabled !== false ? "on" : "off"}**`,
+        syncNote || null,
+        `API **${settings.enabled ? "on" : "off"}** · Store **${settings.storeEnabled !== false ? "on" : "off"}** · Games **${settings.gamesEnabled !== false ? "on" : "off"}**`,
         `Daily **${settings.dailyMin ?? 100}–${settings.dailyMax ?? 250}** · Collect CD **${Math.round((cds.collectSec || 86400) / 60)}m** · LB **${settings.leaderboardSort}**`,
-        `Rob immunity roles: **${(settings.robImmuneRoleIds ?? []).length}** · Log: ${settings.logChannelId ? `<#${settings.logChannelId}>` : "_not set_"}`,
         "",
-        "_Edit a perk for price, collect income, **actions**, and **requirements**. Toggle enables/disables store listing._",
+        "Open a role to edit **price / collect income**, **Discord emoji·GIF icon**, and real UnbelievaBoat **actions** (add roles, balance…) + **requirements** (must have role / balance).",
       ].filter(Boolean).join("\n"),
     )
-    .addFields({ name: `Role perks (${roles.length})`, value: roleLines.slice(0, 1024) || "_None_" })
-    .setFooter({ text: "Quick edit · toggle · economy settings" });
+    .addFields({ name: `Roles (${roles.length})`, value: roleLines.slice(0, 1024) || "_None_" })
+    .setFooter({ text: "UB actions/requirements · Discord icon pickers · collect income" });
 
   const editChoices = roles.slice(0, 25).map(r => {
     const emoji = resolveSelectEmoji(r.emoji || "✨");
     return {
-      label: `Edit · ${r.name}`.slice(0, 100),
-      description: `price ${r.price} · income ${r.incomeAmount ?? 0}`.slice(0, 100),
-      value: String(r.id),
-      ...(emoji ? { emoji } : {}),
-    };
-  });
-  const toggleChoices = roles.slice(0, 25).map(r => {
-    const emoji = resolveSelectEmoji(r.emoji || "✨");
-    return {
-      label: `${r.enabled ? "Disable" : "Enable"} · ${r.name}`.slice(0, 100),
-      description: (r.enabled ? "Listed in /casino store" : "Hidden from store").slice(0, 100),
+      label: `Open · ${r.name}`.slice(0, 100),
+      description: `price ${r.price} · collect ${r.incomeAmount ?? 0}${r.ubItemId ? " · UB item" : ""}`.slice(0, 100),
       value: String(r.id),
       ...(emoji ? { emoji } : {}),
     };
@@ -441,7 +476,7 @@ async function renderRolesEconomy(
       new ButtonBuilder().setCustomId("ubadmin:overview").setLabel("← Hub").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ubadmin:store").setLabel("Store").setEmoji("🛒").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ubadmin:re_economy").setLabel("Economy settings").setEmoji("⚙️").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ubadmin:re_refresh").setLabel("Refresh").setEmoji("🔄").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ubadmin:re_refresh").setLabel("Sync / refresh").setEmoji("🔄").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ubadmin:add_perk").setLabel("Add perk").setEmoji("✨").setStyle(ButtonStyle.Success),
     ),
   ];
@@ -450,21 +485,108 @@ async function renderRolesEconomy(
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
         new StringSelectMenuBuilder()
           .setCustomId("ubadmin:re_edit_pick")
-          .setPlaceholder("Edit perk — price, income, actions, requirements…")
+          .setPlaceholder("Open a role to edit…")
           .addOptions(editChoices),
       ),
     );
   }
-  if (toggleChoices.length) {
-    components.push(
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("ubadmin:re_toggle_pick")
-          .setPlaceholder("Enable / disable a perk…")
-          .addOptions(toggleChoices),
-      ),
-    );
+
+  await interaction.editReply({ embeds: [embed], components });
+}
+
+async function renderRoleDetail(
+  interaction: ButtonInteraction | StringSelectMenuInteraction | RoleSelectMenuInteraction,
+  guildId: string,
+  linkId: number,
+  flash?: string,
+): Promise<void> {
+  const settings = await getOrCreateUbSettings(guildId);
+  const roles = await listRoleLinks(guildId);
+  const row = roles.find(r => r.id === linkId);
+  if (!row) {
+    await renderRolesEconomy(interaction as ButtonInteraction | StringSelectMenuInteraction, guildId, "That role is gone.");
+    return;
   }
+
+  let actionsText = "_No UnbelievaBoat item linked — local perk only._";
+  let reqsText = "_None_";
+  let imageUrl: string | undefined;
+  const meta = (row.meta ?? {}) as Record<string, unknown>;
+  if (typeof meta.imageUrl === "string") imageUrl = meta.imageUrl;
+
+  if (row.ubItemId && isUbConfigured() && settings.enabled) {
+    try {
+      const raw = await ubApi.getStoreItem(settings.ubGuildId, row.ubItemId);
+      const guildEmoji = raw.emoji_id
+        ? interaction.guild?.emojis.cache.get(raw.emoji_id) ?? null
+        : null;
+      const norm = normalizeUbItem(raw, {
+        guildEmoji: guildEmoji
+          ? { id: guildEmoji.id, name: guildEmoji.name || "item", animated: guildEmoji.animated }
+          : null,
+        overlayImageUrl: imageUrl,
+      });
+      actionsText = summarizeActions(norm.actions);
+      reqsText = summarizeRequirements(norm.requirements);
+      if (norm.imageUrl) imageUrl = norm.imageUrl;
+    } catch (err) {
+      actionsText = `⚠️ Couldn't load UB item: ${err instanceof Error ? err.message : "error"}`;
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xe91e8c)
+    .setAuthor({ name: "Edit role", iconURL: UB_ICON })
+    .setTitle(`${row.emoji || "✨"} ${row.name}`)
+    .setDescription(
+      [
+        flash ? `${flash}\n` : null,
+        row.discordRoleId ? `Discord role: <@&${row.discordRoleId}>` : "_No Discord role_",
+        row.ubItemId ? `UB item: \`${row.ubItemId}\`` : "_Local-only (not in UB store)_",
+        `Price **${fmt(row.price)}** · Collect income **${fmt(row.incomeAmount ?? 0)}** · ${row.enabled ? "✅ listed" : "⏸ hidden"}`,
+      ].filter(Boolean).join("\n"),
+    )
+    .addFields(
+      { name: "UB actions (on buy)", value: actionsText.slice(0, 1024) },
+      { name: "UB requirements (to buy)", value: reqsText.slice(0, 1024) },
+    )
+    .setFooter({ text: "Icons use Discord’s emoji / GIF pickers · actions sync to UnbelievaBoat" });
+  if (imageUrl) applyStoreImageToEmbed(embed, imageUrl);
+
+  const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder | RoleSelectMenuBuilder>[] = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ubadmin:roles_economy").setLabel("← Roles list").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`ubadmin:re_price:${linkId}`).setLabel("Price / income").setEmoji("💰").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`ubadmin:re_icon:${linkId}`).setLabel("Icon").setEmoji("🖼️").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`ubadmin:re_toggle_one:${linkId}`)
+        .setLabel(row.enabled ? "Disable" : "Enable")
+        .setStyle(row.enabled ? ButtonStyle.Danger : ButtonStyle.Success),
+    ),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`ubadmin:re_action:${linkId}`)
+        .setPlaceholder("Set UB buy action…")
+        .addOptions(
+          { label: "Add roles on buy", value: "add_roles", emoji: "➕", description: "UB action: ADD_ROLES" },
+          { label: "Remove roles on buy", value: "remove_roles", emoji: "➖", description: "UB action: REMOVE_ROLES" },
+          { label: "Add cash on buy", value: "add_balance", emoji: "💵", description: "UB action: ADD_BALANCE" },
+          { label: "Clear all actions", value: "clear_actions", emoji: "🧹", description: "Remove UB actions" },
+        ),
+    ),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`ubadmin:re_req:${linkId}`)
+        .setPlaceholder("Set UB buy requirement…")
+        .addOptions(
+          { label: "Must have all roles", value: "role_every", emoji: "🛡️", description: "Requirement: ROLE · EVERY" },
+          { label: "Must have any role", value: "role_any", emoji: "🛡️", description: "Requirement: ROLE · AT_LEAST_ONE" },
+          { label: "Must have none of roles", value: "role_none", emoji: "🚫", description: "Requirement: ROLE · NONE" },
+          { label: "Min total balance…", value: "balance", emoji: "💰", description: "Requirement: TOTAL_BALANCE" },
+          { label: "Clear requirements", value: "clear_reqs", emoji: "🧹", description: "Remove UB requirements" },
+        ),
+    ),
+  ];
 
   await interaction.editReply({ embeds: [embed], components });
 }
@@ -793,18 +915,23 @@ export async function handleUbAdminComponent(
   }
 
   if (id === "ubadmin:re_edit_pick" && interaction.isStringSelectMenu()) {
+    await interaction.deferUpdate();
     const linkId = Number(interaction.values[0]);
+    await renderRoleDetail(interaction, guildId, linkId);
+    return;
+  }
+
+  if (id.startsWith("ubadmin:re_price:") && interaction.isButton()) {
+    const linkId = Number(id.split(":")[2]);
     const roles = await listRoleLinks(guildId);
     const row = roles.find(r => r.id === linkId);
     if (!row) {
-      await interaction.reply({ content: "That perk is gone.", ...EPHEMERAL });
+      await interaction.reply({ content: "That role is gone.", ...EPHEMERAL });
       return;
     }
-    const meta = (row.meta ?? {}) as Record<string, unknown>;
-    const requirements = typeof meta.requirements === "string" ? meta.requirements : "";
     const modal = new ModalBuilder()
       .setCustomId(`ubadmin:re_edit_modal:${linkId}`)
-      .setTitle("Edit role perk");
+      .setTitle("Price & collect income");
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -818,7 +945,7 @@ export async function handleUbAdminComponent(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId("income")
-          .setLabel("Collect income per claim")
+          .setLabel("Collect income per claim (0 = off)")
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMaxLength(12)
@@ -826,45 +953,229 @@ export async function handleUbAdminComponent(
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
-          .setCustomId("actions")
-          .setLabel("Actions note (what it grants)")
+          .setCustomId("description")
+          .setLabel("Short description")
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(false)
           .setMaxLength(200)
-          .setValue(String(meta.actions ?? row.description ?? "").slice(0, 200)),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("requirements")
-          .setLabel("Requirements (who can buy / notes)")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(false)
-          .setMaxLength(200)
-          .setValue(requirements.slice(0, 200)),
+          .setValue((row.description || "").slice(0, 200)),
       ),
     );
     await interaction.showModal(modal);
     return;
   }
 
-  if (id === "ubadmin:re_toggle_pick" && interaction.isStringSelectMenu()) {
+  if (id.startsWith("ubadmin:re_icon:") && interaction.isButton()) {
     await interaction.deferUpdate();
-    const linkId = Number(interaction.values[0]);
+    const linkId = Number(id.split(":")[2]);
     const roles = await listRoleLinks(guildId);
     const row = roles.find(r => r.id === linkId);
     if (!row) {
-      await renderRolesEconomy(interaction, guildId, "That perk is gone.");
+      await renderRolesEconomy(interaction, guildId, "That role is gone.");
+      return;
+    }
+    const picker = buildPerkIconPicker(linkId, row.name, row.emoji || "✨", interaction.guild);
+    await interaction.editReply({
+      content: "Pick an icon with **Discord’s emoji picker**, **server emoji**, or **Upload GIF** — animated GIFs play on the store board.",
+      ...picker,
+    });
+    return;
+  }
+
+  if (id.startsWith("ubadmin:re_toggle_one:") && interaction.isButton()) {
+    await interaction.deferUpdate();
+    const linkId = Number(id.split(":")[2]);
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row) {
+      await renderRolesEconomy(interaction, guildId, "That role is gone.");
       return;
     }
     await updateRoleLink(guildId, linkId, { enabled: !row.enabled });
-    await writeUbAudit(guildId, interaction.user.id, "discord_perk_toggle", {
-      id: linkId, enabled: !row.enabled, name: row.name,
+    if (row.ubItemId && isUbConfigured()) {
+      const settings = await getOrCreateUbSettings(guildId);
+      try {
+        await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, { is_listed: !row.enabled });
+      } catch { /* local toggle still applies */ }
+    }
+    await renderRoleDetail(interaction, guildId, linkId, `${!row.enabled ? "✅ Enabled" : "⏸ Disabled"} **${row.name}**.`);
+    return;
+  }
+
+  if (id.startsWith("ubadmin:re_action:") && interaction.isStringSelectMenu()) {
+    const linkId = Number(id.split(":")[2]);
+    const choice = interaction.values[0]!;
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row?.ubItemId) {
+      await interaction.reply({
+        content: "Link this perk to an UnbelievaBoat store item first (Add perk with sync, or refresh sync from UB store).",
+        ...EPHEMERAL,
+      });
+      return;
+    }
+    if (choice === "clear_actions") {
+      await interaction.deferUpdate();
+      const settings = await getOrCreateUbSettings(guildId);
+      await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, { actions: [] });
+      await writeUbAudit(guildId, interaction.user.id, "ub_actions_clear", { id: linkId, ubItemId: row.ubItemId });
+      await renderRoleDetail(interaction, guildId, linkId, "Cleared UnbelievaBoat actions.");
+      return;
+    }
+    if (choice === "add_balance") {
+      const modal = new ModalBuilder()
+        .setCustomId(`ubadmin:re_balance_action:${linkId}`)
+        .setTitle("Add cash on buy");
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("balance")
+            .setLabel("Cash to add when bought")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setValue("100"),
+        ),
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    // Role-based actions — ask for roles via RoleSelect
+    const roleMenu = new RoleSelectMenuBuilder()
+      .setCustomId(`ubadmin:re_action_roles:${linkId}:${choice}`)
+      .setPlaceholder(choice === "add_roles" ? "Roles to grant on buy…" : "Roles to remove on buy…")
+      .setMinValues(1)
+      .setMaxValues(10);
+    await interaction.reply({
+      content: choice === "add_roles"
+        ? "Pick roles UnbelievaBoat should **grant** when this item is bought:"
+        : "Pick roles UnbelievaBoat should **remove** when this item is bought:",
+      components: [new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(roleMenu)],
+      ...EPHEMERAL,
     });
-    await renderRolesEconomy(
-      interaction,
-      guildId,
-      `${!row.enabled ? "✅ Enabled" : "⏸ Disabled"} **${row.name}**.`,
-    );
+    return;
+  }
+
+  if (id.startsWith("ubadmin:re_action_roles:") && interaction.isRoleSelectMenu()) {
+    await interaction.deferUpdate();
+    const partsId = id.split(":");
+    const linkId = Number(partsId[2]);
+    const kind = partsId[3]!;
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row?.ubItemId) {
+      await interaction.editReply({ content: "That UB item is gone.", components: [] });
+      return;
+    }
+    const settings = await getOrCreateUbSettings(guildId);
+    const roleIds = interaction.values;
+    const actionType = kind === "remove_roles" ? UbAction.REMOVE_ROLES : UbAction.ADD_ROLES;
+    // Keep non-role actions; replace role edit actions of same type.
+    let existing: ReturnType<typeof parseActions> = [];
+    try {
+      const raw = await ubApi.getStoreItem(settings.ubGuildId, row.ubItemId);
+      existing = parseActions(raw.actions).filter(a => a.type !== UbAction.ADD_ROLES && a.type !== UbAction.REMOVE_ROLES);
+    } catch { /* start fresh */ }
+    const actions = [...existing, { type: actionType, ids: roleIds }];
+    await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, { actions });
+    if (kind === "add_roles" && roleIds[0] && row.discordRoleId !== roleIds[0]) {
+      await updateRoleLink(guildId, linkId, { discordRoleId: roleIds[0] });
+    }
+    await writeUbAudit(guildId, interaction.user.id, "ub_actions_set", { id: linkId, actionType, roleIds });
+    await interaction.editReply({
+      content: `Updated UB buy action: **${kind === "remove_roles" ? "remove" : "add"}** ${roleIds.map(r => `<@&${r}>`).join(" ")}. Re-open the role from **Roles & economy** to refresh.`,
+      components: [],
+    });
+    return;
+  }
+
+  if (id.startsWith("ubadmin:re_req:") && interaction.isStringSelectMenu()) {
+    const linkId = Number(id.split(":")[2]);
+    const choice = interaction.values[0]!;
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row?.ubItemId) {
+      await interaction.reply({
+        content: "This perk needs an UnbelievaBoat store item to set requirements.",
+        ...EPHEMERAL,
+      });
+      return;
+    }
+    if (choice === "clear_reqs") {
+      await interaction.deferUpdate();
+      const settings = await getOrCreateUbSettings(guildId);
+      await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, { requirements: [] });
+      await writeUbAudit(guildId, interaction.user.id, "ub_reqs_clear", { id: linkId });
+      await renderRoleDetail(interaction, guildId, linkId, "Cleared UnbelievaBoat requirements.");
+      return;
+    }
+    if (choice === "balance") {
+      const modal = new ModalBuilder()
+        .setCustomId(`ubadmin:re_req_balance:${linkId}`)
+        .setTitle("Min total balance to buy");
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("balance")
+            .setLabel("Minimum total balance")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setValue("1000"),
+        ),
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    const match =
+      choice === "role_any" ? "any"
+        : choice === "role_none" ? "none"
+          : "every";
+    const roleMenu = new RoleSelectMenuBuilder()
+      .setCustomId(`ubadmin:re_req_roles:${linkId}:${match}`)
+      .setPlaceholder("Roles for this requirement…")
+      .setMinValues(1)
+      .setMaxValues(10);
+    await interaction.reply({
+      content:
+        match === "every" ? "Buyer must have **all** of these roles:"
+          : match === "any" ? "Buyer must have **at least one** of these roles:"
+            : "Buyer must have **none** of these roles:",
+      components: [new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(roleMenu)],
+      ...EPHEMERAL,
+    });
+    return;
+  }
+
+  if (id.startsWith("ubadmin:re_req_roles:") && interaction.isRoleSelectMenu()) {
+    await interaction.deferUpdate();
+    const partsId = id.split(":");
+    const linkId = Number(partsId[2]);
+    const match = partsId[3]!;
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row?.ubItemId) {
+      await interaction.editReply({ content: "That UB item is gone.", components: [] });
+      return;
+    }
+    const settings = await getOrCreateUbSettings(guildId);
+    const matchType =
+      match === "any" ? UbMatch.AT_LEAST_ONE
+        : match === "none" ? UbMatch.NONE
+          : UbMatch.EVERY;
+    let existing = parseRequirements([]);
+    try {
+      const raw = await ubApi.getStoreItem(settings.ubGuildId, row.ubItemId);
+      existing = parseRequirements(raw.requirements).filter(r => r.type !== UbReq.ROLE);
+    } catch { /* empty */ }
+    const requirements = [
+      ...existing,
+      { type: UbReq.ROLE, match_type: matchType, ids: interaction.values },
+    ];
+    await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, { requirements });
+    await writeUbAudit(guildId, interaction.user.id, "ub_reqs_set", { id: linkId, match, ids: interaction.values });
+    await interaction.editReply({
+      content: `Updated UB role requirement. Re-open the role from **Roles & economy** to refresh.`,
+      components: [],
+    });
     return;
   }
 
@@ -1385,6 +1696,7 @@ export async function handleUbAdminComponent(
     };
     delete meta.iconGif;
     await updateRoleLink(guildId, linkId, { emoji, meta });
+    await syncEmojiToUbItem(guildId, row.ubItemId, emoji);
     await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
       id: linkId, preset: "guild_emoji", emoji, imageUrl, animated: Boolean(guildEmoji.animated),
     });
@@ -1398,7 +1710,8 @@ export async function handleUbAdminComponent(
       );
     applyStoreImageToEmbed(preview, imageUrl);
     await interaction.editReply({
-      content: `Set store icon to ${emoji} for **${row.name}**.`,
+      content: `Set store icon to ${emoji} for **${row.name}**.` +
+        (row.ubItemId ? " _(synced emoji to UnbelievaBoat item)_" : ""),
       embeds: [preview],
       components: [],
     });
@@ -1747,6 +2060,7 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       delete meta.iconGif;
     }
     await updateRoleLink(guildId, linkId, { emoji: icon.emoji, meta });
+    await syncEmojiToUbItem(guildId, row.ubItemId, icon.emoji);
     await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
       id: linkId, preset: "discord_emoji", emoji: icon.emoji, imageUrl: icon.imageUrl, animated: icon.animated,
     });
@@ -1760,7 +2074,8 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       );
     if (icon.imageUrl) applyStoreImageToEmbed(preview, icon.imageUrl);
     await interaction.editReply({
-      content: `Set emoji ${icon.emoji} for **${row.name}**.`,
+      content: `Set emoji ${icon.emoji} for **${row.name}**.` +
+        (row.ubItemId ? " _(synced to UnbelievaBoat item)_" : ""),
       embeds: [preview],
     });
     return;
@@ -1827,8 +2142,12 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     const linkId = Number(parts[2]);
     const price = Number(interaction.fields.getTextInputValue("price").trim());
     const income = Number(interaction.fields.getTextInputValue("income").trim());
-    const actions = interaction.fields.getTextInputValue("actions")?.trim() || "";
-    const requirements = interaction.fields.getTextInputValue("requirements")?.trim() || "";
+    let description = "";
+    try {
+      description = interaction.fields.getTextInputValue("description")?.trim() || "";
+    } catch {
+      description = "";
+    }
     if (![price, income].every(n => Number.isFinite(n) && n >= 0)) {
       await interaction.reply({ content: "Price and income must be non-negative numbers.", ...EPHEMERAL });
       return;
@@ -1840,26 +2159,85 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       await interaction.editReply("That perk is gone.");
       return;
     }
-    const meta: Record<string, unknown> = { ...(row.meta as Record<string, unknown>) };
-    if (actions) meta.actions = actions;
-    else delete meta.actions;
-    if (requirements) meta.requirements = requirements;
-    else delete meta.requirements;
     await updateRoleLink(guildId, linkId, {
       price: Math.floor(price),
       incomeAmount: Math.floor(income),
-      description: actions || row.description,
-      meta,
+      description: description || row.description,
     });
+    if (row.ubItemId && isUbConfigured()) {
+      const settings = await getOrCreateUbSettings(guildId);
+      try {
+        await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, {
+          price: Math.floor(price),
+          description: description || row.description || undefined,
+        });
+      } catch { /* local still saved */ }
+    }
     await writeUbAudit(guildId, interaction.user.id, "discord_perk_edit", {
-      id: linkId, price, income, actions, requirements,
+      id: linkId, price, income, description,
     });
     await interaction.editReply(
-      `Updated **${row.name}**: price **${fmt(price)}** · income **${fmt(income)}**/collect` +
-      (actions ? `\nActions: ${actions}` : "") +
-      (requirements ? `\nRequirements: ${requirements}` : "") +
-      `\n_Re-open **Roles & economy** to see the list._`,
+      `Updated **${row.name}**: price **${fmt(price)}** · collect income **${fmt(income)}**/claim` +
+      (row.ubItemId ? " _(also patched UnbelievaBoat item price)_" : "") +
+      `\n_Re-open the role in **Roles & economy** to continue editing actions / requirements / icon._`,
     );
+    return;
+  }
+
+  if (parts[1] === "re_balance_action" && parts[2]) {
+    const linkId = Number(parts[2]);
+    const balance = Number(interaction.fields.getTextInputValue("balance").trim());
+    if (!Number.isFinite(balance) || balance <= 0) {
+      await interaction.reply({ content: "Balance must be a positive number.", ...EPHEMERAL });
+      return;
+    }
+    await interaction.deferReply(EPHEMERAL);
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row?.ubItemId) {
+      await interaction.editReply("Need a linked UnbelievaBoat store item.");
+      return;
+    }
+    const settings = await getOrCreateUbSettings(guildId);
+    let existing = parseActions([]);
+    try {
+      const raw = await ubApi.getStoreItem(settings.ubGuildId, row.ubItemId);
+      existing = parseActions(raw.actions).filter(a => a.type !== UbAction.ADD_BALANCE);
+    } catch { /* empty */ }
+    const actions = [...existing, { type: UbAction.ADD_BALANCE, balance: Math.floor(balance) }];
+    await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, { actions });
+    await writeUbAudit(guildId, interaction.user.id, "ub_actions_set", { id: linkId, type: "add_balance", balance });
+    await interaction.editReply(`UB buy action: add **${fmt(balance)}** cash on purchase.`);
+    return;
+  }
+
+  if (parts[1] === "re_req_balance" && parts[2]) {
+    const linkId = Number(parts[2]);
+    const balance = Number(interaction.fields.getTextInputValue("balance").trim());
+    if (!Number.isFinite(balance) || balance < 0) {
+      await interaction.reply({ content: "Balance must be a non-negative number.", ...EPHEMERAL });
+      return;
+    }
+    await interaction.deferReply(EPHEMERAL);
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row?.ubItemId) {
+      await interaction.editReply("Need a linked UnbelievaBoat store item.");
+      return;
+    }
+    const settings = await getOrCreateUbSettings(guildId);
+    let existing = parseRequirements([]);
+    try {
+      const raw = await ubApi.getStoreItem(settings.ubGuildId, row.ubItemId);
+      existing = parseRequirements(raw.requirements).filter(r => r.type !== UbReq.TOTAL_BALANCE);
+    } catch { /* empty */ }
+    const requirements = [
+      ...existing,
+      { type: UbReq.TOTAL_BALANCE, balance: Math.floor(balance) },
+    ];
+    await ubApi.editStoreItem(settings.ubGuildId, row.ubItemId, { requirements });
+    await writeUbAudit(guildId, interaction.user.id, "ub_reqs_set", { id: linkId, balance });
+    await interaction.editReply(`UB requirement: total balance ≥ **${fmt(balance)}**.`);
     return;
   }
 

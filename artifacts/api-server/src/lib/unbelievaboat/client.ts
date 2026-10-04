@@ -48,6 +48,7 @@ export type UbStoreItem = {
   is_inventory?: boolean;
   is_usable?: boolean;
   is_sellable?: boolean;
+  is_visible?: boolean;
   stock_remaining?: number | null;
   unlimited_stock?: boolean;
   requirements?: unknown[];
@@ -56,6 +57,13 @@ export type UbStoreItem = {
   emoji_id?: string | null;
   expires_at?: string | null;
   is_listed?: boolean;
+  category_id?: string | null;
+};
+
+export type UbStoreItemsPage = {
+  page: number;
+  total_pages: number;
+  items: UbStoreItem[];
 };
 
 export type UbItemCategory = {
@@ -182,8 +190,21 @@ export const ubApi = {
     return ubFetch<UbUserBalance>("PUT", `/guilds/${guildId}/users/${userId}`, body);
   },
 
-  listStoreItems(guildId: string) {
-    return ubFetch<UbStoreItem[]>("GET", `/guilds/${guildId}/items`);
+  listStoreItems(
+    guildId: string,
+    opts: { sort?: string; limit?: number; page?: number; query?: string } = {},
+  ) {
+    return ubFetch<UbStoreItemsPage | UbStoreItem[]>(
+      "GET",
+      `/guilds/${guildId}/items`,
+      undefined,
+      {
+        sort: opts.sort ?? "name",
+        limit: opts.limit ?? 100,
+        page: opts.page ?? 1,
+        query: opts.query,
+      },
+    );
   },
 
   getStoreItem(guildId: string, itemId: string) {
