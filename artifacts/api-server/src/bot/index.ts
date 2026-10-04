@@ -129,12 +129,13 @@ export async function startBot() {
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessageReactions,
   ];
   if (afkPresenceEnabled) intents.push(GatewayIntentBits.GuildPresences);
 
   const client = new Client({
     intents,
-    partials: [Partials.Channel],
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
   });
 
   initSpawnManager(client);
@@ -243,6 +244,11 @@ export async function startBot() {
     try {
       // ── Autocomplete (card / set suggestions as user types) ───────────────
       if (interaction.isAutocomplete()) {
+        if (interaction.commandName === "badge") {
+          const { handleBadgeAutocomplete } = await import("./badges/commands.js");
+          await handleBadgeAutocomplete(interaction);
+          return;
+        }
         await handleAutocomplete(interaction);
         return;
       }
@@ -1177,6 +1183,12 @@ export async function startBot() {
       } else if (cmd === "memberdate") {
         const { handleMemberDateCommand } = await import("./memberdate/command.js");
         await handleMemberDateCommand(interaction);
+      } else if (cmd === "badges") {
+        const { handleBadgesCommand } = await import("./badges/commands.js");
+        await handleBadgesCommand(interaction);
+      } else if (cmd === "badge") {
+        const { handleBadgeCommand } = await import("./badges/commands.js");
+        await handleBadgeCommand(interaction);
       } else if (cmd === "lottery") {
         const { handleLotteryCommand } = await import("./unbelievaboat/lottery/store.js");
         await handleLotteryCommand(interaction);
@@ -1234,6 +1246,7 @@ export async function startBot() {
     "quote",
     "collection_hub", "hq", "hqadmin", "hqbuild",
     "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu", "trivia", "memberdate",
+    "badges", "badge",
     "lottery", "lotteryadmin",
     "casino", "vaultvalue", "cardadmin", "secret",
     "daily_ub", "collect_ub", "bal_ub", "deposit_ub", "withdraw_ub",
@@ -1267,6 +1280,11 @@ export async function startBot() {
     void import("./trivia/rounds.js")
       .then(m => m.handleTriviaChannelMessage(msg))
       .catch(err => logger.debug({ err }, "Trivia message hook error"));
+
+    // Badge auto-triggers: messages / attachments / streak (fire-and-forget).
+    void import("./badges/listeners.js")
+      .then(m => m.handleBadgeMessage(msg))
+      .catch(err => logger.debug({ err }, "Badge message hook error"));
 
     // Dual prefixes (per-guild): admin/card commands vs UnbelievaBoat casino games.
     const prefix = await getGuildPrefix(msg.guild.id);
@@ -1337,6 +1355,13 @@ export async function startBot() {
       // Winner is decided inside spawn-manager after a short grace window;
       // achievements for the typing winner are checked there too.
     }
+  });
+
+  // Badge reaction triggers (fire-and-forget).
+  client.on(Events.MessageReactionAdd, (reaction, user) => {
+    void import("./badges/listeners.js")
+      .then(m => m.handleBadgeReaction(reaction, user))
+      .catch(err => logger.debug({ err }, "Badge reaction hook error"));
   });
 
   await client.login(token).catch(err => {

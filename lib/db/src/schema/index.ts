@@ -26,3 +26,4 @@ export * from "./tatsu";
 export * from "./trivia";
 export * from "./memberdate";
 export * from "./lottery";
+export * from "./badges";

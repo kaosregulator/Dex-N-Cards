@@ -23,6 +23,7 @@ import {
   CashError, spendFunds, fmtCash, requireEconomy, formatSpendNote,
 } from "./cash.js";
 import { replyThenPostAsUnbelievaBoat } from "./webhook.js";
+import { isAnimatedStoreImage, resolveSelectEmoji } from "./store-icons.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 
@@ -118,9 +119,16 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
       return;
     }
 
-    const lines = rows.slice(0, 12).map(r =>
-      `${r.emoji} **${r.name}** — **${fmtCash(r.price)}** cash\n_${r.description.slice(0, 120)}_`,
-    ).join("\n\n");
+    const member = interaction.member as GuildMember | null;
+    const ownedRoleIds = new Set(member?.roles?.cache?.keys?.() ?? []);
+
+    const lines = rows.slice(0, 12).map(r => {
+      const owned = ownedRoleIds.has(r.roleId);
+      return `${r.emoji} **${r.name}** — **${fmtCash(r.price)}** cash` +
+        (r.imageUrl ? (isAnimatedStoreImage(r.imageUrl) ? " · 🎞️" : " · 🖼️") : "") +
+        (owned ? " · ✅ **owned**" : "") +
+        `\n_${owned ? "Already yours — use Collect for income" : r.description.slice(0, 120)}_`;
+    }).join("\n\n");
 
     const embed = new EmbedBuilder()
       .setColor(UNBELIEVABOAT_COLOR)
@@ -129,25 +137,37 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
       .setDescription(
         [
           "Buy roles your admins linked — settled in **UnbelievaBoat** cash.",
-          "Stacks with UnbelievaBoat’s own store; this is our Discord storefront.",
+          "Already own a perk? Use **`/casino` → Collect** (or `/collect_ub`) for income.",
           "",
           lines,
         ].join("\n"),
       )
-      .setFooter({ text: "Pick an item below · posted publicly as UnbelievaBoat when you buy" });
+      .setFooter({ text: "Pick an item below · GIFs play on purchase · Collect for income" });
 
-    const firstImage = rows.find(r => r.imageUrl)?.imageUrl;
-    if (firstImage) embed.setThumbnail(firstImage);
+    // Prefer an animated GIF as the main image so Discord plays the animation.
+    const animated = rows.find(r => r.imageUrl && isAnimatedStoreImage(r.imageUrl))?.imageUrl;
+    const firstImage = animated ?? rows.find(r => r.imageUrl)?.imageUrl;
+    if (firstImage) {
+      if (isAnimatedStoreImage(firstImage)) embed.setImage(firstImage);
+      else embed.setThumbnail(firstImage);
+    }
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId("unbstore:buy")
       .setPlaceholder("Choose a perk to buy…")
-      .addOptions(rows.slice(0, 25).map(r => ({
-        label: `${r.name}`.slice(0, 100),
-        description: `${r.price} cash · ${r.description}`.slice(0, 100),
-        value: r.key,
-        emoji: r.emoji.match(/^\p{Extended_Pictographic}/u) ? r.emoji : undefined,
-      })));
+      .addOptions(rows.slice(0, 25).map(r => {
+        const emoji = resolveSelectEmoji(r.emoji);
+        const owned = ownedRoleIds.has(r.roleId);
+        return {
+          label: `${owned ? "✓ " : ""}${r.name}`.slice(0, 100),
+          description: (owned
+            ? `Already owned · Collect income`
+            : `${r.price} cash · ${r.description}`
+          ).slice(0, 100),
+          value: r.key,
+          ...(emoji ? { emoji } : {}),
+        };
+      }));
 
     // Stash row payload on a short-lived map keyed by interaction user
     stashStore(interaction.guildId, interaction.user.id, rows);
@@ -249,7 +269,18 @@ async function purchaseItem(interaction: StringSelectMenuInteraction, item: Stas
     return;
   }
   if (member.roles.cache.has(role.id)) {
-    await interaction.editReply(`You already have **${role.name}**.`);
+    const links = await listRoleLinks(guild.id);
+    const link = links.find(l => l.discordRoleId === role.id);
+    const income = link?.incomeAmount ?? 0;
+    await interaction.editReply(
+      [
+        `You already have ${item.emoji} **${item.name}** (${role}).`,
+        income > 0
+          ? `Claim **${fmtCash(income)}** income with **\`/casino\` → Collect** (or \`/collect_ub\`).`
+          : "This perk doesn’t pay collect income — you’re all set.",
+        "_No cash was charged._",
+      ].join("\n"),
+    );
     return;
   }
 
@@ -283,7 +314,11 @@ async function purchaseItem(interaction: StringSelectMenuInteraction, item: Stas
         `\nCash **${fmtCash(bal.cash)}** · bank **${fmtCash(bal.bank)}** ${bal.symbol}`,
       ].filter(Boolean).join("\n"),
     );
-  if (item.imageUrl) purchaseEmbed.setImage(item.imageUrl);
+  // GIFs must use setImage so Discord plays the animation (thumbnails stay static).
+  if (item.imageUrl) {
+    if (isAnimatedStoreImage(item.imageUrl)) purchaseEmbed.setImage(item.imageUrl);
+    else purchaseEmbed.setThumbnail(item.imageUrl);
+  }
 
   await replyThenPostAsUnbelievaBoat(
     interaction as unknown as ChatInputCommandInteraction,

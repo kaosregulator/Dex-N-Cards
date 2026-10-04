@@ -50,6 +50,7 @@ export function Nav() {
     { href: "/admin", label: "Admin", show: !!user },
     { href: "/admin/emoji", label: "Make Emoji", show: !!user },
     { href: "/admin/unbelievaboat", label: "UnbelievaBoat", show: !!user },
+    { href: "/admin/badges", label: "Badges", show: !!user },
     { href: "/admin/appearance", label: "Appearance", show: !!user },
     { href: "/admin/news", label: "News Admin", show: !!user },
     { href: "/admin/suggestions", label: "Suggestions Admin", show: !!user },
