@@ -641,9 +641,13 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
     }
     const roleIds = new Set(member.roles.cache.keys());
     const links = await listRoleLinks(interaction.guildId!);
-    const owned = links.filter(l =>
+    const { dedupeIncomeRoles } = await import("./store-icons.js");
+    const { symbolDisplayName } = await import("./currency-canvas.js");
+    const ownedRaw = links.filter(l =>
       l.enabled && l.discordRoleId && roleIds.has(l.discordRoleId) && (l.incomeAmount ?? 0) > 0,
     );
+    // One payout per Discord role — keep the highest income if duplicates exist.
+    const owned = dedupeIncomeRoles(ownedRaw);
     if (!owned.length) {
       await interaction.editReply(
         "You don’t own any income perk roles yet. Buy one in `/casino` → Store (admins set **income** on role links).",
@@ -659,21 +663,26 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
       roles: owned.map(r => ({ id: r.discordRoleId, name: r.name, income: r.incomeAmount })),
     });
 
-    const roleLines = owned.map(r =>
-      `${r.emoji ? `${r.emoji} ` : ""}${r.name} +${fmtCash(r.incomeAmount)}`,
+    // Embed keeps Discord custom emoji markup; canvas uses plain names (no tofu).
+    const roleLinesEmbed = owned.map(r =>
+      `• ${r.emoji || "✨"} **${r.name}** — +${fmtCash(r.incomeAmount)}`,
+    );
+    const roleLinesGif = owned.map(r =>
+      `${symbolDisplayName(r.emoji || "✨")} ${r.name} +${fmtCash(r.incomeAmount)}`,
     );
     const gif = await renderCoinCollectGif({
       amount: total,
       symbol: bal.symbol,
       newCash: bal.cash,
       newBank: bal.bank,
-      title: "ROLE INCOME",
-      roleLines,
+      title: owned.length > 1 ? `${owned.length} ROLES` : "ROLE INCOME",
+      roleLines: roleLinesGif,
     });
     const { files, imageName } = await attachGif(gif, "collect.gif");
     const embed = brandEmbed("Role Income Collected", [
-      `${interaction.user} swept **${fmtCash(total)}** ${bal.symbol} from perk roles:`,
-      ...roleLines.map(l => `• ${l}`),
+      `${interaction.user} swept **${fmtCash(total)}** ${bal.symbol}` +
+        (owned.length > 1 ? ` from **${owned.length}** perk roles:` : " from perk role:"),
+      ...roleLinesEmbed,
       "",
       `💵 Cash **${fmtCash(bal.cash)}** · 🏦 Bank **${fmtCash(bal.bank)}**`,
     ].join("\n"));
@@ -682,7 +691,7 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
     void logEconomyEvent(
       interaction.client, interaction.guildId!, interaction.user,
       "Role Collect", `Collected ${fmtCash(total)} from ${owned.length} role(s)`,
-      roleLines.slice(0, 5).map(l => ({ name: "Role", value: l, inline: true })),
+      roleLinesEmbed.slice(0, 5).map(l => ({ name: "Role", value: l.slice(0, 100), inline: true })),
     );
   } catch (err) {
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);

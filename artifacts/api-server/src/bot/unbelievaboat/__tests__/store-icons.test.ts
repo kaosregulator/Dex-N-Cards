@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_STORE_ICONS,
+  dedupeIncomeRoles,
+  discordEmojiCdnUrl,
+  formatGuildEmoji,
+  isAnimatedStoreImage,
   isHttpImageUrl,
   normalizeStoreIconInput,
   presetById,
@@ -53,5 +57,29 @@ describe("store-icons", () => {
     expect(isHttpImageUrl("https://cdn.discordapp.com/emojis/1.png?size=64")).toBe(true);
     expect(isHttpImageUrl("ftp://nope.com/x.png")).toBe(false);
     expect(isHttpImageUrl("not-a-url")).toBe(false);
+  });
+
+  it("detects animated GIF store images", () => {
+    expect(isAnimatedStoreImage(discordEmojiCdnUrl("222", true))).toBe(true);
+    expect(isAnimatedStoreImage(discordEmojiCdnUrl("111", false))).toBe(false);
+    expect(isAnimatedStoreImage("https://cdn.example.com/icon.png")).toBe(false);
+  });
+
+  it("formats guild emoji markup", () => {
+    expect(formatGuildEmoji({ id: "1", name: "vip" })).toBe("<:vip:1>");
+    expect(formatGuildEmoji({ id: "2", name: "spin", animated: true })).toBe("<a:spin:2>");
+  });
+
+  it("dedupes income roles by discord role id (keeps highest income)", () => {
+    const rows = dedupeIncomeRoles([
+      { discordRoleId: "a", incomeAmount: 10 },
+      { discordRoleId: "a", incomeAmount: 50 },
+      { discordRoleId: "b", incomeAmount: 20 },
+      { discordRoleId: null, incomeAmount: 99 },
+    ]);
+    expect(rows).toEqual([
+      { discordRoleId: "a", incomeAmount: 50 },
+      { discordRoleId: "b", incomeAmount: 20 },
+    ]);
   });
 });

@@ -152,9 +152,14 @@ export async function renderCoinCollectGif(opts: {
 
       if (opts.roleLines?.length && t > 0.35) {
         ctx.fillStyle = "#94a3b8";
-        ctx.font = "13px sans-serif";
-        const line = opts.roleLines.slice(0, 2).join(" · ");
-        ctx.fillText(line.slice(0, 64), cx, 98);
+        ctx.font = "12px sans-serif";
+        const lines = opts.roleLines.slice(0, 3);
+        if (opts.roleLines.length > 3) {
+          lines[2] = `${opts.roleLines.length} roles total`;
+        }
+        lines.forEach((line, i) => {
+          ctx.fillText(line.slice(0, 58), cx, 96 + i * 15);
+        });
       }
 
       if (t > 0.7) {

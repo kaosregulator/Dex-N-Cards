@@ -52,19 +52,31 @@ export function resolveSelectEmoji(
   return undefined;
 }
 
+/** Stable Discord CDN URL for a guild / application emoji. */
+export function discordEmojiCdnUrl(id: string, animated: boolean): string {
+  const ext = animated ? "gif" : "png";
+  return `https://cdn.discordapp.com/emojis/${id}.${ext}?size=128&quality=lossless`;
+}
+
+/** Build stored emoji markup from a guild emoji id/name/animated flag. */
+export function formatGuildEmoji(opts: { id: string; name: string; animated?: boolean | null }): string {
+  return opts.animated ? `<a:${opts.name}:${opts.id}>` : `<:${opts.name}:${opts.id}>`;
+}
+
 /** Normalize modal/emoji input into stored emoji + optional image from custom emoji CDN. */
 export function normalizeStoreIconInput(input: string): {
   emoji: string;
   imageUrl?: string;
+  animated?: boolean;
 } {
   const trimmed = input.trim();
   if (!trimmed) return { emoji: "✨" };
   const custom = parseDiscordEmoji(trimmed);
   if (custom) {
-    const ext = custom.animated ? "gif" : "png";
     return {
       emoji: trimmed,
-      imageUrl: `https://cdn.discordapp.com/emojis/${custom.id}.${ext}?size=128&quality=lossless`,
+      imageUrl: discordEmojiCdnUrl(custom.id, custom.animated),
+      animated: custom.animated,
     };
   }
   return { emoji: trimmed.slice(0, 64) };
@@ -78,4 +90,39 @@ export function isHttpImageUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** True when Discord should play the image as an animated GIF on embeds. */
+export function isAnimatedStoreImage(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    if (/\.gif(\?|$)/i.test(u.pathname)) return true;
+    // Discord emoji CDN sometimes omits extension in weird proxies — check query-less path.
+    if (u.hostname.includes("discord") && u.pathname.includes("/emojis/") && u.pathname.endsWith(".gif")) {
+      return true;
+    }
+    return false;
+  } catch {
+    return /\.gif(\?|$)/i.test(url);
+  }
+}
+
+/**
+ * Deduplicate role-income links by Discord role id (keep highest income).
+ * Prevents double-paying if stale duplicates ever appear.
+ */
+export function dedupeIncomeRoles<T extends { discordRoleId: string | null; incomeAmount: number | null }>(
+  rows: T[],
+): T[] {
+  const byRole = new Map<string, T>();
+  for (const row of rows) {
+    const id = row.discordRoleId;
+    if (!id) continue;
+    const prev = byRole.get(id);
+    if (!prev || (row.incomeAmount ?? 0) > (prev.incomeAmount ?? 0)) {
+      byRole.set(id, row);
+    }
+  }
+  return [...byRole.values()].sort((a, b) => (b.incomeAmount ?? 0) - (a.incomeAmount ?? 0));
 }
