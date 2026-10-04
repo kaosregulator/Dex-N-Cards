@@ -16,8 +16,9 @@ import { seededRng } from "../animations/particles.js";
 import { tierForLevel, type BadgeTier, BADGE_LEVEL_MAX } from "../../lib/badges/levels.js";
 import { logger } from "../../lib/logger.js";
 
-const W = 360;
-const H = 420;
+/** Landscape — fits Discord embed image width cleanly. */
+const W = 640;
+const H = 280;
 
 export type EmblemRenderOpts = {
   name: string;
@@ -305,23 +306,24 @@ export async function renderBadgeEmblemGif(opts: EmblemRenderOpts): Promise<Buff
         ctx.fillStyle = bg;
         ctx.fillRect(0, 0, W, H);
 
-        const vig = ctx.createRadialGradient(W / 2, H / 2 - 20, 40, W / 2, H / 2, 260);
+        const vig = ctx.createRadialGradient(150, H / 2, 30, W / 2, H / 2, 340);
         vig.addColorStop(0, "rgba(0,0,0,0)");
-        vig.addColorStop(1, "rgba(0,0,0,0.55)");
+        vig.addColorStop(1, "rgba(0,0,0,0.5)");
         ctx.fillStyle = vig;
         ctx.fillRect(0, 0, W, H);
 
-        const starCount = tier.key === "kindling" ? 18
-          : tier.key === "aurora" ? 28
-          : tier.key === "radiant" ? 36
-          : tier.key === "eclipse" ? 42
-          : tier.key === "celestial" ? 55
-          : 70;
+        const starCount = tier.key === "kindling" ? 16
+          : tier.key === "aurora" ? 24
+          : tier.key === "radiant" ? 32
+          : tier.key === "eclipse" ? 38
+          : tier.key === "celestial" ? 48
+          : 60;
         drawStarField(ctx, t, seed, starCount, tier.glow);
 
-        const cx = W / 2;
-        const cy = H / 2 - 18;
-        const baseR = 88 * (0.92 + 0.08 * pop);
+        // Medallion on the left — text block on the right (landscape embed).
+        const cx = 150;
+        const cy = H / 2;
+        const baseR = 78 * (0.92 + 0.08 * pop);
 
         const bloom = ctx.createRadialGradient(cx, cy, baseR * 0.2, cx, cy, baseR * 1.85);
         bloom.addColorStop(0, hexToRgba(tier.glow, 0.35 + 0.2 * Math.sin(t * Math.PI * 2)));
@@ -333,10 +335,10 @@ export async function renderBadgeEmblemGif(opts: EmblemRenderOpts): Promise<Buff
         ctx.fill();
 
         if (tier.minLevel >= 10) {
-          drawOrbitSparks(ctx, cx, cy, baseR + 28, t, tier.key === "apex" ? 14 : 8, tier.accent);
+          drawOrbitSparks(ctx, cx, cy, baseR + 24, t, tier.key === "apex" ? 12 : 7, tier.accent);
         }
         if (tier.minLevel >= 50) {
-          drawOrbitSparks(ctx, cx, cy, baseR + 44, 1 - t, 6, tier.glow);
+          drawOrbitSparks(ctx, cx, cy, baseR + 38, 1 - t, 5, tier.glow);
         }
 
         ctx.save();
@@ -372,46 +374,55 @@ export async function renderBadgeEmblemGif(opts: EmblemRenderOpts): Promise<Buff
         }
         ctx.restore();
 
-        drawSigil(ctx, sigil, cx, cy, 52, t, tier.accent, tier.glow);
-
-        // Tiny emoji caption (text only — may tofu; sigil is the hero)
-        ctx.textAlign = "center";
-        ctx.textBaseline = "alphabetic";
-        ctx.fillStyle = hexToRgba(0xffffff, 0.35);
-        ctx.font = "14px sans-serif";
-        if (opts.emoji) ctx.fillText(opts.emoji.slice(0, 4), cx, cy + baseR * 0.55);
+        drawSigil(ctx, sigil, cx, cy, 46, t, tier.accent, tier.glow);
 
         const ticks = 12;
         for (let i = 0; i < ticks; i++) {
           const a = -Math.PI / 2 + (i / ticks) * Math.PI * 2 + t * 0.15;
           const on = i / ticks <= level / BADGE_LEVEL_MAX;
-          const r0 = baseR + 10;
-          const r1 = baseR + (on ? 18 : 14);
+          const r0 = baseR + 8;
+          const r1 = baseR + (on ? 16 : 12);
           ctx.strokeStyle = hexToRgba(on ? tier.accent : 0xffffff, on ? 0.85 : 0.15);
-          ctx.lineWidth = on ? 2.4 : 1.2;
+          ctx.lineWidth = on ? 2.2 : 1.1;
           ctx.beginPath();
           ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
           ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
           ctx.stroke();
         }
 
+        // Right-side copy
+        const textX = 290;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+
+        ctx.fillStyle = "rgba(255,255,255,0.45)";
+        ctx.font = `bold 12px ${TITLE_FONT_FAMILY}, sans-serif`;
+        ctx.fillText("EMBLEM", textX, 72);
+
         ctx.fillStyle = "#ffffff";
-        ctx.font = `bold 22px ${TITLE_FONT_FAMILY}, sans-serif`;
-        ctx.fillText((opts.name || "Badge").slice(0, 28), cx, H - 78);
+        ctx.font = `bold 28px ${TITLE_FONT_FAMILY}, sans-serif`;
+        ctx.fillText((opts.name || "Badge").slice(0, 26), textX, 110);
 
         ctx.fillStyle = hexToRgba(tier.accent, 0.95);
-        ctx.font = "bold 16px sans-serif";
-        ctx.fillText(`Lv. ${level} · ${tier.label}`, cx, H - 52);
+        ctx.font = "bold 20px sans-serif";
+        ctx.fillText(`Lv. ${level}  ·  ${tier.label}`, textX, 148);
 
-        if (opts.subtitle) {
-          ctx.fillStyle = "rgba(255,255,255,0.65)";
-          ctx.font = "13px sans-serif";
-          ctx.fillText(opts.subtitle.slice(0, 42), cx, H - 28);
-        } else {
-          ctx.fillStyle = "rgba(255,255,255,0.45)";
-          ctx.font = "12px sans-serif";
-          ctx.fillText("Emblem evolves as you participate", cx, H - 28);
-        }
+        const sub = opts.subtitle?.slice(0, 48)
+          || "Evolves as you participate — no roles, no cash";
+        ctx.fillStyle = "rgba(255,255,255,0.6)";
+        ctx.font = "14px sans-serif";
+        ctx.fillText(sub, textX, 180);
+
+        // Progress ticks under text
+        const barW = 280;
+        const filled = Math.round((level / BADGE_LEVEL_MAX) * barW);
+        ctx.fillStyle = "rgba(255,255,255,0.12)";
+        ctx.fillRect(textX, 208, barW, 8);
+        const barGrad = ctx.createLinearGradient(textX, 0, textX + barW, 0);
+        barGrad.addColorStop(0, hexToRgba(tier.accent, 0.95));
+        barGrad.addColorStop(1, hexToRgba(tier.glow, 0.95));
+        ctx.fillStyle = barGrad;
+        ctx.fillRect(textX, 208, Math.max(4, filled), 8);
       },
     });
     return result?.buffer ?? null;

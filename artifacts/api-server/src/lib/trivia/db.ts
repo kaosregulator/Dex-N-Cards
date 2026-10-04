@@ -129,6 +129,14 @@ export async function listCorrectGuessers(roundId: number): Promise<TriviaGuess[
     .orderBy(asc(triviaGuessesTable.id));
 }
 
+/** Unique participants who have locked in a guess this round. */
+export async function countUniqueGuessers(roundId: number): Promise<number> {
+  const rows = await db.select({ userId: triviaGuessesTable.userId })
+    .from(triviaGuessesTable)
+    .where(eq(triviaGuessesTable.roundId, roundId));
+  return new Set(rows.map(r => r.userId)).size;
+}
+
 export async function listFirstGuesser(roundId: number): Promise<TriviaGuess | null> {
   const rows = await db.select().from(triviaGuessesTable)
     .where(eq(triviaGuessesTable.roundId, roundId))

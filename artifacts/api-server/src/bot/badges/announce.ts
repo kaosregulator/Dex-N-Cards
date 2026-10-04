@@ -45,7 +45,8 @@ export async function buildBadgeShowcase(opts: {
           ? "`██████████` Apex"
           : `\`${bar}\` ${result.badge.xp}/${need}`,
       ].join("\n"),
-    );
+    )
+    .setFooter({ text: "This emblem notice cleans up shortly" });
 
   const files: AttachmentBuilder[] = [];
   if (showGif) {

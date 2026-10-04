@@ -20,6 +20,7 @@ import {
   type NormalizedQuestion,
 } from "../../lib/trivia/client.js";
 import {
+  countUniqueGuessers,
   createTriviaRound,
   findLiveRoundInChannel,
   getTriviaRound,
@@ -29,6 +30,7 @@ import {
   updateTriviaRound,
 } from "../../lib/trivia/db.js";
 import { renderTriviaWinnerGif } from "./winner-canvas.js";
+import { renderTriviaHintCard, TRIVIA_HINT_FILE } from "./hint-canvas.js";
 import { memberIsTriviaStaff } from "./access.js";
 import { awardTriviaBadges } from "../badges/engine.js";
 import { logger } from "../../lib/logger.js";
@@ -36,6 +38,17 @@ import { logger } from "../../lib/logger.js";
 const TRIVIA_COLOR = 0x5865f2;
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const CLEANUP_MS = 60_000;
+
+/** Shown on every posted round so channel members know guesses get cleaned up. */
+export const TRIVIA_CHANNEL_CLEANUP_NOTICE =
+  "⏱️ **Heads up:** while a round is live, **guess messages in this channel are deleted shortly** so the board stays clean. Use the buttons / **Guess** popup if you want a private reply.";
+
+function shouldShowAnswerHint(q: NormalizedQuestion, guessMode: string): boolean {
+  if (!q.correctAnswer?.trim()) return false;
+  // Multiple-choice buttons already show the options — skip answer spoiler-hints.
+  if (q.choices.length > 0 && (guessMode === "buttons")) return false;
+  return true;
+}
 
 const CHOICE_EMOJIS = ["🅰️", "🅱️", "🇨", "🇩", "🇪", "🇫"];
 
@@ -71,7 +84,14 @@ export function payloadToQuestion(p: Record<string, unknown>): NormalizedQuestio
 
 export function buildQuestionEmbed(
   q: NormalizedQuestion,
-  opts: { status: "ready" | "live" | "ended"; hostId: string; mode: string; revealAnswer?: boolean },
+  opts: {
+    status: "ready" | "live" | "ended";
+    hostId: string;
+    mode: string;
+    revealAnswer?: boolean;
+    showCleanupNotice?: boolean;
+    hintAttached?: boolean;
+  },
 ): EmbedBuilder {
   const statusLine =
     opts.status === "ready" ? "🟡 Waiting for host to **Start**"
@@ -92,12 +112,22 @@ export function buildQuestionEmbed(
         q.type === "picture" || q.type === "open"
           ? "_Type your guess in chat, or press **Guess**._"
           : q.choices.map((c, i) => `${CHOICE_EMOJIS[i] ?? "▪️"} **${c}**`).join("\n"),
-      ].join("\n"),
+        opts.showCleanupNotice ? `\n${TRIVIA_CHANNEL_CLEANUP_NOTICE}` : null,
+        opts.hintAttached
+          ? "\n🧩 **Answer hint** unlocks letters as people guess (image — not copyable text)."
+          : null,
+      ].filter(Boolean).join("\n"),
     )
     .setFooter({ text: "Safe community trivia · no NSFW" });
 
+  // Prefer question art as the large image; hint uses thumbnail when both exist.
   if (q.imageUrl) embed.setImage(q.imageUrl);
+  if (opts.hintAttached) {
+    if (q.imageUrl) embed.setThumbnail(`attachment://${TRIVIA_HINT_FILE}`);
+    else embed.setImage(`attachment://${TRIVIA_HINT_FILE}`);
+  }
   if (opts.revealAnswer && q.correctAnswer) {
+    // Spoiler only after the round ends — live hints use the image card instead.
     embed.addFields({ name: "Answer", value: `||${q.correctAnswer}||` });
   }
   return embed;
@@ -177,16 +207,32 @@ export async function postRoundMessage(opts: {
     hostId: opts.hostId,
   });
 
+  const showHint = shouldShowAnswerHint(opts.question, opts.guessMode);
+  const hintFile = showHint
+    ? await renderTriviaHintCard({ answer: opts.question.correctAnswer, uniqueGuessCount: 0, mode: opts.mode })
+    : null;
+
   const msg = await opts.channel.send({
-    embeds: [buildQuestionEmbed(opts.question, { status: "ready", hostId: opts.hostId, mode: opts.mode })],
+    content: TRIVIA_CHANNEL_CLEANUP_NOTICE,
+    embeds: [buildQuestionEmbed(opts.question, {
+      status: "ready",
+      hostId: opts.hostId,
+      mode: opts.mode,
+      showCleanupNotice: true,
+      hintAttached: Boolean(hintFile),
+    })],
     components: buildRoundComponents(round.id, opts.question, "ready", opts.guessMode),
+    files: hintFile ? [hintFile] : [],
   });
 
   await updateTriviaRound(round.id, { messageId: msg.id });
   return { roundId: round.id, message: msg };
 }
 
-async function refreshRoundMessage(interactionGuild: NonNullable<ButtonInteraction["guild"]>, roundId: number): Promise<void> {
+async function refreshRoundMessage(
+  interactionGuild: NonNullable<ButtonInteraction["guild"]>,
+  roundId: number,
+): Promise<void> {
   const round = await getTriviaRound(roundId);
   if (!round?.messageId) return;
   const q = payloadToQuestion(round.question);
@@ -195,15 +241,35 @@ async function refreshRoundMessage(interactionGuild: NonNullable<ButtonInteracti
   if (!ch || !ch.isTextBased() || !("messages" in ch)) return;
   const msg = await ch.messages.fetch(round.messageId).catch(() => null);
   if (!msg) return;
+
+  const showHint = status !== "ended" && shouldShowAnswerHint(q, round.guessMode);
+  const guessCount = showHint ? await countUniqueGuessers(roundId) : 0;
+  const hintFile = showHint
+    ? await renderTriviaHintCard({ answer: q.correctAnswer, uniqueGuessCount: guessCount, mode: round.mode })
+    : null;
+
   await msg.edit({
+    content: status === "ended" ? null : TRIVIA_CHANNEL_CLEANUP_NOTICE,
     embeds: [buildQuestionEmbed(q, {
       status,
       hostId: round.hostId,
       mode: round.mode,
       revealAnswer: status === "ended",
+      showCleanupNotice: status !== "ended",
+      hintAttached: Boolean(hintFile),
     })],
     components: buildRoundComponents(round.id, q, status, round.guessMode),
+    files: hintFile ? [hintFile] : [],
   }).catch(() => {});
+}
+
+/** After a new unique guess, nudge the letter-hint image forward. */
+async function refreshHintAfterGuess(
+  guild: NonNullable<ButtonInteraction["guild"]> | Message["guild"],
+  roundId: number,
+): Promise<void> {
+  if (!guild) return;
+  await refreshRoundMessage(guild, roundId);
 }
 
 export async function handleTriviaStart(interaction: ButtonInteraction, roundId: number): Promise<void> {
@@ -455,6 +521,14 @@ async function submitGuess(opts: {
       : "📥 Answer received — hang tight until the host ends the round!",
     ...EPHEMERAL,
   });
+
+  // Progressive letter hint (image) advances for everyone after each new guess.
+  const guild = opts.interaction.guild;
+  if (guild) {
+    void refreshHintAfterGuess(guild, opts.roundId).catch(err =>
+      logger.debug({ err, roundId: opts.roundId }, "trivia hint refresh failed"),
+    );
+  }
 }
 
 /** Channel typing guesses while a live round allows type/both/picture/open. */
@@ -479,11 +553,15 @@ export async function handleTriviaChannelMessage(message: Message): Promise<bool
   if (!firstForUser) return true;
 
   // Quiet react — no spoilers
-  await message.react(correct || conversational ? "📝" : "📝").catch(() => {});
-  // Delete guess to keep channel clean (optional soft cleanup)
+  await message.react("📝").catch(() => {});
+  // Delete guess to keep channel clean (announced on the round message).
   if (message.deletable) {
     setTimeout(() => { void message.delete().catch(() => {}); }, 2500);
   }
+  // Advance the shared letter-hint image after each unique guess.
+  void refreshHintAfterGuess(message.guild, round.id).catch(err =>
+    logger.debug({ err, roundId: round.id }, "trivia hint refresh failed"),
+  );
   return true;
 }
 
