@@ -5,6 +5,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // Configurable community badges (replaces trivia Discord role awards).
 // Rules + progress live per guild; earned badges live per member.
+// Each earned badge has a permanent level (1–100) that evolves with XP.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type BadgeTrigger =
@@ -32,6 +33,10 @@ export type BadgeRule = {
 export type BadgeEarned = {
   id: string;
   timestamp: number;
+  /** Permanent badge level, 1–100 */
+  level: number;
+  /** XP progress within the current level (toward level+1) */
+  xp: number;
 };
 
 export const badgeSettingsTable = pgTable("badge_settings", {
@@ -57,7 +62,7 @@ export const memberBadgesTable = pgTable("member_badges", {
   guildId: text("guild_id").notNull(),
   userId: text("user_id").notNull(),
   earned: jsonb("earned").$type<BadgeEarned[]>().notNull().default([]),
-  progress: jsonb("progress").$type<Record<string, number>>().notNull().default({}),
+  progress: jsonb("progress").$type<Record<string, number | string>>().notNull().default({}),
   lastActiveDay: text("last_active_day"),
   streak: integer("streak").notNull().default(0),
   tradeCooldownUntil: timestamp("trade_cooldown_until"),

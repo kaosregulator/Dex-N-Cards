@@ -31,8 +31,9 @@ describe("addEarnedBadge", () => {
       { id: "b", name: "B", emoji: "2", description: "b", trigger: "manual", threshold: 0 },
       { id: "all", name: "All", emoji: "3", description: "all", trigger: "collection", threshold: 0 },
     ]);
-    const earned: { id: string; timestamp: number }[] = [];
+    const earned: import("@workspace/db").BadgeEarned[] = [];
     expect(addEarnedBadge(earned, "a", rules)).toEqual(["a"]);
+    expect(earned[0]?.level).toBe(1);
     expect(addEarnedBadge(earned, "a", rules)).toEqual([]);
     const second = addEarnedBadge(earned, "b", rules);
     expect(second).toEqual(["b", "all"]);

@@ -154,9 +154,10 @@ export default function BadgesAdmin() {
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Badges hub</h1>
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Configure the badge catalogue used in Discord. Trivia winners earn badges instead of
-          temporary roles. Staff can also <code className="text-xs">/badge give</code> and members
-          view collections with <code className="text-xs">/badges</code>.
+          Configure the emblem catalogue used in Discord. Badges are permanent and evolve from
+          Lv.1–100 (Kindling → Apex) with animated emblems — no roles, no cash economy. Staff use{" "}
+          <code className="text-xs">/badge give</code>; members view with{" "}
+          <code className="text-xs">/badges</code> or <code className="text-xs">/badge show</code>.
         </p>
       </header>
 

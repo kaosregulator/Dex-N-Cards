@@ -81,7 +81,7 @@ export async function saveMemberBadges(
   userId: string,
   patch: Partial<{
     earned: BadgeEarned[];
-    progress: Record<string, number>;
+    progress: Record<string, number | string>;
     lastActiveDay: string | null;
     streak: number;
     tradeCooldownUntil: Date | null;

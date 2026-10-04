@@ -1,6 +1,7 @@
 /** Configurable badge catalogue — defaults + validation (MEE6-style rules). */
 
 import type { BadgeRule, BadgeTrigger, BadgeEarned } from "@workspace/db";
+import { BADGE_LEVEL_MIN, normalizeEarned } from "./levels.js";
 
 export type { BadgeRule, BadgeTrigger, BadgeEarned };
 
@@ -164,14 +165,24 @@ export function addEarnedBadge(
   if (earned.some((item) => item.id === badgeId)) return [];
   if (!rules.some((rule) => rule.id === badgeId)) return [];
   const awarded = [badgeId];
-  earned.push({ id: badgeId, timestamp: Date.now() });
+  earned.push(normalizeEarned({
+    id: badgeId,
+    timestamp: Date.now(),
+    level: BADGE_LEVEL_MIN,
+    xp: 0,
+  }));
 
   const collections = rules.filter((rule) => rule.trigger === "collection");
   const required = rules.filter((rule) => rule.trigger !== "collection");
   if (required.length > 0 && required.every((rule) => earned.some((item) => item.id === rule.id))) {
     for (const collection of collections) {
       if (!earned.some((item) => item.id === collection.id)) {
-        earned.push({ id: collection.id, timestamp: Date.now() });
+        earned.push(normalizeEarned({
+          id: collection.id,
+          timestamp: Date.now(),
+          level: BADGE_LEVEL_MIN,
+          xp: 0,
+        }));
         awarded.push(collection.id);
       }
     }

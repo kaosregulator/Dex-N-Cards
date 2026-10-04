@@ -292,7 +292,17 @@ async function finishRound(guild: NonNullable<ButtonInteraction["guild"]>, round
     mode: round.mode,
     alsoBrainiac: winners.length === 1,
   });
-  const badgeLabel = badgeResult.labels || null;
+  const primaryBadge = [...badgeResult.results].sort((a, b) => {
+    const score = (r: typeof a) =>
+      (r.tierChanged ? 1000 : 0) + (r.unlocked ? 500 : 0) + r.badge.level;
+    return score(b) - score(a);
+  })[0];
+  const badgeRule = primaryBadge
+    ? badgeResult.rules.find(r => r.id === primaryBadge.badge.id)
+    : null;
+  const badgeLabel = primaryBadge && badgeRule
+    ? `${badgeRule.emoji} ${badgeRule.name} · Lv.${primaryBadge.badge.level}`
+    : (badgeResult.labels || null);
 
   const gif = await renderTriviaWinnerGif({
     displayName: member?.displayName ?? primaryId,
@@ -312,7 +322,7 @@ async function finishRound(guild: NonNullable<ButtonInteraction["guild"]>, round
         `**Winner:** <@${primaryId}>`,
         others.length ? `Also correct: ${others.map(id => `<@${id}>`).join(", ")}` : null,
         q.correctAnswer ? `Answer: **${q.correctAnswer}**` : null,
-        badgeLabel ? `Badge: ${badgeLabel}` : null,
+        badgeLabel ? `Emblem: **${badgeLabel}**` : null,
         "_Winner card cleans up in about a minute._",
       ].filter(Boolean).join("\n"),
     );
@@ -320,6 +330,28 @@ async function finishRound(guild: NonNullable<ButtonInteraction["guild"]>, round
 
   const winMsg = await textCh.send({ embeds: [embed], files });
   await updateTriviaRound(roundId, { winnerMessageId: winMsg.id });
+
+  // Follow-up: animated evolving emblem (small, mesmerizing).
+  if (primaryBadge && badgeRule) {
+    try {
+      const { buildBadgeShowcase } = await import("../badges/announce.js");
+      const showcase = await buildBadgeShowcase({
+        result: primaryBadge,
+        rule: badgeRule,
+        mention: `<@${primaryId}>`,
+        forceEmblem: true,
+      });
+      const emblemMsg = await textCh.send({
+        content: showcase.content,
+        embeds: showcase.embeds,
+        files: showcase.files,
+        allowedMentions: { users: [primaryId] },
+      });
+      setTimeout(() => { void emblemMsg.delete().catch(() => {}); }, 55_000);
+    } catch (err) {
+      logger.debug({ err }, "trivia badge emblem follow-up failed");
+    }
+  }
 }
 
 export async function handleTriviaPick(interaction: ButtonInteraction, roundId: number, choiceIndex: number): Promise<void> {

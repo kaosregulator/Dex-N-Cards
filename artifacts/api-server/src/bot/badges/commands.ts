@@ -1,4 +1,4 @@
-/** Discord handlers for /badges and /badge give|take|catalogue. */
+/** Discord handlers for /badges and /badge give|take|catalogue|show. */
 
 import type {
   AutocompleteInteraction,
@@ -11,7 +11,15 @@ import {
   getOrCreateMemberBadges,
   rulesForGuild,
 } from "../../lib/badges/db.js";
-import { awardManualBadge, takeBadge, formatBadgeNames } from "./engine.js";
+import {
+  normalizeEarnedList,
+  progressBar,
+  tierForLevel,
+  xpToNextLevel,
+  BADGE_LEVEL_MAX,
+} from "../../lib/badges/levels.js";
+import { awardManualBadge, takeBadge } from "./engine.js";
+import { buildBadgeShowcase } from "./announce.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const COLOR = 0x5865f2;
@@ -52,18 +60,21 @@ export async function handleBadgesCommand(
   const settings = await getOrCreateBadgeSettings(interaction.guildId);
   const rules = rulesForGuild(settings);
   const store = await getOrCreateMemberBadges(interaction.guildId, target.id);
-  const earned = [...(store.earned ?? [])].sort((a, b) => a.timestamp - b.timestamp);
+  const earned = normalizeEarnedList(store.earned).sort((a, b) => b.level - a.level || a.timestamp - b.timestamp);
 
   const fields = earned.map(item => {
     const rule = rules.find(r => r.id === item.id);
     if (!rule) return null;
+    const tier = tierForLevel(item.level);
+    const need = item.level >= BADGE_LEVEL_MAX ? 0 : xpToNextLevel(item.level);
+    const bar = progressBar(item.level, item.xp, 8);
     return {
       name: `${rule.emoji} ${rule.name}`,
-      value: `${rule.description}\n*Earned: ${new Date(item.timestamp).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })}*`,
+      value: [
+        `Lv. **${item.level}** · ${tier.label}`,
+        item.level >= BADGE_LEVEL_MAX ? "`████████` Apex" : `\`${bar}\` ${item.xp}/${need}`,
+        `_${rule.description}_`,
+      ].join("\n"),
       inline: true,
     };
   }).filter((f): f is NonNullable<typeof f> => f !== null);
@@ -72,11 +83,11 @@ export async function handleBadgesCommand(
     embeds: [
       new EmbedBuilder()
         .setColor(COLOR)
-        .setTitle(`${member.displayName}'s Badges`)
+        .setTitle(`${member.displayName}'s Emblems`)
         .setDescription(
           fields.length
-            ? `**${fields.length}** badge${fields.length === 1 ? "" : "s"}`
-            : "No badges yet!",
+            ? `**${fields.length}** emblem${fields.length === 1 ? "" : "s"} · levels evolve as you participate`
+            : "No emblems yet — win trivia, get staff recognition, or hit activity goals.",
         )
         .addFields(fields.slice(0, 25)),
     ],
@@ -108,14 +119,59 @@ export async function handleBadgeCommand(
       embeds: [
         new EmbedBuilder()
           .setColor(COLOR)
-          .setTitle("🏅 Badge catalogue")
+          .setTitle("🏅 Emblem catalogue")
           .setDescription(
             settings.enabled
               ? (lines.length ? lines.join("\n\n") : "_No rules configured._")
               : "_Badge system is disabled in dashboard settings._",
           )
-          .setFooter({ text: "Customize rules in the dashboard Badges hub." }),
+          .setFooter({ text: "Emblems level 1–100. Customize in the dashboard Badges hub." }),
       ],
+    });
+    return;
+  }
+
+  if (sub === "show") {
+    await interaction.deferReply();
+    const badgeId = interaction.options.getString("badge_id", true).toLowerCase().trim();
+    const target = interaction.options.getUser("member") ?? interaction.user;
+    const settings = await getOrCreateBadgeSettings(interaction.guildId);
+    const rules = rulesForGuild(settings);
+    const rule = rules.find(r => r.id === badgeId);
+    if (!rule) {
+      await interaction.editReply({ content: "That badge ID is not in the catalogue." });
+      return;
+    }
+    const store = await getOrCreateMemberBadges(interaction.guildId, target.id);
+    const earned = normalizeEarnedList(store.earned).find(e => e.id === badgeId);
+    if (!earned) {
+      await interaction.editReply({
+        content: `<@${target.id}> has not awakened **${rule.name}** yet.`,
+        allowedMentions: { users: [] },
+      });
+      return;
+    }
+    const showcase = await buildBadgeShowcase({
+      result: {
+        badge: earned,
+        leveled: false,
+        levelsGained: 0,
+        previousLevel: earned.level,
+        tierChanged: false,
+        previousTier: tierForLevel(earned.level),
+        tier: tierForLevel(earned.level),
+        unlocked: false,
+        xpGranted: 0,
+        capped: false,
+      },
+      rule,
+      forceEmblem: true,
+    });
+    await interaction.editReply({
+      content: `<@${target.id}>'s **${rule.name}** emblem`,
+      embeds: showcase.embeds,
+      files: showcase.files,
+      allowedMentions: { users: [] },
     });
     return;
   }
@@ -143,8 +199,18 @@ export async function handleBadgeCommand(
       await interaction.editReply({ content: result.message });
       return;
     }
+    const rule = result.rules.find(r => r.id === badgeId)!;
+    const showcase = await buildBadgeShowcase({
+      result: result.result,
+      rule,
+      mention: `<@${target.id}>`,
+      forceEmblem: true,
+    });
     await interaction.editReply({
-      content: `🎉 <@${target.id}> earned ${formatBadgeNames(result.awarded, result.rules)}!`,
+      content: showcase.content,
+      embeds: showcase.embeds,
+      files: showcase.files,
+      allowedMentions: { users: [target.id] },
     });
     return;
   }
@@ -161,7 +227,7 @@ export async function handleBadgeCommand(
       return;
     }
     await interaction.editReply({
-      content: `Removed the ${result.rule.emoji} **${result.rule.name}** badge from <@${target.id}>.`,
+      content: `Removed the ${result.rule.emoji} **${result.rule.name}** emblem from <@${target.id}>.`,
     });
   }
 }

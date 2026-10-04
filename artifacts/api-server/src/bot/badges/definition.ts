@@ -43,5 +43,16 @@ export function buildBadgeCommandJson() {
     .addSubcommand(sc => sc
       .setName("catalogue")
       .setDescription("List configured badge rules for this server"))
+    .addSubcommand(sc => sc
+      .setName("show")
+      .setDescription("Show the animated emblem for one badge")
+      .addStringOption(o => o
+        .setName("badge_id")
+        .setDescription("Stable badge ID from the catalogue")
+        .setRequired(true)
+        .setAutocomplete(true))
+      .addUserOption(o => o
+        .setName("member")
+        .setDescription("Whose emblem to show (default: you)")))
     .toJSON();
 }

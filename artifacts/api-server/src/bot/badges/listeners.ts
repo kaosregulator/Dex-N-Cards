@@ -1,12 +1,12 @@
-/** Message / reaction hooks that advance auto-earned badges. */
+/** Message / reaction hooks that advance auto-earned badges + XP. */
 
 import type { Message, MessageReaction, PartialMessageReaction, PartialUser, User } from "discord.js";
 import {
   configuredChannel,
-  formatBadgeNames,
   processCountedActivity,
   processReactionProgress,
   processStreakActivity,
+  shouldShowEmblem,
 } from "./engine.js";
 import {
   getOrCreateBadgeSettings,
@@ -14,6 +14,7 @@ import {
   rulesForGuild,
   saveMemberBadges,
 } from "../../lib/badges/db.js";
+import { buildMultiBadgePayload } from "./announce.js";
 import { logger } from "../../lib/logger.js";
 
 export async function handleBadgeMessage(msg: Message): Promise<void> {
@@ -22,25 +23,23 @@ export async function handleBadgeMessage(msg: Message): Promise<void> {
   const settings = await getOrCreateBadgeSettings(guildId);
   if (!settings.enabled) return;
   const rules = rulesForGuild(settings);
+  const mention = `<@${msg.author.id}>`;
 
-  // Message-count badges (channel-scoped).
   const messageRules = rules.filter(r =>
     r.trigger === "messages"
     && configuredChannel(r, settings.trackChannelId, settings.tradeChannelId) === msg.channelId,
   );
   if (messageRules.length) {
-    const newly = await processCountedActivity({
+    const results = await processCountedActivity({
       guildId,
       userId: msg.author.id,
       rulesToCount: messageRules,
       increment: 1,
+      trigger: "messages",
     });
-    if (newly.length) {
-      await announce(msg, newly, rules);
-    }
+    await maybeAnnounce(msg, results, rules, mention);
   }
 
-  // Attachment badges (channel-scoped, with cooldown + per-post cap).
   if (msg.attachments.size > 0) {
     const attachRules = rules.filter(r =>
       r.trigger === "attachments"
@@ -58,30 +57,32 @@ export async function handleBadgeMessage(msg: Message): Promise<void> {
             tradeCooldownUntil: new Date(now + cooldownSeconds * 1000),
           });
         }
-        const newly = await processCountedActivity({
+        const results = await processCountedActivity({
           guildId,
           userId: msg.author.id,
           rulesToCount: attachRules,
           increment: counted,
+          trigger: "attachments",
         });
-        if (newly.length) {
-          await announce(msg, newly, rules, counted);
-        }
+        await maybeAnnounce(msg, results, rules, mention);
       }
     }
   }
 
-  // Streak badges (any channel in the guild).
-  const streakAwarded = await processStreakActivity({
+  const streakResults = await processStreakActivity({
     guildId,
     userId: msg.author.id,
   });
-  if (streakAwarded.length) {
-    const member = await getOrCreateMemberBadges(guildId, msg.author.id);
-    await msg.reply({
-      content: `🎉 You earned ${formatBadgeNames(streakAwarded, rules)}! (${member.streak} active days in a row)`,
-      allowedMentions: { users: [msg.author.id] },
-    }).catch(() => {});
+  if (streakResults.some(r => shouldShowEmblem(r) || r.leveled || r.unlocked)) {
+    const payload = await buildMultiBadgePayload({
+      results: streakResults,
+      rules,
+      mention,
+    });
+    if (payload && msg.channel.isTextBased() && "send" in msg.channel) {
+      const sent = await msg.channel.send(payload).catch(() => null);
+      if (sent) setTimeout(() => { void sent.delete().catch(() => {}); }, 55_000);
+    }
   }
 }
 
@@ -101,37 +102,38 @@ export async function handleBadgeReaction(
   if (!msg.guild || !msg.author || msg.author.bot) return;
   if (user.id === msg.author.id) return;
 
-  const newly = await processReactionProgress({
+  const results = await processReactionProgress({
     guildId: msg.guild.id,
     authorId: msg.author.id,
     messageId: msg.id,
     channelId: msg.channelId,
   });
-  if (!newly.length) return;
+  if (!results.length) return;
   const settings = await getOrCreateBadgeSettings(msg.guild.id);
   const rules = rulesForGuild(settings);
+  const payload = await buildMultiBadgePayload({
+    results,
+    rules,
+    mention: `<@${msg.author.id}>`,
+  });
+  if (!payload) return;
   const channel = msg.channel;
   if (channel.isTextBased() && "send" in channel) {
-    await channel.send({
-      content: `🎉 <@${msg.author.id}> earned ${formatBadgeNames(newly, rules)}!`,
-    }).catch(() => {});
+    await channel.send(payload).catch(() => {});
   }
 }
 
-async function announce(
+async function maybeAnnounce(
   msg: Message,
-  newly: string[],
+  results: Awaited<ReturnType<typeof processCountedActivity>>,
   rules: ReturnType<typeof rulesForGuild>,
-  increment?: number,
+  mention: string,
 ): Promise<void> {
-  const suffix = increment != null ? ` (${increment} qualifying activity counted)` : "";
-  if (!msg.channel.isTextBased() || !("send" in msg.channel)) return;
-  const sent = await msg.channel.send({
-    content: `🎉 <@${msg.author.id}> earned ${formatBadgeNames(newly, rules)}!${suffix}`,
-  }).catch(() => null);
+  if (!results.some(r => shouldShowEmblem(r) || r.unlocked || r.leveled)) return;
+  const payload = await buildMultiBadgePayload({ results, rules, mention });
+  if (!payload || !msg.channel.isTextBased() || !("send" in msg.channel)) return;
+  const sent = await msg.channel.send(payload).catch(() => null);
   if (sent) {
-    setTimeout(() => {
-      void sent.delete().catch(() => {});
-    }, 40_000);
+    setTimeout(() => { void sent.delete().catch(() => {}); }, 55_000);
   }
 }
