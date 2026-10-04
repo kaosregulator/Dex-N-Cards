@@ -113,7 +113,8 @@ export async function renderTriviaWinnerGif(opts: {
         if (opts.roleLabel) {
           ctx.fillStyle = hexToRgba(0x57f287, 0.95);
           ctx.font = "bold 15px sans-serif";
-          ctx.fillText(`Role awarded · ${opts.roleLabel}`, W / 2, py + 262);
+          const plain = opts.roleLabel.replace(/\*\*/g, "");
+          ctx.fillText(`Badge earned · ${plain}`, W / 2, py + 262);
         }
       },
     });
