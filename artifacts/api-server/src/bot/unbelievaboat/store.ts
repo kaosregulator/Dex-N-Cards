@@ -23,6 +23,7 @@ import {
   CashError, spendFunds, fmtCash, requireEconomy, formatSpendNote,
 } from "./cash.js";
 import { replyThenPostAsUnbelievaBoat } from "./webhook.js";
+import { resolveSelectEmoji } from "./store-icons.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 
@@ -119,7 +120,9 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
     }
 
     const lines = rows.slice(0, 12).map(r =>
-      `${r.emoji} **${r.name}** — **${fmtCash(r.price)}** cash\n_${r.description.slice(0, 120)}_`,
+      `${r.emoji} **${r.name}** — **${fmtCash(r.price)}** cash` +
+      (r.imageUrl ? " · 🖼️" : "") +
+      `\n_${r.description.slice(0, 120)}_`,
     ).join("\n\n");
 
     const embed = new EmbedBuilder()
@@ -142,12 +145,15 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
     const menu = new StringSelectMenuBuilder()
       .setCustomId("unbstore:buy")
       .setPlaceholder("Choose a perk to buy…")
-      .addOptions(rows.slice(0, 25).map(r => ({
-        label: `${r.name}`.slice(0, 100),
-        description: `${r.price} cash · ${r.description}`.slice(0, 100),
-        value: r.key,
-        emoji: r.emoji.match(/^\p{Extended_Pictographic}/u) ? r.emoji : undefined,
-      })));
+      .addOptions(rows.slice(0, 25).map(r => {
+        const emoji = resolveSelectEmoji(r.emoji);
+        return {
+          label: `${r.name}`.slice(0, 100),
+          description: `${r.price} cash · ${r.description}`.slice(0, 100),
+          value: r.key,
+          ...(emoji ? { emoji } : {}),
+        };
+      }));
 
     // Stash row payload on a short-lived map keyed by interaction user
     stashStore(interaction.guildId, interaction.user.id, rows);

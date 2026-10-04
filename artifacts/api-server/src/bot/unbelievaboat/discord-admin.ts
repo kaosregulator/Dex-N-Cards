@@ -35,6 +35,9 @@ import {
   listUbAudit,
   writeUbAudit,
   createRoleLink,
+  deleteRoleLink,
+  deleteCatalogItem,
+  updateRoleLink,
 } from "../../lib/unbelievaboat/db.js";
 import {
   getOrCreatePetSettings,
@@ -43,6 +46,13 @@ import {
   adminDeletePet,
   adminCrackEgg,
 } from "../pets/engine.js";
+import {
+  DEFAULT_STORE_ICONS,
+  isHttpImageUrl,
+  normalizeStoreIconInput,
+  presetById,
+  resolveSelectEmoji,
+} from "./store-icons.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const UB_ICON =
@@ -220,6 +230,173 @@ async function buildOverviewEmbed(guildId: string): Promise<EmbedBuilder> {
     .setFooter({ text: "Admin only · UnbelievaBoat cash powers pet shop & hatch" });
 }
 
+function storeNavRows() {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("ubadmin:overview").setLabel("← Hub").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ubadmin:add_perk").setLabel("Add perk").setEmoji("✨").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("ubadmin:store_refresh").setLabel("Refresh").setEmoji("🔄").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function buildPerkIconPicker(linkId: number, perkName: string, currentEmoji: string) {
+  const options = [
+    ...DEFAULT_STORE_ICONS.map(p => ({
+      label: p.label,
+      description: "Default Twemoji icon",
+      value: p.id,
+      emoji: p.emoji,
+    })),
+    {
+      label: "Keep emoji only (no image)",
+      description: currentEmoji.slice(0, 50) || "Use the perk emoji in menus",
+      value: "emoji_only",
+      emoji: "✨",
+    },
+    {
+      label: "Custom image / GIF URL…",
+      description: "Paste an https image link",
+      value: "custom_url",
+      emoji: "🖼️",
+    },
+  ];
+  const embed = new EmbedBuilder()
+    .setColor(0xe91e8c)
+    .setAuthor({ name: "Store icon", iconURL: UB_ICON })
+    .setTitle(`${currentEmoji || "✨"} ${perkName}`)
+    .setDescription(
+      [
+        "Pick a **default icon**, keep **emoji-only**, or paste a **custom image URL**.",
+        "Unicode and custom server emoji (`<:name:id>` / `<a:name:id>`) both show in `/casino` store.",
+        "Custom emoji auto-uses Discord’s CDN image when you paste it on create.",
+      ].join("\n"),
+    )
+    .setThumbnail(DEFAULT_STORE_ICONS[0]!.imageUrl);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`ubadmin:perk_icon:${linkId}`)
+    .setPlaceholder("Choose a store icon…")
+    .addOptions(options);
+  return {
+    embeds: [embed],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+  };
+}
+
+async function renderStoreAdmin(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  guildId: string,
+  flash?: string,
+): Promise<void> {
+  const [catalog, roles, audit] = await Promise.all([
+    listCatalog(guildId),
+    listRoleLinks(guildId),
+    listUbAudit(guildId, 5),
+  ]);
+
+  const roleLines = roles.slice(0, 15).map(r => {
+    const m = (r.meta ?? {}) as Record<string, unknown>;
+    const img = typeof m.imageUrl === "string" ? m.imageUrl : typeof m.iconGif === "string" ? m.iconGif : null;
+    return `${r.enabled ? "✅" : "⏸"} ${r.emoji || "✨"} **${r.name}** — ${fmt(r.price)} cash` +
+      (r.incomeAmount > 0 ? ` · income ${fmt(r.incomeAmount)}` : "") +
+      (img ? " · 🖼️" : "") +
+      (r.discordRoleId ? ` · <@&${r.discordRoleId}>` : "");
+  }).join("\n") || "_No role perks yet — use **Add perk**._";
+
+  const catLines = catalog.slice(0, 10).map(c =>
+    `${c.listed ? "✅" : "⏸"} ${c.emoji || "🛒"} **${c.name}** — ${fmt(c.price)} cash` +
+    (c.forPets ? " · pets" : "") +
+    (c.grantRoleId ? ` · <@&${c.grantRoleId}>` : ""),
+  ).join("\n") || "_No catalog drafts._";
+
+  const auditLines = audit.map(a =>
+    `• \`${a.action}\` · <@${a.actorId.replace(/^dash:/, "")}> · <t:${Math.floor(new Date(a.createdAt).getTime() / 1000)}:R>`,
+  ).join("\n") || "_No audit yet._";
+
+  const thumb = roles
+    .map(r => {
+      const m = (r.meta as Record<string, unknown> | null) ?? {};
+      return typeof m.imageUrl === "string" ? m.imageUrl : typeof m.iconGif === "string" ? m.iconGif : null;
+    })
+    .find((u): u is string => typeof u === "string" && u.length > 8);
+
+  const embed = new EmbedBuilder()
+    .setColor(0xe91e8c)
+    .setAuthor({ name: "UnbelievaBoat store", iconURL: UB_ICON })
+    .setTitle("Current perk store")
+    .setDescription(
+      [
+        flash ? `${flash}\n` : null,
+        "Players browse with **`/casino` → Store**.",
+        "🖼️ = image/GIF icon set · custom emoji (`<:name:id>`) render in menus and embeds.",
+      ].filter(Boolean).join("\n"),
+    )
+    .addFields(
+      { name: `Role perks (${roles.length})`, value: roleLines.slice(0, 1000) || "_None_" },
+      { name: `Catalog (${catalog.length})`, value: catLines.slice(0, 1000) || "_None_" },
+      { name: "Recent audit", value: auditLines.slice(0, 1000) || "_None_" },
+    )
+    .setFooter({ text: "Remove · change icon · add perk below" });
+  if (thumb) embed.setThumbnail(thumb);
+
+  const removeChoices = [
+    ...roles.slice(0, 20).map(r => {
+      const emoji = resolveSelectEmoji(r.emoji || "✨");
+      return {
+        label: `Remove · ${r.name}`.slice(0, 100),
+        description: `${r.price} cash · role perk`.slice(0, 100),
+        value: `role:${r.id}`,
+        ...(emoji ? { emoji } : {}),
+      };
+    }),
+    ...catalog.filter(c => !c.forPets).slice(0, 5).map(c => {
+      const emoji = resolveSelectEmoji(c.emoji || "🛒");
+      return {
+        label: `Remove · ${c.name}`.slice(0, 100),
+        description: `${c.price} cash · catalog`.slice(0, 100),
+        value: `cat:${c.id}`,
+        ...(emoji ? { emoji } : {}),
+      };
+    }),
+  ].slice(0, 25);
+
+  const iconChoices = roles.slice(0, 25).map(r => {
+    const emoji = resolveSelectEmoji(r.emoji || "✨");
+    const m = (r.meta ?? {}) as Record<string, unknown>;
+    const hasImg = typeof m.imageUrl === "string" || typeof m.iconGif === "string";
+    return {
+      label: `Icon · ${r.name}`.slice(0, 100),
+      description: (hasImg ? "Has image · pick defaults / emoji / URL" : "No image yet · pick defaults / emoji / URL").slice(0, 100),
+      value: `role:${r.id}`,
+      ...(emoji ? { emoji } : {}),
+    };
+  });
+
+  const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [...storeNavRows()];
+  if (removeChoices.length) {
+    components.push(
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("ubadmin:store_remove_pick")
+          .setPlaceholder("Remove a store item…")
+          .addOptions(removeChoices),
+      ),
+    );
+  }
+  if (iconChoices.length) {
+    components.push(
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("ubadmin:store_icon_pick")
+          .setPlaceholder("Change icon for a perk…")
+          .addOptions(iconChoices),
+      ),
+    );
+  }
+
+  await interaction.editReply({ embeds: [embed], components });
+}
+
 export async function handleUbAdminCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.guildId) {
     await interaction.reply({ content: "Server only.", ...EPHEMERAL });
@@ -365,31 +542,55 @@ export async function handleUbAdminComponent(
 
   if (id === "ubadmin:store" && interaction.isButton()) {
     await interaction.deferUpdate();
-    const [catalog, roles, audit] = await Promise.all([
-      listCatalog(guildId),
-      listRoleLinks(guildId),
-      listUbAudit(guildId, 5),
-    ]);
-    const catLines = catalog.slice(0, 8).map(c =>
-      `${c.listed ? "✅" : "⏸"} **${c.name}** — ${c.price} cash${c.forPets ? " · pets" : ""}`,
-    ).join("\n") || "_No catalog items._";
-    const roleLines = roles.slice(0, 5).map(r =>
-      `${r.enabled ? "✅" : "⏸"} **${r.name}** — ${r.price} cash`,
-    ).join("\n") || "_No role links._";
-    const auditLines = audit.map(a =>
-      `• \`${a.action}\` · <@${a.actorId.replace(/^dash:/, "")}> · <t:${Math.floor(new Date(a.createdAt).getTime() / 1000)}:R>`,
-    ).join("\n") || "_No audit yet._";
-    const embed = new EmbedBuilder()
-      .setColor(0xe91e8c)
-      .setAuthor({ name: "UnbelievaBoat catalog", iconURL: UB_ICON })
-      .setTitle("Store / roles / recent audit")
-      .addFields(
-        { name: "Catalog", value: catLines.slice(0, 1000) },
-        { name: "Role links", value: roleLines.slice(0, 1000) },
-        { name: "Recent audit", value: auditLines.slice(0, 1000) },
-      )
-      .setFooter({ text: "Use Add perk to create role goods · players buy with /casino store" });
-    await interaction.editReply({ embeds: [embed], components: hubRows() });
+    await renderStoreAdmin(interaction, guildId);
+    return;
+  }
+
+  if (id === "ubadmin:store_refresh" && interaction.isButton()) {
+    await interaction.deferUpdate();
+    await renderStoreAdmin(interaction, guildId);
+    return;
+  }
+
+  if (id === "ubadmin:store_remove_pick" && interaction.isStringSelectMenu()) {
+    await interaction.deferUpdate();
+    const value = interaction.values[0]!;
+    let removedName = value;
+    if (value.startsWith("role:")) {
+      const linkId = Number(value.slice(5));
+      const roles = await listRoleLinks(guildId);
+      const hit = roles.find(r => r.id === linkId);
+      removedName = hit?.name ?? value;
+      await deleteRoleLink(guildId, linkId);
+      await writeUbAudit(guildId, interaction.user.id, "discord_perk_remove", { kind: "role", id: linkId, name: removedName });
+    } else if (value.startsWith("cat:")) {
+      const catId = Number(value.slice(4));
+      const catalog = await listCatalog(guildId);
+      const hit = catalog.find(c => c.id === catId);
+      removedName = hit?.name ?? value;
+      await deleteCatalogItem(guildId, catId);
+      await writeUbAudit(guildId, interaction.user.id, "discord_perk_remove", { kind: "catalog", id: catId, name: removedName });
+    }
+    await renderStoreAdmin(interaction, guildId, `🗑️ Removed **${removedName}** from the store.`);
+    return;
+  }
+
+  if (id === "ubadmin:store_icon_pick" && interaction.isStringSelectMenu()) {
+    await interaction.deferUpdate();
+    const value = interaction.values[0]!;
+    if (!value.startsWith("role:")) {
+      await interaction.followUp({ content: "Only role perks support icons here.", ...EPHEMERAL });
+      return;
+    }
+    const linkId = Number(value.slice(5));
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row) {
+      await renderStoreAdmin(interaction, guildId, "That perk is gone.");
+      return;
+    }
+    const picker = buildPerkIconPicker(linkId, row.name, row.emoji || "✨");
+    await interaction.followUp({ ...picker, ...EPHEMERAL });
     return;
   }
 
@@ -780,11 +981,13 @@ export async function handleUbAdminComponent(
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
-          .setCustomId("image")
-          .setLabel("Store icon image/GIF URL (optional)")
+          .setCustomId("emoji")
+          .setLabel("Emoji (unicode or <:name:id> custom)")
           .setStyle(TextInputStyle.Short)
           .setRequired(false)
-          .setMaxLength(300),
+          .setMaxLength(80)
+          .setPlaceholder("✨ or paste a custom server emoji")
+          .setValue("✨"),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -797,6 +1000,85 @@ export async function handleUbAdminComponent(
       ),
     );
     await interaction.showModal(modal);
+    return;
+  }
+
+  if (id.startsWith("ubadmin:perk_icon:") && interaction.isStringSelectMenu()) {
+    const linkId = Number(id.split(":")[2]);
+    const choice = interaction.values[0]!;
+    // showModal must be the first response — never defer first.
+    if (choice === "custom_url") {
+      const modal = new ModalBuilder()
+        .setCustomId(`ubadmin:perk_icon_url:${linkId}`)
+        .setTitle("Custom store icon URL");
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("image")
+            .setLabel("Image / GIF URL (https)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(300)
+            .setPlaceholder("https://…png|gif|webp"),
+        ),
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    await interaction.deferUpdate();
+    if (choice === "emoji_only") {
+      const roles = await listRoleLinks(guildId);
+      const row = roles.find(r => r.id === linkId);
+      if (row) {
+        const meta = { ...(row.meta as Record<string, unknown>) };
+        delete meta.imageUrl;
+        delete meta.iconGif;
+        await updateRoleLink(guildId, linkId, { meta });
+        await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
+          id: linkId, preset: "emoji_only", emoji: row.emoji,
+        });
+      }
+      await interaction.editReply({
+        content: "Kept emoji-only icon (no image). Players still see the emoji in `/casino` store.",
+        components: [],
+        embeds: [],
+      });
+      return;
+    }
+    const preset = presetById(choice);
+    if (!preset) {
+      await interaction.editReply({ content: "Unknown icon preset.", components: [], embeds: [] });
+      return;
+    }
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row) {
+      await interaction.editReply({ content: "That perk is gone.", components: [], embeds: [] });
+      return;
+    }
+    const meta: Record<string, unknown> = {
+      ...(row.meta as Record<string, unknown>),
+      imageUrl: preset.imageUrl,
+    };
+    delete meta.iconGif;
+    await updateRoleLink(guildId, linkId, {
+      emoji: row.emoji || preset.emoji,
+      meta,
+    });
+    await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
+      id: linkId, preset: preset.id, imageUrl: preset.imageUrl,
+    });
+    await interaction.editReply({
+      content: `Set store icon to **${preset.label}** ${preset.emoji} for **${row.name}**.`,
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xe91e8c)
+          .setTitle(`${row.emoji || preset.emoji} ${row.name}`)
+          .setDescription("Icon preview for the perk store")
+          .setThumbnail(preset.imageUrl),
+      ],
+      components: [],
+    });
     return;
   }
 
@@ -1034,7 +1316,12 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     const name = interaction.fields.getTextInputValue("name").trim();
     const price = Number(interaction.fields.getTextInputValue("price").trim());
     const description = interaction.fields.getTextInputValue("description")?.trim() || null;
-    const image = interaction.fields.getTextInputValue("image")?.trim() || "";
+    let emojiRaw = "✨";
+    try {
+      emojiRaw = interaction.fields.getTextInputValue("emoji")?.trim() || "✨";
+    } catch {
+      emojiRaw = "✨";
+    }
     const incomeRaw = interaction.fields.getTextInputValue("income")?.trim() || "0";
     const incomeAmount = Number(incomeRaw);
     if (!name || !Number.isFinite(price) || price < 0) {
@@ -1046,8 +1333,9 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       return;
     }
     await interaction.deferReply(EPHEMERAL);
+    const icon = normalizeStoreIconInput(emojiRaw);
     const meta: Record<string, unknown> = {};
-    if (image) meta.imageUrl = image;
+    if (icon.imageUrl) meta.imageUrl = icon.imageUrl;
     const row = await createRoleLink(guildId, {
       name,
       description,
@@ -1055,17 +1343,62 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       price: Math.floor(price),
       incomeAmount: Math.floor(incomeAmount),
       enabled: true,
-      emoji: "✨",
+      emoji: icon.emoji,
     });
-    // Attach meta via update
-    const { updateRoleLink } = await import("../../lib/unbelievaboat/db.js");
-    await updateRoleLink(guildId, row.id, { meta });
-    await writeUbAudit(guildId, interaction.user.id, "discord_perk_create", { roleId, name, price, incomeAmount, meta });
-    await interaction.editReply(
-      `Created perk **${name}** → <@&${roleId}> for **${fmt(price)}** cash` +
-      (incomeAmount > 0 ? ` · collect income **${fmt(incomeAmount)}**/claim` : "") +
-      `.\nPlayers buy it with \`/casino store\` and claim with \`/casino collect\`.`,
-    );
+    if (Object.keys(meta).length) {
+      await updateRoleLink(guildId, row.id, { meta });
+    }
+    await writeUbAudit(guildId, interaction.user.id, "discord_perk_create", {
+      roleId, name, price, incomeAmount, emoji: icon.emoji, meta,
+    });
+    const picker = buildPerkIconPicker(row.id, name, icon.emoji);
+    await interaction.editReply({
+      content:
+        `Created perk **${name}** ${icon.emoji} → <@&${roleId}> for **${fmt(price)}** cash` +
+        (incomeAmount > 0 ? ` · collect income **${fmt(incomeAmount)}**/claim` : "") +
+        `.\nPlayers buy with \`/casino store\` · claim with \`/casino collect\`.` +
+        `\n\n**Next:** pick a default icon, keep emoji-only, or paste a custom image URL.`,
+      ...picker,
+    });
+    return;
+  }
+
+  if (parts[1] === "perk_icon_url" && parts[2]) {
+    const linkId = Number(parts[2]);
+    const image = interaction.fields.getTextInputValue("image").trim();
+    if (!isHttpImageUrl(image)) {
+      await interaction.reply({
+        content: "Need an `https://` image URL (png/jpg/gif/webp, or a Discord CDN link).",
+        ...EPHEMERAL,
+      });
+      return;
+    }
+    await interaction.deferReply(EPHEMERAL);
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row) {
+      await interaction.editReply("That perk is gone.");
+      return;
+    }
+    const meta: Record<string, unknown> = {
+      ...(row.meta as Record<string, unknown>),
+      imageUrl: image,
+    };
+    delete meta.iconGif;
+    await updateRoleLink(guildId, linkId, { meta });
+    await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
+      id: linkId, preset: "custom_url", imageUrl: image,
+    });
+    await interaction.editReply({
+      content: `Set custom store image for **${row.name}**.`,
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xe91e8c)
+          .setTitle(`${row.emoji || "✨"} ${row.name}`)
+          .setDescription("Custom icon preview")
+          .setThumbnail(image),
+      ],
+    });
     return;
   }
 
