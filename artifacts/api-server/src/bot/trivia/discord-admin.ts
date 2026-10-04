@@ -36,7 +36,6 @@ import {
   resolveTriviaStaffAccess,
   TRIVIA_DEFAULT_MEMBER_PERMISSIONS,
 } from "./access.js";
-import { ensureTriviaRoles, TRIVIA_ROLE_DEFS } from "./roles.js";
 import {
   buildQuestionEmbed,
   postRoundMessage,
@@ -47,6 +46,7 @@ import {
   handleTriviaGuessModal,
 } from "./rounds.js";
 import { refreshNextCard } from "./sweeper.js";
+import { getOrCreateBadgeSettings, rulesForGuild } from "../../lib/badges/db.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const COLOR = 0x5865f2;
@@ -107,7 +107,7 @@ function hubRows() {
       new ButtonBuilder().setCustomId("trivia:qotd").setLabel("QOTD setup").setEmoji("☀️").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("trivia:next").setLabel("Next card").setEmoji("🃏").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("trivia:config").setLabel("Audience & source").setEmoji("⚙️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("trivia:roles").setLabel("Winner roles").setEmoji("🏅").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("trivia:badges").setLabel("Winner badges").setEmoji("🏅").setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -121,7 +121,7 @@ async function buildHubEmbed(guildId: string): Promise<EmbedBuilder> {
       [
         "Drop a **flash quiz**, run a **trivia round**, or schedule **QOTD**.",
         "Players guess with big answer buttons, a **Guess** popup, or typing — only while the round is live.",
-        "Staff **Start** → becomes **End**. Winners get a confetti card + a temporary role.",
+        "Staff **Start** → becomes **End**. Winners get a confetti card + a **badge** (no Discord roles).",
         "",
         `Audience: **${s.audience}** · Default source: **${s.defaultSource}**`,
         `Guess mode: **${s.defaultGuessMode}**`,
@@ -566,21 +566,23 @@ export async function handleTriviaAdminComponent(
     return;
   }
 
-  if (id === "trivia:roles" && interaction.isButton()) {
+  if ((id === "trivia:badges" || id === "trivia:roles") && interaction.isButton()) {
     await interaction.deferUpdate();
-    const roleIds = await ensureTriviaRoles(interaction.guild!);
-    const lines = TRIVIA_ROLE_DEFS.map(d => {
-      const rid = roleIds[d.key];
-      return `• **${d.name}** ${rid ? `<@&${rid}>` : "_missing_"} — ${d.reason}`;
-    });
+    const settings = await getOrCreateBadgeSettings(guildId);
+    const triviaRules = rulesForGuild(settings).filter(r => r.trigger === "trivia");
+    const lines = triviaRules.length
+      ? triviaRules.map(r =>
+        `• ${r.emoji} **${r.name}** (\`${r.id}\`)${r.triviaMode ? ` · \`${r.triviaMode}\`` : ""}\n  _${r.description}_`,
+      )
+      : ["_No trivia badges configured. Add them in the dashboard Badges hub._"];
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor(COLOR)
-          .setTitle("🏅 Winner roles")
+          .setTitle("🏅 Winner badges")
           .setDescription(
             lines.join("\n") +
-            "\n\nRoles move to the newest winner (or expire after 24h).",
+            "\n\nWinners earn **permanent badges** (no Discord roles). Customize in the dashboard, award extras with `/badge give`, view with `/badges`.",
           ),
       ],
       components: hubRows(),

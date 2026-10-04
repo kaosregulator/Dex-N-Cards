@@ -18,6 +18,10 @@ import { buildTatsuAdminCommandJson } from "../tatsu/discord-admin.js";
 import { buildTriviaAdminCommandJson } from "../trivia/discord-admin.js";
 import { buildMemberDateCommandJson } from "../memberdate/definition.js";
 import {
+  buildBadgesCommandJson,
+  buildBadgeCommandJson,
+} from "../badges/definition.js";
+import {
   buildLotteryCommandJson,
   buildLotteryAdminCommandJson,
 } from "../unbelievaboat/lottery/definition.js";
@@ -81,6 +85,8 @@ function buildLegacyCommands() {
     buildTatsuAdminCommandJson(),
     buildTriviaAdminCommandJson(),
     buildMemberDateCommandJson(),
+    buildBadgesCommandJson(),
+    buildBadgeCommandJson(),
     buildLotteryCommandJson(),
     buildLotteryAdminCommandJson(),
 

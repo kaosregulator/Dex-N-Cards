@@ -1247,6 +1247,38 @@ async function runBootMigrations() {
   await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_guild_idx ON trivia_role_holds (guild_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS trivia_role_holds_expires_idx ON trivia_role_holds (expires_at)`);
 
+  // ── Community badges (replaces trivia Discord role awards) ─────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS badge_settings (
+      id                          SERIAL PRIMARY KEY,
+      guild_id                    TEXT NOT NULL UNIQUE,
+      enabled                     BOOLEAN NOT NULL DEFAULT TRUE,
+      staff_role_id               TEXT,
+      track_channel_id            TEXT,
+      trade_channel_id            TEXT,
+      badge_rules                 JSONB NOT NULL DEFAULT '[]'::jsonb,
+      max_attachments_per_post    INTEGER NOT NULL DEFAULT 3,
+      upload_cooldown_seconds     INTEGER NOT NULL DEFAULT 5,
+      created_at                  TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at                  TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS member_badges (
+      id                          SERIAL PRIMARY KEY,
+      guild_id                    TEXT NOT NULL,
+      user_id                     TEXT NOT NULL,
+      earned                      JSONB NOT NULL DEFAULT '[]'::jsonb,
+      progress                    JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_active_day             TEXT,
+      streak                      INTEGER NOT NULL DEFAULT 0,
+      trade_cooldown_until        TIMESTAMP,
+      updated_at                  TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS member_badges_guild_user_uidx ON member_badges (guild_id, user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS member_badges_guild_idx ON member_badges (guild_id)`);
+
   // ── /memberdate role-grant tracking — additive IF NOT EXISTS ───────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS member_role_grants (

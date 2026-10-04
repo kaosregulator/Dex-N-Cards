@@ -25,9 +25,7 @@ export function botCanHostTrivia(bot: GuildMember | null | undefined): boolean {
   if (!bot) return false;
   return (
     bot.permissions.has(PermissionFlagsBits.SendMessages) &&
-    bot.permissions.has(PermissionFlagsBits.EmbedLinks) &&
-    (bot.permissions.has(PermissionFlagsBits.ManageRoles) ||
-      bot.permissions.has(PermissionFlagsBits.Administrator))
+    bot.permissions.has(PermissionFlagsBits.EmbedLinks)
   );
 }
 
@@ -52,7 +50,7 @@ export async function resolveTriviaStaffAccess(input: {
     return {
       ok: false,
       message:
-        "Dex N Cards needs **Send Messages**, **Embed Links**, and **Manage Roles** to host trivia and award winner roles.",
+        "Dex N Cards needs **Send Messages** and **Embed Links** to host trivia.",
     };
   }
   return { ok: true };

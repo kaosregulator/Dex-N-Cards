@@ -321,6 +321,11 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/quiet_setup ensure_room` — sync rooms + quarantine roles + hides\n" +
           "`/quiet_setup rename` — custom labels for Quiet / Vacation / LOA / Step Away\n" +
           "Includes **Stones in the Water** — a short click-through release exercise. Outsiders can't see the room." },
+        { name: "🏅 Badges (`/badges` · `/badge`)", value:
+          "`/badges` — view your (or someone's) badge collection\n" +
+          "`/badge give` / `take` — staff award or remove manual badges\n" +
+          "`/badge catalogue` — see configured rules · customize in the dashboard **Badges** hub\n" +
+          "Trivia winners earn **badges** (no Discord roles)." },
         { name: "🎮 Community Trivia (`/trivia`)", value:
           "`/trivia` — (staff) host **Flash**, **Trivia**, **Picture**, or schedule **QOTD**\n" +
           "Players guess with big buttons, a Guess popup, or typing until staff hits **End**\n" +

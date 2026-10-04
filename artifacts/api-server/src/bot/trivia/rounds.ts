@@ -28,9 +28,9 @@ import {
   recordTriviaGuess,
   updateTriviaRound,
 } from "../../lib/trivia/db.js";
-import { awardTriviaWinnerRole, TRIVIA_ROLE_DEFS } from "./roles.js";
 import { renderTriviaWinnerGif } from "./winner-canvas.js";
 import { memberIsTriviaStaff } from "./access.js";
+import { awardTriviaBadges } from "../badges/engine.js";
 import { logger } from "../../lib/logger.js";
 
 const TRIVIA_COLOR = 0x5865f2;
@@ -286,23 +286,20 @@ async function finishRound(guild: NonNullable<ButtonInteraction["guild"]>, round
 
   const primaryId = winners[0]!;
   const member = await guild.members.fetch(primaryId).catch(() => null);
-  const awarded = await awardTriviaWinnerRole({
-    guild,
+  const badgeResult = await awardTriviaBadges({
+    guildId: guild.id,
     userId: primaryId,
     mode: round.mode,
-    roundId,
     alsoBrainiac: winners.length === 1,
   });
-  const roleNames = awarded
-    .map(k => TRIVIA_ROLE_DEFS.find(d => d.key === k)?.name ?? k)
-    .join(", ");
+  const badgeLabel = badgeResult.labels || null;
 
   const gif = await renderTriviaWinnerGif({
     displayName: member?.displayName ?? primaryId,
     avatarUrl: member?.user.displayAvatarURL({ extension: "png", size: 256 }),
     title: "WINNER!",
     subtitle: q.correctAnswer ? `Answer: ${q.correctAnswer}` : "Nice work!",
-    roleLabel: roleNames || null,
+    roleLabel: badgeLabel,
   });
 
   const others = winners.slice(1);
@@ -315,7 +312,7 @@ async function finishRound(guild: NonNullable<ButtonInteraction["guild"]>, round
         `**Winner:** <@${primaryId}>`,
         others.length ? `Also correct: ${others.map(id => `<@${id}>`).join(", ")}` : null,
         q.correctAnswer ? `Answer: **${q.correctAnswer}**` : null,
-        roleNames ? `Role: **${roleNames}** (until next winner / 24h)` : null,
+        badgeLabel ? `Badge: ${badgeLabel}` : null,
         "_Winner card cleans up in about a minute._",
       ].filter(Boolean).join("\n"),
     );
