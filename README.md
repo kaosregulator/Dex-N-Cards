@@ -39,11 +39,11 @@ Collect, trade, battle, and build — with a User Hub for daily profile flow, co
 - Optional CC0 ambience + **Stones in the Water** release exercise — see [`docs/quiet-mode.md`](./docs/quiet-mode.md)
 
 ### 💵 Casino (UnbelievaBoat)
-- **`/casino`** — wallet, mega slots, interactive blackjack, roulette, UNO, collect, store, leaderboard
+- **`/casino`** — button floor: wallet, mega slots, interactive blackjack, roulette, UNO, collect, store, leaderboard
 - **Interactive blackjack** — shuffle intro → one-shot poker deal → Hit / Stand / Double (no looping card flips)
 - **Short slash aliases** — `/daily_ub`, `/blackjack_ub`, `/slots_ub`, `/collect_ub`, …
-- **Prefix games** (default `.`) — `.bj 50`, `.slots 100`, `.dep` / `.with`, `.col`, `.daily`, `.rr @user 50`
-- **`/unbelievaboat`** — admin cooldowns, payouts, store icons (Discord emoji/GIF pick), rob immunity, logs
+- **Prefix games** (default `.`) — `.bj 50`, `.slots 100`, `.dep` / `.with`, `.col`, `.work` / `.crime`, `.rr @user 50`, `.rr ai @user 50`
+- **`/unbelievaboat`** — admin cooldowns, payouts, per-role collect, store icons (Discord emoji / Tenor GIF pick), rob immunity, logs
 - See [`docs/unbelievaboat.md`](./docs/unbelievaboat.md)
 
 ### ⚙️ Admin tools

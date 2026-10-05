@@ -497,7 +497,6 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
     let nextGifName: string;
     let nextStillName: string;
     let nextComponents: ActionRowBuilder<ButtonBuilder>[] = [];
-    let payoutBal = spent.balance;
 
     // Natural payout is deferred until the floor settle succeeds (avoids stack on retry).
     let naturalOutcome: "win" | "lose" | "push" | null = null;
@@ -516,11 +515,11 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
         `You ${formatHand(player)} (**${p}**)`,
         `Dealer ${formatHand(dealer)} (**${d}**)`,
         naturalOutcome === "win"
-          ? `🎉 Blackjack! **+${fmtCash(naturalPayout)}** ${payoutBal.symbol}`
+          ? `🎉 Blackjack! **+${fmtCash(naturalPayout)}** ${spent.balance.symbol}`
           : naturalOutcome === "push"
             ? `🤝 Double blackjack — push`
             : `💀 Dealer blackjack — lost **${fmtCash(bet)}**`,
-        formatSpendNote(spent.fromCash, spent.fromBank, payoutBal.symbol),
+        formatSpendNote(spent.fromCash, spent.fromBank, spent.balance.symbol),
       ].join("\n"));
       nextContent = `${interaction.user} — natural`;
       nextGifName = "bj-natural.gif";
