@@ -508,7 +508,7 @@ export async function handleBalance(interaction: ChatInputCommandInteraction): P
       `🏦 Bank **${fmtCash(bal.bank)}** ${bal.symbol}`,
       `Σ Total **${fmtCash(bal.cash + bal.bank)}**`,
       "",
-      `_Deposit / withdraw: \`.deposit\` / \`.withdraw\` or \`/casino\`._`,
+      `_Deposit all: \`.dep\` · withdraw all: \`.with\` · or \`/casino\`._`,
     ].join("\n"));
     embed.setThumbnail(target.displayAvatarURL({ size: 128 }));
     await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], slashHint: "/bal_ub" });
@@ -520,7 +520,12 @@ export async function handleBalance(interaction: ChatInputCommandInteraction): P
 export async function handleDeposit(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   try {
-    const amount = interaction.options.getInteger("amount", true);
+    let amount = interaction.options.getInteger("amount");
+    if (amount == null) {
+      const cur = await getCashBalance(interaction.guildId!, interaction.user.id);
+      amount = cur.cash ?? 0;
+      if (amount <= 0) throw new CashError("No cash to deposit — wallet is empty.");
+    }
     const bal = await depositCash(interaction.guildId!, interaction.user.id, amount);
     await writeUbAudit(interaction.guildId!, interaction.user.id, "casino_deposit", { amount });
     const gif = await renderDepositGif({
@@ -553,7 +558,12 @@ export async function handleDeposit(interaction: ChatInputCommandInteraction): P
 export async function handleWithdraw(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   try {
-    const amount = interaction.options.getInteger("amount", true);
+    let amount = interaction.options.getInteger("amount");
+    if (amount == null) {
+      const cur = await getCashBalance(interaction.guildId!, interaction.user.id);
+      amount = cur.bank ?? 0;
+      if (amount <= 0) throw new CashError("No bank funds to withdraw.");
+    }
     const bal = await withdrawCash(interaction.guildId!, interaction.user.id, amount);
     await writeUbAudit(interaction.guildId!, interaction.user.id, "casino_withdraw", { amount });
     const gif = await renderWithdrawGif({

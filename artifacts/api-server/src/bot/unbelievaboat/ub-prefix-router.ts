@@ -1,5 +1,6 @@
-// Prefix casino games — e.g. `.slots 100`, `.daily`, `.rob @user`
+// Prefix casino games — e.g. `.slots 100`, `.daily`, `.dep`, `.bj 50`
 // Uses the guild `gamesPrefix` (default `.`), separate from admin `commandPrefix`.
+// Short aliases mirror UnbelievaBoat habits (dep / with / col / bj / …).
 
 import type { Message, User } from "discord.js";
 import { messageAsChatInput } from "../commands/message-as-chat.js";
@@ -7,18 +8,84 @@ import type { OptBag } from "../commands/option-proxy.js";
 
 const HELP = [
   "**Casino** — short prefix (default `.`). Results post as **UnbelievaBoat**.",
-  "`.daily` · `.collect` · `.bal` · `.work` · `.crime` · `.beg`",
-  "`.slots 100` · `.blackjack 50` · `.roulette 50 red` · `.uno 50`",
-  "`.hl 50` · `.rb 50 red` · `.rob @user` · `.russian @user 50`",
-  "`.deposit 100` · `.withdraw 100` · `.top` · `.store`",
-  "Slash still works too (`/daily_ub`, `/blackjack_ub`, … or `/casino`).",
-  "Change prefix: `!setgamesprefix .`",
+  "`.dep` / `.dep all` · `.with` / `.wd` · `.col` · `.bal` · `.daily`",
+  "`.work` · `.crime` · `.beg` · `.rob @user`",
+  "`.bj 50` · `.slots 100` · `.roulette 50 red` · `.uno 50`",
+  "`.hl 50` · `.rb 50 red` · `.rr @user 50` · `.top` · `.store`",
+  "Full names work too (`.deposit`, `.blackjack`, `.collect`, …).",
+  "Slash: `/deposit_ub` `/blackjack_ub` … or `/casino`. Change prefix: `!setgamesprefix .`",
 ].join("\n");
 
-function parseBet(raw: string | undefined): number | null {
+/** Canonical command → common short / UB-style aliases people type. */
+const ALIAS_TO_CMD: Record<string, string> = {
+  // wallet
+  dep: "deposit",
+  deposit: "deposit",
+  with: "withdraw",
+  wd: "withdraw",
+  withd: "withdraw",
+  withdraw: "withdraw",
+  col: "collect",
+  collect: "collect",
+  "collect-income": "collect",
+  income: "collect",
+  bal: "balance",
+  balance: "balance",
+  cash: "balance",
+  money: "balance",
+  wallet: "balance",
+  // income
+  daily: "daily",
+  paycheck: "daily",
+  work: "work",
+  crime: "crime",
+  beg: "beg",
+  slut: "beg",
+  rob: "rob",
+  // games
+  bj: "blackjack",
+  blackjack: "blackjack",
+  "21": "blackjack",
+  slots: "slots",
+  slot: "slots",
+  roulette: "roulette",
+  roul: "roulette",
+  uno: "uno",
+  hl: "higherlower",
+  higherlower: "higherlower",
+  higher: "higherlower",
+  rb: "redblack",
+  redblack: "redblack",
+  russian: "russian",
+  rr: "russian",
+  // meta
+  top: "top",
+  lb: "top",
+  leaderboard: "top",
+  store: "store",
+  shop: "store",
+  help: "help",
+  games: "help",
+  casino: "help",
+};
+
+export function resolveUbPrefixCmd(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  return ALIAS_TO_CMD[key] ?? key;
+}
+
+export function parseBet(raw: string | undefined): number | null {
   if (!raw) return null;
   const n = Number(String(raw).replace(/,/g, ""));
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+/** `all` / `max` / `*` / empty → all; else a positive integer. */
+export function parseAmountToken(raw: string | undefined): "all" | number | null {
+  if (raw == null || raw === "") return "all";
+  const t = String(raw).trim().toLowerCase();
+  if (t === "all" || t === "max" || t === "*") return "all";
+  return parseBet(t);
 }
 
 function resolveMentionUser(msg: Message, token: string | undefined): User | null {
@@ -28,22 +95,56 @@ function resolveMentionUser(msg: Message, token: string | undefined): User | nul
   return msg.mentions.users.get(id) ?? msg.client.users.cache.get(id) ?? null;
 }
 
+async function resolveTransferAmount(
+  msg: Message,
+  raw: string | undefined,
+  kind: "cash" | "bank",
+  gamesPrefix: string,
+  usageCmd: string,
+): Promise<number | null> {
+  const parsed = parseAmountToken(raw);
+  if (parsed === null) {
+    await msg.reply(
+      `Usage: \`${gamesPrefix}${usageCmd}\` or \`${gamesPrefix}${usageCmd} all\` or \`${gamesPrefix}${usageCmd} <amount>\``,
+    );
+    return null;
+  }
+  if (parsed === "all") {
+    const { getCashBalance } = await import("./cash.js");
+    const bal = await getCashBalance(msg.guild!.id, msg.author.id);
+    const amount = kind === "cash" ? (bal.cash ?? 0) : (bal.bank ?? 0);
+    if (amount <= 0) {
+      await msg.reply(
+        kind === "cash"
+          ? "No cash to deposit — wallet is empty."
+          : "No bank funds to withdraw.",
+      );
+      return null;
+    }
+    return amount;
+  }
+  return parsed;
+}
+
 export async function handleUbPrefixCommand(msg: Message, gamesPrefix: string): Promise<boolean> {
   if (!msg.guild || !msg.content.startsWith(gamesPrefix)) return false;
   const body = msg.content.slice(gamesPrefix.length).trim();
   if (!body) return false;
 
   const [rawCmd, ...args] = body.split(/\s+/);
-  const cmd = (rawCmd ?? "").toLowerCase();
+  const cmd = resolveUbPrefixCmd(rawCmd ?? "");
   if (!cmd) return false;
 
-  const run = async (handler: (i: import("discord.js").ChatInputCommandInteraction) => Promise<void>, values: OptBag = {}) => {
+  const run = async (
+    handler: (i: import("discord.js").ChatInputCommandInteraction) => Promise<void>,
+    values: OptBag = {},
+  ) => {
     const proxied = messageAsChatInput(msg, values);
     await handler(proxied);
   };
 
   try {
-    if (cmd === "help" || cmd === "games" || cmd === "casino") {
+    if (cmd === "help") {
       await msg.reply(HELP);
       return true;
     }
@@ -58,45 +159,46 @@ export async function handleUbPrefixCommand(msg: Message, gamesPrefix: string): 
       await run(handleCollect);
       return true;
     }
-    if (cmd === "bal" || cmd === "balance" || cmd === "cash") {
+    if (cmd === "balance") {
       const { handleBalance } = await import("./casino.js");
       await run(handleBalance);
       return true;
     }
     if (cmd === "deposit") {
-      const amount = parseBet(args[0]);
-      if (!amount) { await msg.reply(`Usage: \`${gamesPrefix}deposit <amount>\``); return true; }
+      // `.dep` / `.dep all` → entire cash balance (UB-style)
+      const amount = await resolveTransferAmount(msg, args[0], "cash", gamesPrefix, "dep");
+      if (amount == null) return true;
       const { handleDeposit } = await import("./casino.js");
       await run(handleDeposit, { integers: { amount } });
       return true;
     }
     if (cmd === "withdraw") {
-      const amount = parseBet(args[0]);
-      if (!amount) { await msg.reply(`Usage: \`${gamesPrefix}withdraw <amount>\``); return true; }
+      const amount = await resolveTransferAmount(msg, args[0], "bank", gamesPrefix, "with");
+      if (amount == null) return true;
       const { handleWithdraw } = await import("./casino.js");
       await run(handleWithdraw, { integers: { amount } });
       return true;
     }
-    if (cmd === "top" || cmd === "lb" || cmd === "leaderboard") {
+    if (cmd === "top") {
       const { handleCasinoTop } = await import("./casino.js");
       await run(handleCasinoTop);
       return true;
     }
-    if (cmd === "store" || cmd === "shop") {
+    if (cmd === "store") {
       const { handleCashStore } = await import("./store.js");
       await run(handleCashStore);
       return true;
     }
-    if (cmd === "slots" || cmd === "slot") {
+    if (cmd === "slots") {
       const bet = parseBet(args[0]);
       if (!bet) { await msg.reply(`Usage: \`${gamesPrefix}slots <credits>\``); return true; }
       const { handleSlots } = await import("./live-slots.js");
       await run(handleSlots, { integers: { bet } });
       return true;
     }
-    if (cmd === "blackjack" || cmd === "bj") {
+    if (cmd === "blackjack") {
       const bet = parseBet(args[0]);
-      if (!bet) { await msg.reply(`Usage: \`${gamesPrefix}blackjack <bet>\``); return true; }
+      if (!bet) { await msg.reply(`Usage: \`${gamesPrefix}bj <bet>\` or \`${gamesPrefix}blackjack <bet>\``); return true; }
       const { handleBlackjack } = await import("./games.js");
       await run(handleBlackjack, { integers: { bet } });
       return true;
@@ -119,14 +221,14 @@ export async function handleUbPrefixCommand(msg: Message, gamesPrefix: string): 
       await run(handleUno, { integers: { bet } });
       return true;
     }
-    if (cmd === "hl" || cmd === "higherlower" || cmd === "higher") {
+    if (cmd === "higherlower") {
       const bet = parseBet(args[0]);
       if (!bet) { await msg.reply(`Usage: \`${gamesPrefix}hl <bet>\``); return true; }
       const { handleHigherLower } = await import("./games.js");
       await run(handleHigherLower, { integers: { bet } });
       return true;
     }
-    if (cmd === "rb" || cmd === "redblack") {
+    if (cmd === "redblack") {
       const bet = parseBet(args[0]);
       const color = (args[1] ?? "").toLowerCase();
       if (!bet || (color !== "red" && color !== "black")) {
@@ -147,7 +249,7 @@ export async function handleUbPrefixCommand(msg: Message, gamesPrefix: string): 
       await run(handleCashCrime);
       return true;
     }
-    if (cmd === "beg" || cmd === "slut") {
+    if (cmd === "beg") {
       const { handleSlut } = await import("./games.js");
       await run(handleSlut);
       return true;
@@ -159,13 +261,13 @@ export async function handleUbPrefixCommand(msg: Message, gamesPrefix: string): 
       await run(handleRob, { users: { target } });
       return true;
     }
-    if (cmd === "russian" || cmd === "rr") {
+    if (cmd === "russian") {
       const target = resolveMentionUser(msg, args[0]) ?? msg.mentions.users.first() ?? null;
       const bet = parseBet(args[1] ?? args[0]);
       // Allow `.russian @user 100` or `.russian 100 @user`
       const t = target ?? (args[1] ? resolveMentionUser(msg, args[1]) : null);
       const b = bet ?? parseBet(args[0]);
-      if (!t || !b) { await msg.reply(`Usage: \`${gamesPrefix}russian @user <bet>\``); return true; }
+      if (!t || !b) { await msg.reply(`Usage: \`${gamesPrefix}rr @user <bet>\``); return true; }
       const { handleRussian } = await import("./russian-duel.js");
       await run(handleRussian, { users: { target: t }, integers: { bet: b } });
       return true;
