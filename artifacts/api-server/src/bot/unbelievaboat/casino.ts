@@ -640,17 +640,32 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
       return;
     }
     const roleIds = new Set(member.roles.cache.keys());
-    const links = await listRoleLinks(interaction.guildId!);
-    const { dedupeIncomeRoles } = await import("./store-icons.js");
     const { symbolDisplayName } = await import("./currency-canvas.js");
-    const ownedRaw = links.filter(l =>
-      l.enabled && l.discordRoleId && roleIds.has(l.discordRoleId) && (l.incomeAmount ?? 0) > 0,
-    );
-    // One payout per Discord role — keep the highest income if duplicates exist.
-    const owned = dedupeIncomeRoles(ownedRaw);
+    const { syncUbStoreRoleLinks } = await import("./ub-sync.js");
+    const { collectableOwnedRoles } = await import("./ub-items.js");
+    const { isUbConfigured } = await import("../../lib/unbelievaboat/client.js");
+
+    // Pull UnbelievaBoat store role items into local links so collect covers
+    // UB shop roles too — not only manually linked perks.
+    let links = await listRoleLinks(interaction.guildId!);
+    if (isUbConfigured() && settings.enabled) {
+      try {
+        const synced = await syncUbStoreRoleLinks(
+          interaction.guildId!,
+          settings.ubGuildId,
+          interaction.guild,
+        );
+        links = synced.links;
+      } catch {
+        // Collect still works from whatever links we already have.
+      }
+    }
+
+    const owned = collectableOwnedRoles(links, roleIds);
     if (!owned.length) {
       await interaction.editReply(
-        "You don’t own any income perk roles yet. Buy one in `/casino` → Store (admins set **income** on role links).",
+        "You don’t own any collectable income roles yet.\n" +
+        "Buy a role in `/casino` → Store, then ask an admin to set **collect income** on it in `/unbelievaboat` → Roles & economy.",
       );
       return;
     }

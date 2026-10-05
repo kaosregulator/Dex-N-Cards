@@ -207,7 +207,8 @@ router.get("/ub/store", async (req, res) => {
   if (isUbConfigured()) {
     try {
       const settings = await getOrCreateUbSettings(guildId);
-      remote = await ubApi.listStoreItems(settings.ubGuildId);
+      const page = await ubApi.listStoreItems(settings.ubGuildId);
+      remote = Array.isArray(page) ? page : page.items ?? [];
     } catch (err) {
       remoteError = err instanceof Error ? err.message : "Failed to load UB store";
     }
