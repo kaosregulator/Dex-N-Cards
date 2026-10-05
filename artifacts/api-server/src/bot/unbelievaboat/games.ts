@@ -41,7 +41,6 @@ import {
 } from "./render-games.js";
 import {
   renderBlackjackShuffleGif,
-  renderBlackjackShufflePng,
   renderBlackjackTableGif,
   renderBlackjackTablePng,
   type BjTableOpts,
@@ -106,6 +105,16 @@ function sleep(ms: number) {
  * Pre-renders the still during the wait so settle is instant (no gap where
  * Discord can restart the GIF loop).
  */
+async function mustEditFloor(
+  floor: Message,
+  payload: Parameters<typeof editUnbelievaBoatMessage>[1],
+): Promise<void> {
+  const edited = await editUnbelievaBoatMessage(floor, payload);
+  if (!edited) {
+    throw new Error("Couldn't update the blackjack table message — try again.");
+  }
+}
+
 async function playBjBeat(
   floor: Message,
   opts: {
@@ -125,25 +134,37 @@ async function playBjBeat(
   const { files, imageName } = await attachGif(opts.gif, opts.gifName);
   const emb = EmbedBuilder.from(opts.embed);
   if (imageName) emb.setImage(`attachment://${imageName}`);
-  await editUnbelievaBoatMessage(floor, {
-    content: opts.content ?? undefined,
-    embeds: [emb],
-    files,
-    components: [], // hide buttons while the flip plays
-  });
 
-  const waitMs = Math.max(700, Math.floor((opts.gif?.durationMs ?? 1400) * (opts.waitScale ?? 0.88)));
-  // Encode the still in parallel with the playthrough wait.
-  // Only reuse a pre-rendered buffer when it's non-null — null means encode failed.
-  const pngPromise = opts.stillPng
-    ? Promise.resolve(opts.stillPng)
-    : renderBlackjackTablePng(opts.stillOpts);
-  const [, png] = await Promise.all([sleep(waitMs), pngPromise]);
+  // Prefer GIF; if encode failed, jump straight to the still so we never stall.
+  if (files.length) {
+    await mustEditFloor(floor, {
+      content: opts.content ?? undefined,
+      embeds: [emb],
+      files,
+      components: [], // hide buttons while the flip plays
+    });
+    const waitMs = Math.max(600, Math.floor((opts.gif?.durationMs ?? 1400) * (opts.waitScale ?? 0.88)));
+    const pngPromise = opts.stillPng
+      ? Promise.resolve(opts.stillPng)
+      : renderBlackjackTablePng(opts.stillOpts);
+    const [, png] = await Promise.all([sleep(waitMs), pngPromise]);
+    const still = attachPng(png, opts.stillName);
+    const settled = EmbedBuilder.from(opts.embed);
+    if (still.imageName) settled.setImage(`attachment://${still.imageName}`);
+    await mustEditFloor(floor, {
+      content: opts.content ?? undefined,
+      embeds: [settled],
+      files: still.files,
+      components: opts.components ?? [],
+    });
+    return;
+  }
 
+  const png = opts.stillPng ?? await renderBlackjackTablePng(opts.stillOpts);
   const still = attachPng(png, opts.stillName);
   const settled = EmbedBuilder.from(opts.embed);
   if (still.imageName) settled.setImage(`attachment://${still.imageName}`);
-  await editUnbelievaBoatMessage(floor, {
+  await mustEditFloor(floor, {
     content: opts.content ?? undefined,
     embeds: [settled],
     files: still.files,
@@ -544,37 +565,13 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
       nextComponents = bjButtons(interaction.user.id, true);
     }
 
-    // Overlap: encode next beat while shuffle plays; settle shuffle → PNG at
-    // the end of its playthrough so Discord never restarts the GIF loop.
-    const [, dealGif, dealPng] = await Promise.all([
-      (async () => {
-        const [shufflePng] = await Promise.all([
-          renderBlackjackShufflePng(),
-          sleep(shuffleWaitMs),
-        ]);
-        try {
-          const still = attachPng(shufflePng, "bj-shuffle.png");
-          if (!still.imageName) return;
-          const settled = brandEmbed("Blackjack — shuffle", [
-            `${interaction.user} · stake **${fmtCash(bet)}**`,
-            formatSpendNote(spent.fromCash, spent.fromBank, spent.balance.symbol),
-            "",
-            "_Deck ready — dealing…_",
-          ].join("\n"));
-          settled.setImage(`attachment://${still.imageName}`);
-          await editUnbelievaBoatMessage(floor, {
-            content: `${interaction.user} — **dealing**…`,
-            embeds: [settled],
-            files: still.files,
-            components: [],
-          });
-        } catch {
-          // Best-effort; deal beat will replace the attachment next.
-        }
-      })(),
-      renderBlackjackTableGif(nextOpts),
-      renderBlackjackTablePng(nextOpts),
-    ]);
+    // Pre-render the deal WHILE the shuffle GIF plays, then swap straight to
+    // the deal beat. (An intermediate shuffle-PNG settle raced webhook edits
+    // and left the table stuck on "DECK READY" forever.)
+    const dealGifPromise = renderBlackjackTableGif(nextOpts);
+    const dealPngPromise = renderBlackjackTablePng(nextOpts);
+    await sleep(shuffleWaitMs);
+    const [dealGif, dealPng] = await Promise.all([dealGifPromise, dealPngPromise]);
 
     // Register the interactive session only once deal assets are ready.
     if (!natural) {

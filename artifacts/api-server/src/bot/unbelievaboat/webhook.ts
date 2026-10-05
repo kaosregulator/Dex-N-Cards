@@ -114,6 +114,7 @@ export async function sendChannelAsUnbelievaBoat(
         embeds: opts.embeds,
         files: opts.files,
         components: opts.components,
+        withComponents: true,
         allowedMentions: UB_NO_ROLE_PINGS,
       });
       return sent;
@@ -136,20 +137,47 @@ export async function sendChannelAsUnbelievaBoat(
   }
 }
 
-/** Edit a prior webhook/bot message in-place (used for live ball reveals). */
+/**
+ * Edit a prior webhook/bot message in-place (live reveals, BJ beats).
+ * Prefer the owning webhook’s editMessage — Message#edit often fails on
+ * webhook-authored floor posts, which left blackjack stuck on shuffle.
+ */
 export async function editUnbelievaBoatMessage(
   message: Message,
   opts: PostAsUnbelievaBoatOpts,
 ): Promise<Message | null> {
+  const payload = {
+    content: opts.content,
+    embeds: opts.embeds,
+    files: opts.files,
+    components: opts.components,
+    // Drop prior GIF attachment so the settle PNG (or next beat) is the only image.
+    attachments: [],
+    allowedMentions: UB_NO_ROLE_PINGS,
+  };
+
+  // Webhook-authored messages: edit via the webhook token.
+  // Message#edit uses the channel endpoint and 403s on webhook posts — that left
+  // blackjack stuck on the shuffle GIF forever after #191.
+  if (message.webhookId) {
+    try {
+      const { host } = webhookHost(message.channel);
+      const hook = host ? await resolveWebhook(message.client, host) : null;
+      if (hook?.token && hook.id === message.webhookId) {
+        return await hook.editMessage(message.id, {
+          ...payload,
+          // Required for interactive components on application webhooks.
+          withComponents: true,
+          threadId: message.channel.isThread() ? message.channel.id : undefined,
+        });
+      }
+    } catch (err) {
+      logger.debug({ err, messageId: message.id }, "UnbelievaBoat webhook editMessage failed");
+    }
+  }
+
   try {
-    return await message.edit({
-      content: opts.content,
-      embeds: opts.embeds,
-      files: opts.files,
-      components: opts.components,
-      // Drop prior GIF attachment so the settle PNG (or next beat) is the only image.
-      attachments: [],
-    });
+    return await message.edit(payload);
   } catch (err) {
     logger.debug({ err, messageId: message.id }, "UnbelievaBoat message edit failed");
     return null;
@@ -188,6 +216,8 @@ export async function postAsUnbelievaBoat(
       embeds: opts.embeds,
       files: opts.files,
       components: opts.components,
+      // Keep Hit/Stand/etc on application-owned webhooks.
+      withComponents: true,
       ...(threadId ? { threadId } : {}),
       allowedMentions: UB_NO_ROLE_PINGS,
     });
