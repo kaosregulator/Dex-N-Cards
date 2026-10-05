@@ -91,7 +91,14 @@ export async function syncUbStoreRoleLinks(
     if (link.discordRoleId !== primaryRole) patch.discordRoleId = primaryRole;
     if (link.name !== norm.name.slice(0, 100)) patch.name = norm.name.slice(0, 100);
     if (link.price !== norm.price) patch.price = norm.price;
-    if ((link.emoji || "") !== norm.emoji.slice(0, 64)) patch.emoji = norm.emoji.slice(0, 64);
+    // Prefer guild-resolved emoji / unicode over placeholder `<:_:id>`.
+    const nextEmoji = norm.emoji.slice(0, 64);
+    const prev = link.emoji || "";
+    const nextIsPlaceholder = nextEmoji.includes(":_:") || nextEmoji.startsWith("<:_:");
+    const prevIsPlaceholder = prev.includes(":_:") || prev.startsWith("<:_:");
+    if (nextEmoji && nextEmoji !== prev && (!nextIsPlaceholder || !prev || prevIsPlaceholder)) {
+      patch.emoji = nextEmoji;
+    }
     // Don't force-enable; but if never set, keep listed state from UB
     if (link.enabled !== norm.listed && !link.ubItemId) patch.enabled = norm.listed;
 

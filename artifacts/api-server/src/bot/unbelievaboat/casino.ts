@@ -632,21 +632,25 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
   try {
     const settings = await getOrCreateUbSettings(interaction.guildId!);
     if (!settings.gamesEnabled) throw new CashError("UnbelievaBoat mini-games are disabled on this server.");
-    await assertIncomeCooldown(interaction.guildId!, interaction.user.id, "collect");
 
     const member = interaction.member as GuildMember | null;
     if (!member?.roles) {
       await interaction.editReply("Could not read your roles.");
       return;
     }
-    const roleIds = new Set(member.roles.cache.keys());
-    const { symbolDisplayName } = await import("./currency-canvas.js");
-    const { syncUbStoreRoleLinks } = await import("./ub-sync.js");
-    const { collectableOwnedRoles } = await import("./ub-items.js");
-    const { isUbConfigured } = await import("../../lib/unbelievaboat/client.js");
 
-    // Pull UnbelievaBoat store role items into local links so collect covers
-    // UB shop roles too — not only manually linked perks.
+    const { syncUbStoreRoleLinks } = await import("./ub-sync.js");
+    const { isUbConfigured } = await import("../../lib/unbelievaboat/client.js");
+    const { readCooldowns } = await import("./cooldowns.js");
+    const {
+      formatCooldownLeft,
+      loadRoleCollectState,
+      markRolesCollected,
+      planRoleCollect,
+      resolveRoleDisplayEmoji,
+    } = await import("./collect-roles.js");
+
+    // Sync UB store role items, then collect every owned role with income that is off CD.
     let links = await listRoleLinks(interaction.guildId!);
     if (isUbConfigured() && settings.enabled) {
       try {
@@ -661,51 +665,120 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
       }
     }
 
-    const owned = collectableOwnedRoles(links, roleIds);
-    if (!owned.length) {
+    const cds = readCooldowns(settings);
+    const { lastByLinkId, fallbackLastCollectAt } = await loadRoleCollectState(
+      interaction.guildId!,
+      interaction.user.id,
+    );
+    const planned = planRoleCollect({
+      links,
+      member,
+      guildCollectSec: cds.collectSec,
+      lastByLinkId,
+      fallbackLastCollectAt,
+      guild: interaction.guild,
+    });
+
+    if (!planned.ready.length && !planned.cooling.length) {
+      const zeroLines = planned.zeroIncomeOwned.slice(0, 8).map(l =>
+        `• ${resolveRoleDisplayEmoji(l, interaction.guild)} **${l.name}**` +
+        (l.discordRoleId ? ` · <@&${l.discordRoleId}>` : ""),
+      );
+      const hint = planned.zeroIncomeOwned.length
+        ? `\nYou own **${planned.zeroIncomeOwned.length}** role(s) with **collect income = 0** (synced UB shop roles start at 0 until an admin sets income):\n` +
+          zeroLines.join("\n") +
+          `\n→ \`/unbelievaboat\` → **Roles & economy** → set income + cooldown minutes (match UB Role Income).`
+        : "";
       await interaction.editReply(
         "You don’t own any collectable income roles yet.\n" +
-        "Buy a role in `/casino` → Store, then ask an admin to set **collect income** on it in `/unbelievaboat` → Roles & economy.",
+        "Buy/sync a role in the store, or **Add collect role** in `/unbelievaboat` → Roles & economy." +
+        hint,
       );
       return;
     }
 
-    const total = owned.reduce((s, r) => s + (r.incomeAmount || 0), 0);
+    if (!planned.ready.length) {
+      const soonest = Math.min(...planned.cooling.map(r => r.readyInMs));
+      const lines = planned.cooling.slice(0, 10).map(r =>
+        `• ${r.emoji} **${r.link.name}** — ready in **${formatCooldownLeft(r.readyInMs)}**`,
+      );
+      await interaction.editReply(
+        [
+          `All your income roles are on cooldown. Next in **${formatCooldownLeft(soonest)}**.`,
+          "",
+          ...lines,
+        ].join("\n"),
+      );
+      return;
+    }
+
+    const total = planned.ready.reduce((s, r) => s + r.income, 0);
     const bal = await earnCash(interaction.guildId!, interaction.user.id, total, "Role income collect");
-    await markIncomeCooldown(interaction.guildId!, interaction.user.id, "collect");
+    await markRolesCollected(
+      interaction.guildId!,
+      interaction.user.id,
+      planned.ready.map(r => r.link.id),
+    );
     await writeUbAudit(interaction.guildId!, interaction.user.id, "role_collect", {
       total,
-      roles: owned.map(r => ({ id: r.discordRoleId, name: r.name, income: r.incomeAmount })),
+      roles: planned.ready.map(r => ({
+        id: r.link.discordRoleId,
+        linkId: r.link.id,
+        name: r.link.name,
+        income: r.income,
+        cooldownSec: r.cooldownSec,
+      })),
+      cooling: planned.cooling.map(r => ({
+        linkId: r.link.id, name: r.link.name, readyInMs: r.readyInMs,
+      })),
     });
 
-    // Embed keeps Discord custom emoji markup; canvas uses plain names (no tofu).
-    const roleLinesEmbed = owned.map(r =>
-      `• ${r.emoji || "✨"} **${r.name}** — +${fmtCash(r.incomeAmount)}`,
+    const roleLinesEmbed = planned.ready.map(r =>
+      `• ${r.emoji} **${r.link.name}** — **${r.income >= 0 ? "+" : ""}${fmtCash(r.income)}**` +
+      (r.link.discordRoleId ? ` · <@&${r.link.discordRoleId}>` : ""),
     );
-    const roleLinesGif = owned.map(r =>
-      `${symbolDisplayName(r.emoji || "✨")} ${r.name} +${fmtCash(r.incomeAmount)}`,
+    const coolingLines = planned.cooling.slice(0, 5).map(r =>
+      `• ${r.emoji} **${r.link.name}** — ready in ${formatCooldownLeft(r.readyInMs)}`,
     );
+
     const gif = await renderCoinCollectGif({
       amount: total,
       symbol: bal.symbol,
       newCash: bal.cash,
       newBank: bal.bank,
-      title: owned.length > 1 ? `${owned.length} ROLES` : "ROLE INCOME",
-      roleLines: roleLinesGif,
+      title: planned.ready.length > 1 ? `${planned.ready.length} ROLES` : "ROLE INCOME",
+      roles: planned.ready.map(r => ({
+        name: r.link.name,
+        income: r.income,
+        emoji: r.emoji,
+        imageUrl: r.imageUrl,
+      })),
     });
     const { files, imageName } = await attachGif(gif, "collect.gif");
+    const zeroHint = planned.zeroIncomeOwned.length
+      ? `\n_${planned.zeroIncomeOwned.length} owned role(s) have collect income unset (0): ` +
+        planned.zeroIncomeOwned.slice(0, 5).map(l => l.name).join(", ") +
+        (planned.zeroIncomeOwned.length > 5 ? "…" : "") +
+        " — set income in Roles & economy._"
+      : null;
     const embed = brandEmbed("Role Income Collected", [
       `${interaction.user} swept **${fmtCash(total)}** ${bal.symbol}` +
-        (owned.length > 1 ? ` from **${owned.length}** perk roles:` : " from perk role:"),
+        (planned.ready.length > 1 ? ` from **${planned.ready.length}** roles:` : " from:"),
       ...roleLinesEmbed,
+      coolingLines.length ? `\n_On cooldown:_\n${coolingLines.join("\n")}` : null,
+      zeroHint,
       "",
       `💵 Cash **${fmtCash(bal.cash)}** · 🏦 Bank **${fmtCash(bal.bank)}**`,
-    ].join("\n"));
+    ].filter(Boolean).join("\n"));
     if (imageName) embed.setImage(`attachment://${imageName}`);
+    // Prefer an animated role icon as thumbnail when present
+    const animThumb = planned.ready.find(r => r.imageUrl?.includes(".gif"))?.imageUrl;
+    if (animThumb) embed.setThumbnail(animThumb);
+
     await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], files, slashHint: "/collect_ub" });
     void logEconomyEvent(
       interaction.client, interaction.guildId!, interaction.user,
-      "Role Collect", `Collected ${fmtCash(total)} from ${owned.length} role(s)`,
+      "Role Collect", `Collected ${fmtCash(total)} from ${planned.ready.length} role(s)`,
       roleLinesEmbed.slice(0, 5).map(l => ({ name: "Role", value: l.slice(0, 100), inline: true })),
     );
   } catch (err) {

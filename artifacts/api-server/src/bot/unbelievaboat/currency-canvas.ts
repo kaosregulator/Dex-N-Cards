@@ -68,28 +68,15 @@ function emojiToCode(emoji: string): string {
   return cps.map((c) => c.toString(16)).join("-");
 }
 
-/** Load Discord custom emoji PNG or Twemoji; cached. */
-export async function loadCurrencyImage(
+/** Load any image URL into canvas (Discord emoji CDN, role icons, uploads). */
+export async function loadImageUrl(
   mod: CanvasMod,
-  symbol: string,
+  url: string,
 ): Promise<CurrencyImg | null> {
-  const key = symbol.trim();
-  if (!key) return null;
+  const key = `url:${url.trim()}`;
+  if (!key || key === "url:") return null;
   if (SYMBOL_IMG_CACHE.has(key)) return SYMBOL_IMG_CACHE.get(key) ?? null;
-
-  const custom = parseDiscordEmoji(key);
   try {
-    let url: string;
-    if (custom) {
-      url = `https://cdn.discordapp.com/emojis/${custom.id}.png?size=128&quality=lossless`;
-    } else {
-      const code = emojiToCode(key);
-      if (!code) {
-        SYMBOL_IMG_CACHE.set(key, null);
-        return null;
-      }
-      url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/${code}.png`;
-    }
     const res = await fetch(url, { signal: AbortSignal.timeout(6_000) });
     if (!res.ok) {
       SYMBOL_IMG_CACHE.set(key, null);
@@ -100,6 +87,51 @@ export async function loadCurrencyImage(
     return img;
   } catch {
     SYMBOL_IMG_CACHE.set(key, null);
+    return null;
+  }
+}
+
+/** Load Discord custom emoji (animated → GIF frame) or Twemoji; cached. */
+export async function loadCurrencyImage(
+  mod: CanvasMod,
+  symbol: string,
+  opts?: { preferAnimated?: boolean },
+): Promise<CurrencyImg | null> {
+  const key = symbol.trim();
+  if (!key) return null;
+  if (/^https?:\/\//i.test(key)) return loadImageUrl(mod, key);
+
+  const cacheKey = opts?.preferAnimated ? `a:${key}` : key;
+  if (SYMBOL_IMG_CACHE.has(cacheKey)) return SYMBOL_IMG_CACHE.get(cacheKey) ?? null;
+
+  const custom = parseDiscordEmoji(key);
+  try {
+    let url: string;
+    if (custom) {
+      const wantGif = Boolean(opts?.preferAnimated && custom.animated);
+      const ext = wantGif ? "gif" : "png";
+      url = `https://cdn.discordapp.com/emojis/${custom.id}.${ext}?size=128&quality=lossless`;
+      let img = await loadImageUrl(mod, url);
+      if (!img && wantGif) {
+        img = await loadImageUrl(
+          mod,
+          `https://cdn.discordapp.com/emojis/${custom.id}.png?size=128&quality=lossless`,
+        );
+      }
+      SYMBOL_IMG_CACHE.set(cacheKey, img);
+      return img;
+    }
+    const code = emojiToCode(key);
+    if (!code) {
+      SYMBOL_IMG_CACHE.set(cacheKey, null);
+      return null;
+    }
+    url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/${code}.png`;
+    const img = await loadImageUrl(mod, url);
+    SYMBOL_IMG_CACHE.set(cacheKey, img);
+    return img;
+  } catch {
+    SYMBOL_IMG_CACHE.set(cacheKey, null);
     return null;
   }
 }

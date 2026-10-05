@@ -41,6 +41,7 @@ import {
   summarizeRequirements,
 } from "./ub-items.js";
 import { syncUbStoreRoleLinks } from "./ub-sync.js";
+import { roleCollectCooldownSec } from "./collect-roles.js";
 import {
   getOrCreateUbSettings,
   updateUbSettings,
@@ -434,15 +435,18 @@ async function renderRolesEconomy(
     }
   }
   const cds = readCooldowns(settings);
-
   const roleLines = roles.slice(0, 15).map(r => {
     const ub = r.ubItemId ? " · UB" : "";
-    const income = (r.incomeAmount ?? 0) !== 0 ? ` · collect ${fmt(r.incomeAmount ?? 0)}` : " · collect off";
+    const cdSec = roleCollectCooldownSec(r, cds.collectSec);
+    const cdMin = Math.round(cdSec / 60);
+    const income = (r.incomeAmount ?? 0) !== 0
+      ? ` · collect ${fmt(r.incomeAmount ?? 0)}/${cdMin}m`
+      : " · collect off";
     return `${r.enabled ? "✅" : "⏸"} ${r.emoji || "✨"} **${r.name}** — ${fmt(r.price)} cash` +
       income +
       (r.discordRoleId ? ` · <@&${r.discordRoleId}>` : "") +
       ub;
-  }).join("\n") || "_No roles yet — sync pulls UnbelievaBoat store role items, or use **Add perk**._";
+  }).join("\n") || "_No roles yet — **Sync** pulls UB store roles, or **Add collect role** for any Discord role._";
 
   const embed = new EmbedBuilder()
     .setColor(0xe91e8c)
@@ -455,17 +459,19 @@ async function renderRolesEconomy(
         `API **${settings.enabled ? "on" : "off"}** · Store **${settings.storeEnabled !== false ? "on" : "off"}** · Games **${settings.gamesEnabled !== false ? "on" : "off"}**`,
         `Daily **${settings.dailyMin ?? 100}–${settings.dailyMax ?? 250}** · Collect CD **${Math.round((cds.collectSec || 86400) / 60)}m** · LB **${settings.leaderboardSort}**`,
         "",
-        "Open a role to edit **price / collect income**, **Discord emoji·GIF icon**, and real UnbelievaBoat **actions** (add roles, balance…) + **requirements** (must have role / balance).",
+        "Open a role to edit **collect income + per-role cooldown**, **Discord emoji·GIF**, and UB **actions / requirements**.",
+        "Synced UB store roles start at income **0** — set income to include them in Collect. **Add collect role** for any Discord role (UB Role Income style).",
       ].filter(Boolean).join("\n"),
     )
     .addFields({ name: `Roles (${roles.length})`, value: roleLines.slice(0, 1024) || "_None_" })
-    .setFooter({ text: "UB actions/requirements · Discord icon pickers · collect income" });
+    .setFooter({ text: "Per-role collect CD · Discord icon pickers · UB actions" });
 
   const editChoices = roles.slice(0, 25).map(r => {
     const emoji = resolveSelectEmoji(r.emoji || "✨");
+    const cdMin = Math.round(roleCollectCooldownSec(r, cds.collectSec) / 60);
     return {
       label: `Open · ${r.name}`.slice(0, 100),
-      description: `price ${r.price} · collect ${r.incomeAmount ?? 0}${r.ubItemId ? " · UB item" : ""}`.slice(0, 100),
+      description: `collect ${r.incomeAmount ?? 0} / ${cdMin}m${r.ubItemId ? " · UB" : ""}`.slice(0, 100),
       value: String(r.id),
       ...(emoji ? { emoji } : {}),
     };
@@ -474,10 +480,10 @@ async function renderRolesEconomy(
   const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("ubadmin:overview").setLabel("← Hub").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ubadmin:store").setLabel("Store").setEmoji("🛒").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ubadmin:re_economy").setLabel("Economy settings").setEmoji("⚙️").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ubadmin:re_refresh").setLabel("Sync / refresh").setEmoji("🔄").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ubadmin:add_perk").setLabel("Add perk").setEmoji("✨").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("ubadmin:re_add_collect").setLabel("Add collect role").setEmoji("🏦").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("ubadmin:re_economy").setLabel("Economy").setEmoji("⚙️").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("ubadmin:re_refresh").setLabel("Sync UB").setEmoji("🔄").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ubadmin:add_perk").setLabel("Add perk").setEmoji("✨").setStyle(ButtonStyle.Primary),
     ),
   ];
   if (editChoices.length) {
@@ -543,14 +549,14 @@ async function renderRoleDetail(
         flash ? `${flash}\n` : null,
         row.discordRoleId ? `Discord role: <@&${row.discordRoleId}>` : "_No Discord role_",
         row.ubItemId ? `UB item: \`${row.ubItemId}\`` : "_Local-only (not in UB store)_",
-        `Price **${fmt(row.price)}** · Collect income **${fmt(row.incomeAmount ?? 0)}** · ${row.enabled ? "✅ listed" : "⏸ hidden"}`,
+        `Price **${fmt(row.price)}** · Collect **${fmt(row.incomeAmount ?? 0)}** / **${Math.round(roleCollectCooldownSec(row, readCooldowns(settings).collectSec) / 60)}m** · ${row.enabled ? "✅ listed" : "⏸ hidden"}`,
       ].filter(Boolean).join("\n"),
     )
     .addFields(
       { name: "UB actions (on buy)", value: actionsText.slice(0, 1024) },
       { name: "UB requirements (to buy)", value: reqsText.slice(0, 1024) },
     )
-    .setFooter({ text: "Icons use Discord’s emoji / GIF pickers · actions sync to UnbelievaBoat" });
+    .setFooter({ text: "Per-role collect cooldown · Discord emoji/GIF pickers · UB actions" });
   if (imageUrl) applyStoreImageToEmbed(embed, imageUrl);
 
   const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder | RoleSelectMenuBuilder>[] = [
@@ -914,6 +920,77 @@ export async function handleUbAdminComponent(
     return;
   }
 
+  if (id === "ubadmin:re_add_collect" && interaction.isButton()) {
+    const roleMenu = new RoleSelectMenuBuilder()
+      .setCustomId("ubadmin:re_add_collect_role")
+      .setPlaceholder("Which Discord role should pay on Collect?")
+      .setMaxValues(1);
+    await interaction.reply({
+      content:
+        "Pick any server role to add as a **collect income** role (works like UnbelievaBoat Role Income).\n" +
+        "After adding, set **income** + **cooldown minutes** (match UB’s timer).",
+      components: [new ActionRowBuilder<RoleSelectMenuBuilder>().addComponents(roleMenu)],
+      ...EPHEMERAL,
+    });
+    return;
+  }
+
+  if (id === "ubadmin:re_add_collect_role" && interaction.isRoleSelectMenu()) {
+    const roleId = interaction.values[0]!;
+    const role = interaction.guild?.roles.cache.get(roleId);
+    const existing = (await listRoleLinks(guildId)).find(r => r.discordRoleId === roleId);
+    if (existing) {
+      await interaction.reply({
+        content: `<@&${roleId}> is already linked as **${existing.name}**. Open it in Roles & economy to set income/cooldown.`,
+        ...EPHEMERAL,
+      });
+      return;
+    }
+    const settings = await getOrCreateUbSettings(guildId);
+    const cdSec = readCooldowns(settings).collectSec;
+    const modal = new ModalBuilder()
+      .setCustomId(`ubadmin:re_add_collect_modal:${roleId}`)
+      .setTitle("New collect role");
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("name")
+          .setLabel("Display name")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(80)
+          .setValue((role?.name || "Collect role").slice(0, 80)),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("income")
+          .setLabel("Collect income per claim")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue("1000"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("cooldown_min")
+          .setLabel("Collect cooldown (minutes)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue(String(Math.round(cdSec / 60))),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("emoji")
+          .setLabel("Emoji (Discord picker paste)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(80)
+          .setValue("✨"),
+      ),
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
   if (id === "ubadmin:re_edit_pick" && interaction.isStringSelectMenu()) {
     await interaction.deferUpdate();
     const linkId = Number(interaction.values[0]);
@@ -929,9 +1006,13 @@ export async function handleUbAdminComponent(
       await interaction.reply({ content: "That role is gone.", ...EPHEMERAL });
       return;
     }
+    const settings = await getOrCreateUbSettings(guildId);
+    const defaultCdMin = Math.round(readCooldowns(settings).collectSec / 60);
+    const meta = (row.meta ?? {}) as Record<string, unknown>;
+    const cdSec = roleCollectCooldownSec(row, readCooldowns(settings).collectSec);
     const modal = new ModalBuilder()
       .setCustomId(`ubadmin:re_edit_modal:${linkId}`)
-      .setTitle("Price & collect income");
+      .setTitle("Price · income · cooldown");
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -953,14 +1034,25 @@ export async function handleUbAdminComponent(
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
+          .setCustomId("cooldown_min")
+          .setLabel(`Collect cooldown minutes (default ${defaultCdMin})`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(8)
+          .setValue(String(Math.round(cdSec / 60)))
+          .setPlaceholder(`Match UB Role Income timer, e.g. ${defaultCdMin}`),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
           .setCustomId("description")
           .setLabel("Short description")
-          .setStyle(TextInputStyle.Paragraph)
+          .setStyle(TextInputStyle.Short)
           .setRequired(false)
-          .setMaxLength(200)
-          .setValue((row.description || "").slice(0, 200)),
+          .setMaxLength(100)
+          .setValue((row.description || "").slice(0, 100)),
       ),
     );
+    void meta;
     await interaction.showModal(modal);
     return;
   }
@@ -2138,10 +2230,63 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     return;
   }
 
+  if (parts[1] === "re_add_collect_modal" && parts[2]) {
+    const roleId = parts[2]!;
+    const name = interaction.fields.getTextInputValue("name").trim();
+    const income = Number(interaction.fields.getTextInputValue("income").trim());
+    const cooldownMin = Number(interaction.fields.getTextInputValue("cooldown_min").trim());
+    let emojiRaw = "✨";
+    try {
+      emojiRaw = interaction.fields.getTextInputValue("emoji")?.trim() || "✨";
+    } catch {
+      emojiRaw = "✨";
+    }
+    if (!name || !Number.isFinite(income) || income === 0) {
+      await interaction.reply({ content: "Need a name and a non-zero collect income.", ...EPHEMERAL });
+      return;
+    }
+    if (!Number.isFinite(cooldownMin) || cooldownMin < 0) {
+      await interaction.reply({ content: "Cooldown minutes must be non-negative.", ...EPHEMERAL });
+      return;
+    }
+    await interaction.deferReply(EPHEMERAL);
+    const icon = normalizeStoreIconInput(emojiRaw);
+    const meta: Record<string, unknown> = {
+      collectCooldownSec: Math.max(0, Math.floor(cooldownMin * 60)),
+    };
+    if (icon.imageUrl) meta.imageUrl = icon.imageUrl;
+    const row = await createRoleLink(guildId, {
+      name,
+      discordRoleId: roleId,
+      price: 0,
+      incomeAmount: Math.floor(income),
+      emoji: icon.emoji,
+      enabled: true,
+    });
+    await updateRoleLink(guildId, row.id, { meta });
+    await writeUbAudit(guildId, interaction.user.id, "discord_collect_role_add", {
+      id: row.id, roleId, income, cooldownMin, emoji: icon.emoji,
+    });
+    const picker = buildPerkIconPicker(row.id, name, icon.emoji, interaction.guild);
+    await interaction.editReply({
+      content:
+        `Added collect role **${name}** → <@&${roleId}> · **${fmt(income)}** every **${Math.floor(cooldownMin)}m**.\n` +
+        `Optional: set a Discord emoji / GIF icon below.`,
+      ...picker,
+    });
+    return;
+  }
+
   if (parts[1] === "re_edit_modal" && parts[2]) {
     const linkId = Number(parts[2]);
     const price = Number(interaction.fields.getTextInputValue("price").trim());
     const income = Number(interaction.fields.getTextInputValue("income").trim());
+    let cooldownMin = NaN;
+    try {
+      cooldownMin = Number(interaction.fields.getTextInputValue("cooldown_min").trim());
+    } catch {
+      cooldownMin = NaN;
+    }
     let description = "";
     try {
       description = interaction.fields.getTextInputValue("description")?.trim() || "";
@@ -2152,6 +2297,10 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       await interaction.reply({ content: "Price and income must be non-negative numbers.", ...EPHEMERAL });
       return;
     }
+    if (!Number.isFinite(cooldownMin) || cooldownMin < 0) {
+      await interaction.reply({ content: "Cooldown minutes must be a non-negative number.", ...EPHEMERAL });
+      return;
+    }
     await interaction.deferReply(EPHEMERAL);
     const roles = await listRoleLinks(guildId);
     const row = roles.find(r => r.id === linkId);
@@ -2159,10 +2308,15 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       await interaction.editReply("That perk is gone.");
       return;
     }
+    const meta: Record<string, unknown> = {
+      ...(row.meta as Record<string, unknown>),
+      collectCooldownSec: Math.max(0, Math.floor(cooldownMin * 60)),
+    };
     await updateRoleLink(guildId, linkId, {
       price: Math.floor(price),
       incomeAmount: Math.floor(income),
       description: description || row.description,
+      meta,
     });
     if (row.ubItemId && isUbConfigured()) {
       const settings = await getOrCreateUbSettings(guildId);
@@ -2174,12 +2328,12 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       } catch { /* local still saved */ }
     }
     await writeUbAudit(guildId, interaction.user.id, "discord_perk_edit", {
-      id: linkId, price, income, description,
+      id: linkId, price, income, cooldownMin, description,
     });
     await interaction.editReply(
-      `Updated **${row.name}**: price **${fmt(price)}** · collect income **${fmt(income)}**/claim` +
-      (row.ubItemId ? " _(also patched UnbelievaBoat item price)_" : "") +
-      `\n_Re-open the role in **Roles & economy** to continue editing actions / requirements / icon._`,
+      `Updated **${row.name}**: price **${fmt(price)}** · collect **${fmt(income)}** every **${Math.floor(cooldownMin)}m**` +
+      (row.ubItemId ? " _(UB item price patched)_" : "") +
+      `\n_Re-open the role in **Roles & economy** for icon / actions / requirements._`,
     );
     return;
   }
