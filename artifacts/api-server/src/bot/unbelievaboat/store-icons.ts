@@ -86,10 +86,27 @@ export function isHttpImageUrl(url: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    return /\.(png|jpe?g|gif|webp)(\?|$)/i.test(u.pathname) || u.hostname.includes("discord");
+    // Discord CDN / media / GIF hosts often omit a file extension in the path.
+    if (
+      u.hostname.includes("discordapp.net")
+      || u.hostname.includes("discordapp.com")
+      || u.hostname.includes("discord.com")
+      || u.hostname.includes("tenor.com")
+      || u.hostname.includes("giphy.com")
+      || u.hostname.includes("media.tenor")
+    ) {
+      return true;
+    }
+    return /\.(png|jpe?g|gif|webp)(\?|$)/i.test(u.pathname);
   } catch {
     return false;
   }
+}
+
+/** Safe prefix for embed titles — custom markup sticks in Discord titles. */
+export function titleSafeStoreEmoji(emoji: string | null | undefined, fallback = "✨"): string {
+  if (!emoji?.trim() || emoji.includes("<")) return fallback;
+  return emoji.trim();
 }
 
 /** True when Discord should play the image as an animated GIF on embeds. */

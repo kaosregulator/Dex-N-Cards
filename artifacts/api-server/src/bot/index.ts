@@ -1271,6 +1271,15 @@ export async function startBot() {
     if (msg.author.bot || !msg.guild) return;
     const content = msg.content.trim();
 
+    // UB store icon capture: admin used “Pick in chat” — consume emoji/GIF and
+    // delete their message before any prefix / catch handling.
+    try {
+      const { tryConsumeIconCaptureMessage } = await import("./unbelievaboat/icon-capture.js");
+      if (await tryConsumeIconCaptureMessage(msg)) return;
+    } catch (err) {
+      logger.debug({ err }, "UB icon capture hook error");
+    }
+
     // AFK Secretary: clear the author's "on return" AFK (past grace) and post
     // the intercept embed if they pinged anyone away. Fire-and-forget — never
     // consumes the message or blocks the prefix / card-catch pipeline below.
