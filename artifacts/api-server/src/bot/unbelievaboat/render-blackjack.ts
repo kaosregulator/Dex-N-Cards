@@ -252,13 +252,13 @@ export async function renderBlackjackTablePng(opts: BjTableOpts): Promise<Buffer
   }
 }
 
-function drawSquaredDeck(ctx: Ctx, label = "Deck ready") {
+function drawSquaredDeck(ctx: Ctx, label = "Deck ready", title = "DECK READY") {
   felt(ctx);
   tableLabels(ctx);
   ctx.fillStyle = "#fde68a";
   ctx.font = "bold 18px sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("SHUFFLING THE DECK", BJ_W / 2, 36);
+  ctx.fillText(title, BJ_W / 2, 36);
   const cx = BJ_W / 2;
   const cy = BJ_H / 2 + 10;
   const cw = 48;
@@ -278,7 +278,7 @@ export async function renderBlackjackShufflePng(): Promise<Buffer | null> {
   try {
     const canvas = mod.createCanvas(BJ_W, BJ_H);
     const ctx = canvas.getContext("2d") as unknown as Ctx;
-    drawSquaredDeck(ctx, "Deck ready — dealing…");
+    drawSquaredDeck(ctx, "Deck ready — dealing…", "DECK READY");
     return await canvas.encode("png");
   } catch {
     return null;
@@ -302,7 +302,7 @@ export async function renderBlackjackShuffleGif(): Promise<AnimationResult | nul
       const mt = motionT(t, MOTION_END);
       // Hard freeze on squared deck for the hold tail
       if (t >= MOTION_END) {
-        drawSquaredDeck(ctx, "Deck ready — dealing…");
+        drawSquaredDeck(ctx, "Deck ready — dealing…", "DECK READY");
         return;
       }
 
