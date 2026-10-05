@@ -10,7 +10,8 @@ import { CashError } from "./cash.js";
 /** Defaults aligned with UnbelievaBoat FAQ (income + game window). */
 export const DEFAULT_COOLDOWNS = {
   dailySec: 20 * 60 * 60,       // Cash Check-In (our addon)
-  collectSec: 24 * 60 * 60,     // Role income collect
+  // Fallback only — each role can override via meta.collectCooldownSec (UB Role Income style).
+  collectSec: 24 * 60 * 60,
   workSec: 4 * 60 * 60,         // /work style
   crimeSec: 4 * 60 * 60,
   begSec: 4 * 60 * 60,          // /slut
