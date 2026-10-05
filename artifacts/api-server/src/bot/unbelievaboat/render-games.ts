@@ -158,114 +158,12 @@ export async function renderRouletteGif(opts: {
   });
 }
 
-export async function renderBlackjackTableGif(opts: {
-  player: Card[];
-  dealer: Card[];
-  hideDealer: boolean;
-  banner?: string;
-  /** When true, animate the hole card flipping face-up (reveal). */
-  revealHole?: boolean;
-  /**
-   * Only animate player cards from this index onward.
-   * Earlier cards stay static face-up (already dealt).
-   * Default 0 = deal all. Use player.length-1 on hit.
-   */
-  animatePlayerFrom?: number;
-  /**
-   * Only animate dealer cards from this index onward.
-   * Hole stays face-down when hideDealer unless revealHole.
-   */
-  animateDealerFrom?: number;
-}): Promise<AnimationResult | null> {
-  const cardW = 64;
-  const cardH = 90;
-  const gap = 14;
-  const animatePlayerFrom = opts.animatePlayerFrom ?? 0;
-  const animateDealerFrom = opts.animateDealerFrom ?? 0;
-  const onlyNew =
-    animatePlayerFrom > 0
-    || animateDealerFrom > 0
-    || (!!opts.revealHole && animateDealerFrom === 0 && opts.dealer.length <= 2);
-
-  // Short clip when only one new card / hole flip; longer for full deal or result
-  const durationMs = opts.banner ? 2200 : onlyNew ? 1100 : 1600;
-  const maxFrames = opts.banner ? 22 : onlyNew ? 14 : 18;
-
-  return encodeAnimation({
-    width: BJ_W, height: BJ_H, durationMs, speed: "normal", maxFrames, quality: 14,
-    render: async ({ ctx, t }) => {
-      felt(ctx, BJ_W, BJ_H);
-
-      ctx.fillStyle = "rgba(16, 185, 129, 0.12)";
-      ctx.beginPath();
-      ctx.ellipse(BJ_W / 2, BJ_H / 2 + 10, 220, 110, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = "#ecfdf5";
-      ctx.font = "bold 15px sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText("DEALER", 40, 40);
-      ctx.fillText("YOU", 40, 200);
-
-      const dealerY = 52;
-      const playerY = 214;
-      const dealerStartX = Math.max(40, (BJ_W - (opts.dealer.length * (cardW + gap) - gap)) / 2);
-      const playerStartX = Math.max(40, (BJ_W - (opts.player.length * (cardW + gap) - gap)) / 2);
-
-      opts.dealer.forEach((c, i) => {
-        const x = dealerStartX + i * (cardW + gap);
-        const stayDown = opts.hideDealer && i === 1 && !opts.revealHole;
-
-        // Hole reveal: flip this one card from blank back → face
-        if (opts.revealHole && i === 1) {
-          const flipT = Math.min(1, Math.max(0, (t - 0.05) / 0.4));
-          drawCardFace(ctx, x, dealerY, cardLabel(c), false, flipT, cardW, cardH);
-          return;
-        }
-
-        const shouldAnimate = i >= animateDealerFrom;
-        if (!shouldAnimate || stayDown) {
-          drawCardFace(ctx, x, dealerY, cardLabel(c), stayDown, stayDown ? 0 : 1, cardW, cardH);
-          return;
-        }
-
-        // New dealer hit card: slide + flip once onto the felt
-        const localStart = 0.15 + (i - Math.max(animateDealerFrom, 2)) * 0.14;
-        const dealT = Math.min(1, Math.max(0, (t - localStart) / 0.4));
-        if (dealT <= 0) return;
-        const slideY = (1 - dealT) * -36;
-        const flip = Math.min(1, Math.max(0, (dealT - 0.1) / 0.55));
-        drawCardFace(ctx, x, dealerY + slideY, cardLabel(c), false, flip, cardW, cardH);
-      });
-
-      opts.player.forEach((c, i) => {
-        const x = playerStartX + i * (cardW + gap);
-        const shouldAnimate = i >= animatePlayerFrom;
-
-        if (!shouldAnimate) {
-          drawCardFace(ctx, x, playerY, cardLabel(c), false, 1, cardW, cardH);
-          return;
-        }
-
-        const localStart = (i - animatePlayerFrom) * 0.1;
-        const dealT = Math.min(1, Math.max(0, (t - localStart) / 0.4));
-        if (dealT <= 0) return;
-        const slideY = (1 - dealT) * 32;
-        // New card starts face-down (blank back) then flips once onto the table
-        const flip = Math.min(1, Math.max(0, (dealT - 0.15) / 0.55));
-        drawCardFace(ctx, x, playerY + slideY, cardLabel(c), false, flip, cardW, cardH);
-      });
-
-      if (opts.banner && t > 0.55) {
-        const fade = Math.min(1, (t - 0.55) / 0.2);
-        ctx.fillStyle = `rgba(251, 191, 36, ${fade})`;
-        ctx.font = "bold 28px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(opts.banner, BJ_W / 2, BJ_H / 2 + 8);
-      }
-    },
-  });
-}
+/** @deprecated use render-blackjack.js — kept as re-export for older imports */
+export {
+  renderBlackjackTableGif,
+  renderBlackjackTablePng,
+  renderBlackjackShuffleGif,
+} from "./render-blackjack.js";
 
 /** @deprecated alias */
 export async function renderBlackjackGif(opts: {

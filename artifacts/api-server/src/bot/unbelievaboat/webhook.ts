@@ -147,6 +147,8 @@ export async function editUnbelievaBoatMessage(
       embeds: opts.embeds,
       files: opts.files,
       components: opts.components,
+      // Drop prior GIF attachment so the settle PNG (or next beat) is the only image.
+      attachments: [],
     });
   } catch (err) {
     logger.debug({ err, messageId: message.id }, "UnbelievaBoat message edit failed");
@@ -155,13 +157,13 @@ export async function editUnbelievaBoatMessage(
 }
 
 /**
- * Post as UnbelievaBoat via webhook. Returns the message id, or null when the
- * caller should fall back to a normal bot reply on the interaction.
+ * Post as UnbelievaBoat via webhook. Returns the Message (for edit/settle),
+ * or null when the caller should fall back to a normal bot reply.
  */
 export async function postAsUnbelievaBoat(
   interaction: Interaction & { channel: Interaction["channel"] },
   opts: PostAsUnbelievaBoatOpts,
-): Promise<string | null> {
+): Promise<Message | null> {
   const { host, threadId } = webhookHost(interaction.channel);
   if (!host || !interaction.client) return null;
 
@@ -198,7 +200,7 @@ export async function postAsUnbelievaBoat(
       logger.debug({ channelId: host.id }, "UnbelievaBoat webhook dropped components — falling back");
       return null;
     }
-    return sent.id;
+    return sent;
   } catch (err) {
     webhookCache.delete(host.id);
     logger.debug({ err, channelId: host.id }, "UnbelievaBoat webhook send failed");
@@ -223,8 +225,8 @@ export async function replyThenPostAsUnbelievaBoat(
     await interaction.deferReply({ ephemeral: true });
   }
 
-  const id = await postAsUnbelievaBoat(interaction, publicPayload);
-  if (id) {
+  const posted = await postAsUnbelievaBoat(interaction, publicPayload);
+  if (posted) {
     // Prefix (`.daily`): react on the command — no clutter "Posted as UB" reply.
     if (isPrefixChatProxy(interaction)) {
       await interaction.deleteReply().catch(() => {});
@@ -250,7 +252,7 @@ export async function replyThenPostAsUnbelievaBoat(
  * Open an interactive floor table as UnbelievaBoat (webhook + buttons).
  * Private ephemeral ack; buttons live on the webhook message so later
  * deferUpdate/editReply keeps the UnbelievaBoat author.
- * Returns the webhook message id, or null when falling back to a public bot follow-up.
+ * Returns the floor Message (for animate→settle edits), or null on failure.
  */
 export async function openTableAsUnbelievaBoat(
   interaction: Interaction & {
@@ -259,24 +261,25 @@ export async function openTableAsUnbelievaBoat(
     deferReply: (o?: object) => Promise<unknown>;
     editReply: (o: object) => Promise<unknown>;
     followUp: (o: object) => Promise<unknown>;
+    fetchReply?: () => Promise<Message>;
     channel: Interaction["channel"];
   },
   publicPayload: PostAsUnbelievaBoatOpts,
   privateAck = "✅ Opened as **UnbelievaBoat** — play on the floor message.",
-): Promise<string | null> {
+): Promise<Message | null> {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({ ephemeral: true });
   }
 
-  const id = await postAsUnbelievaBoat(interaction, publicPayload);
-  if (id) {
+  const posted = await postAsUnbelievaBoat(interaction, publicPayload);
+  if (posted) {
     if (isPrefixChatProxy(interaction)) {
       await interaction.deleteReply().catch(() => {});
       await interaction.__dnPrefixMessage.react("✅").catch(() => {});
-      return id;
+      return posted;
     }
     await interaction.editReply({ content: privateAck, embeds: [], components: [], files: [] });
-    return id;
+    return posted;
   }
 
   // Webhook unavailable — public follow-up so the floor can still play.
@@ -288,10 +291,14 @@ export async function openTableAsUnbelievaBoat(
       components: publicPayload.components ?? [],
       allowedMentions: UB_NO_ROLE_PINGS,
     });
-    return null;
+    try {
+      return await interaction.fetchReply?.() ?? null;
+    } catch {
+      return null;
+    }
   }
 
-  await interaction.followUp({
+  const follow = await interaction.followUp({
     embeds: publicPayload.embeds ?? [],
     files: publicPayload.files ?? [],
     components: publicPayload.components ?? [],
@@ -303,5 +310,5 @@ export async function openTableAsUnbelievaBoat(
     components: [],
     files: [],
   }).catch(() => {});
-  return null;
+  return follow as Message;
 }
