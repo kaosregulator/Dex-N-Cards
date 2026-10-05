@@ -6,7 +6,7 @@ import { BADGE_LEVEL_MIN, normalizeEarned } from "./levels.js";
 export type { BadgeRule, BadgeTrigger, BadgeEarned };
 
 export const ALLOWED_TRIGGERS: BadgeTrigger[] = [
-  "manual", "messages", "attachments", "reactions", "streak", "collection", "trivia",
+  "manual", "messages", "attachments", "reactions", "streak", "collection", "trivia", "artshow",
 ];
 
 export const CHANNEL_TRIGGERS: BadgeTrigger[] = ["messages", "attachments", "reactions"];
@@ -131,6 +131,97 @@ export const DEFAULT_BADGE_RULES: BadgeRule[] = [
     trigger: "collection",
     threshold: 0,
   },
+  // Art Show — submit → vote → crown progression
+  {
+    id: "art_exhibitor",
+    name: "Exhibitor",
+    emoji: "🖼️",
+    description: "Hung your first piece in the Art Show",
+    trigger: "artshow",
+    threshold: 1,
+    artshowMode: "submit",
+  },
+  {
+    id: "art_regular",
+    name: "Studio Regular",
+    emoji: "🎨",
+    description: "Submitted several pieces to the show",
+    trigger: "artshow",
+    threshold: 5,
+    artshowMode: "submit",
+  },
+  {
+    id: "art_gallery",
+    name: "Gallery Maker",
+    emoji: "🏛️",
+    description: "Filled the hall with many pieces",
+    trigger: "artshow",
+    threshold: 15,
+    artshowMode: "submit",
+  },
+  {
+    id: "art_patron",
+    name: "Patron",
+    emoji: "🎟️",
+    description: "Cast enough Art Show votes",
+    trigger: "artshow",
+    threshold: 10,
+    artshowMode: "votes_cast",
+  },
+  {
+    id: "art_critic",
+    name: "Critic",
+    emoji: "🔎",
+    description: "A dedicated voter of the Art Show",
+    trigger: "artshow",
+    threshold: 50,
+    artshowMode: "votes_cast",
+  },
+  {
+    id: "art_rising",
+    name: "Rising Artist",
+    emoji: "✨",
+    description: "One piece reached notable votes",
+    trigger: "artshow",
+    threshold: 10,
+    artshowMode: "votes_received",
+  },
+  {
+    id: "art_crowd",
+    name: "Crowd Favorite",
+    emoji: "🌟",
+    description: "One piece won the crowd",
+    trigger: "artshow",
+    threshold: 25,
+    artshowMode: "votes_received",
+  },
+  {
+    id: "art_star",
+    name: "Show Star",
+    emoji: "💫",
+    description: "A piece became a sensation",
+    trigger: "artshow",
+    threshold: 50,
+    artshowMode: "votes_received",
+  },
+  {
+    id: "art_champion",
+    name: "Hall Champion",
+    emoji: "🏆",
+    description: "Crowned weekly Art Show winner",
+    trigger: "artshow",
+    threshold: 1,
+    artshowMode: "crown",
+  },
+  {
+    id: "art_legend",
+    name: "Museum Legend",
+    emoji: "👑",
+    description: "Multiple Hall of Fame crowns",
+    trigger: "artshow",
+    threshold: 3,
+    artshowMode: "crown",
+  },
 ];
 
 export function getBadgeRules(rules: BadgeRule[] | null | undefined): BadgeRule[] {
@@ -154,6 +245,7 @@ export function getBadgeRules(rules: BadgeRule[] | null | undefined): BadgeRule[
     threshold: Math.floor(Number(rule.threshold)),
     channel: rule.channel ?? null,
     triviaMode: rule.triviaMode ?? null,
+    artshowMode: rule.artshowMode ?? null,
   }));
 }
 

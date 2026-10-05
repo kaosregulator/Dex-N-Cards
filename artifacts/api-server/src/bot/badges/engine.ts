@@ -167,6 +167,39 @@ export async function takeBadge(opts: {
   return { ok: true, rule };
 }
 
+/**
+ * Award / level Art Show badges from activity counters.
+ * mode: submit | votes_cast | votes_received | crown
+ * count: lifetime (or peak votes on one piece for votes_received)
+ */
+export async function awardArtShowBadges(opts: {
+  guildId: string;
+  userId: string;
+  mode: "submit" | "votes_cast" | "votes_received" | "crown";
+  count: number;
+}): Promise<{ awarded: string[]; labels: string; results: LevelGainResult[]; rules: BadgeRule[] }> {
+  const settings = await getOrCreateBadgeSettings(opts.guildId);
+  if (!settings.enabled) return { awarded: [], labels: "", results: [], rules: [] };
+  const rules = rulesForGuild(settings);
+  const results: LevelGainResult[] = [];
+
+  for (const rule of rules.filter(r => r.trigger === "artshow")) {
+    const mode = rule.artshowMode ?? "any";
+    if (mode !== "any" && mode !== opts.mode) continue;
+    if (opts.count < Math.max(1, rule.threshold)) continue;
+    const result = await unlockOrLevel(opts.guildId, opts.userId, rule.id, "artshow");
+    if (result) results.push(result);
+  }
+
+  const flashy = results.filter(r => r.unlocked || r.leveled);
+  return {
+    awarded: flashy.map(r => r.badge.id),
+    labels: formatBadgeNames(flashy.map(r => r.badge.id), rules),
+    results,
+    rules,
+  };
+}
+
 /** Award / level trivia-mode badges (no Discord roles). */
 export async function awardTriviaBadges(opts: {
   guildId: string;

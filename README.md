@@ -271,6 +271,7 @@ tank · aircraft · ship · vehicle · infantry · boss · community · event ·
 | [`docs/unbelievaboat.md`](./docs/unbelievaboat.md) | UnbelievaBoat + casino |
 | [`docs/tatsu.md`](./docs/tatsu.md) | Tatsu score/points Discord dashboard |
 | [`docs/trivia.md`](./docs/trivia.md) | Community trivia / QOTD / flash host |
+| [`docs/artshow.md`](./docs/artshow.md) | Community Art Show — gallery, votes, emblems, museum |
 | [`docs/railway.md`](./docs/railway.md) | Railway deploy |
 | [`docs/battle-system.md`](./docs/battle-system.md) | Battles |
 | [`docs/headquarters.md`](./docs/headquarters.md) | Player HQ |

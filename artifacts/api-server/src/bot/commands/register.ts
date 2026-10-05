@@ -21,6 +21,7 @@ import {
   buildBadgesCommandJson,
   buildBadgeCommandJson,
 } from "../badges/definition.js";
+import { buildArtShowCommandJson } from "../artshow/definition.js";
 import {
   buildLotteryCommandJson,
   buildLotteryAdminCommandJson,
@@ -87,6 +88,7 @@ function buildLegacyCommands() {
     buildMemberDateCommandJson(),
     buildBadgesCommandJson(),
     buildBadgeCommandJson(),
+    buildArtShowCommandJson(),
     buildLotteryCommandJson(),
     buildLotteryAdminCommandJson(),
 
