@@ -3,9 +3,14 @@
 
 import { encodeAnimation, type Ctx } from "../animations/engine.js";
 import type { AnimationResult } from "../animations/types.js";
+import {
+  drawCurrencyIcon,
+  loadCurrencyImage,
+  loadImageUrl,
+  symbolDisplayName,
+} from "./currency-canvas.js";
 
-const W = 520;
-const H = 320;
+const W = 560;
 
 type Particle = {
   ox: number;
@@ -13,6 +18,15 @@ type Particle = {
   phase: number;
   size: number;
   kind: "coin" | "ring";
+};
+
+export type CollectBoardRole = {
+  name: string;
+  income: number;
+  /** Unicode or `<:name:id>` — loaded as image on the board */
+  emoji?: string;
+  /** Uploaded GIF / Discord emoji CDN / role icon — preferred over emoji markup */
+  imageUrl?: string;
 };
 
 function seeded(n: number) {
@@ -27,7 +41,7 @@ function buildParticles(count: number): Particle[] {
     const r = 70 + seeded(i * 7.7) * 160;
     out.push({
       ox: W / 2 + Math.cos(a) * r,
-      oy: H / 2 - 10 + Math.sin(a) * r * 0.72,
+      oy: H_BASE / 2 - 10 + Math.sin(a) * r * 0.72,
       phase: seeded(i * 1.9),
       size: 7 + seeded(i * 4.2) * 9,
       kind: i % 3 === 0 ? "ring" : "coin",
@@ -35,6 +49,8 @@ function buildParticles(count: number): Particle[] {
   }
   return out;
 }
+
+const H_BASE = 320;
 
 function drawCoin(ctx: Ctx, x: number, y: number, r: number, squash: number) {
   ctx.save();
@@ -66,7 +82,6 @@ function easeInCubic(t: number) {
 }
 
 function wallet(ctx: Ctx, cx: number, cy: number, open: number) {
-  // Soft glow
   ctx.fillStyle = `rgba(245, 200, 76, ${0.12 + open * 0.18})`;
   ctx.beginPath(); ctx.arc(cx, cy, 54 + open * 10, 0, Math.PI * 2); ctx.fill();
 
@@ -86,9 +101,15 @@ function wallet(ctx: Ctx, cx: number, cy: number, open: number) {
   ctx.beginPath(); ctx.arc(cx + 28, cy + 8, 6, 0, Math.PI * 2); ctx.fill();
 }
 
+function boardHeight(roleCount: number): number {
+  const n = Math.min(12, Math.max(0, roleCount));
+  // Header + amount + role rows + wallet + footer
+  return Math.min(720, 280 + n * 28 + (n > 0 ? 40 : 0));
+}
+
 /**
  * Coins/rings scatter around the wallet, then reverse-collect inward while
- * the balance count-up animates. Mario/Sonic energy — collection, not payout.
+ * the balance count-up animates. Lists every collected role with its icon.
  */
 export async function renderCoinCollectGif(opts: {
   amount: number;
@@ -96,16 +117,45 @@ export async function renderCoinCollectGif(opts: {
   newCash: number;
   newBank: number;
   title?: string;
+  /** @deprecated prefer `roles` */
   roleLines?: string[];
+  roles?: CollectBoardRole[];
 }): Promise<AnimationResult | null> {
-  const particles = buildParticles(22);
+  const roles: CollectBoardRole[] = opts.roles?.length
+    ? opts.roles
+    : (opts.roleLines ?? []).map(line => ({ name: line, income: 0 }));
+
+  const H = boardHeight(roles.length);
+  const particles = buildParticles(18);
+  // Re-seed particle origins for taller boards
+  for (let i = 0; i < particles.length; i++) {
+    const a = seeded(i * 3.1) * Math.PI * 2;
+    const r = 60 + seeded(i * 7.7) * Math.min(140, H * 0.35);
+    particles[i]!.ox = W / 2 + Math.cos(a) * r;
+    particles[i]!.oy = H * 0.55 + Math.sin(a) * r * 0.55;
+  }
+
   const title = opts.title ?? "COLLECTED";
-  const label = opts.symbol.length <= 4 ? opts.symbol : "💵";
+  const { getCanvas } = await import("../animations/engine.js");
+  const mod = await getCanvas();
+  if (!mod) return null;
+  const symbolImg = await loadCurrencyImage(mod, opts.symbol);
+  const roleImgs = await Promise.all(
+    roles.map(async (r) => {
+      if (r.imageUrl) {
+        const fromUrl = await loadImageUrl(mod, r.imageUrl);
+        if (fromUrl) return fromUrl;
+      }
+      if (r.emoji) return loadCurrencyImage(mod, r.emoji, { preferAnimated: true });
+      return null;
+    }),
+  );
+
+  const cashLabel = symbolDisplayName(opts.symbol);
 
   return encodeAnimation({
-    width: W, height: H, durationMs: 2400, speed: "normal", maxFrames: 28, quality: 12,
+    width: W, height: H, durationMs: 2600, speed: "normal", maxFrames: 30, quality: 12,
     render: async ({ ctx, t }) => {
-      // Velvet casino backdrop
       ctx.fillStyle = "#0a1628";
       ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = "#0d2137";
@@ -117,18 +167,20 @@ export async function renderCoinCollectGif(opts: {
       ctx.stroke();
 
       const cx = W / 2;
-      const cy = H / 2 + 18;
-      const gather = Math.min(1, Math.max(0, (t - 0.18) / 0.55));
-      const g = easeInCubic(gather);
+      const listTop = 108;
+      const listH = Math.min(roles.length, 12) * 28;
+      const walletCy = Math.min(H - 70, listTop + listH + 70);
+
+      const gather = Math.min(1, Math.max(0, (t - 0.15) / 0.55));
       const open = t < 0.75 ? Math.sin(t * Math.PI * 2) * 0.5 + 0.5 : 1;
 
-      wallet(ctx, cx, cy, open);
+      wallet(ctx, cx, walletCy, open);
 
       for (const p of particles) {
         const localT = Math.min(1, Math.max(0, (gather - p.phase * 0.15) / 0.85));
         const eg = easeInCubic(localT);
         const x = p.ox + (cx - p.ox) * eg;
-        const y = p.oy + (cy - 6 - p.oy) * eg;
+        const y = p.oy + (walletCy - 6 - p.oy) * eg;
         const fade = 1 - eg * 0.85;
         if (fade < 0.05) continue;
         ctx.globalAlpha = fade;
@@ -138,39 +190,55 @@ export async function renderCoinCollectGif(opts: {
         ctx.globalAlpha = 1;
       }
 
-      // Title + amount
       ctx.fillStyle = "#fde68a";
       ctx.font = "bold 22px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(title, cx, 42);
+      ctx.fillText(title, cx, 40);
 
       const shownAmt = Math.floor(opts.amount * Math.min(1, t / 0.85));
       ctx.fillStyle = "#4ade80";
       ctx.font = "bold 28px sans-serif";
-      ctx.fillText(`+${shownAmt.toLocaleString()} ${label}`, cx, 74);
+      const amtText = `+${shownAmt.toLocaleString()}`;
+      ctx.fillText(amtText, cx - 18, 72);
+      drawCurrencyIcon(ctx, symbolImg, opts.symbol, cx + ctx.measureText(amtText).width / 2 + 6, 72, 26);
 
-      if (opts.roleLines?.length && t > 0.35) {
-        ctx.fillStyle = "#94a3b8";
-        ctx.font = "12px sans-serif";
-        const lines = opts.roleLines.slice(0, 3);
-        if (opts.roleLines.length > 3) {
-          lines[2] = `${opts.roleLines.length} roles total`;
-        }
-        lines.forEach((line, i) => {
-          ctx.fillText(line.slice(0, 58), cx, 96 + i * 15);
+      if (roles.length && t > 0.28) {
+        const show = roles.slice(0, 12);
+        show.forEach((role, i) => {
+          const y = listTop + i * 28;
+          const img = roleImgs[i] ?? null;
+          const left = 48;
+          drawCurrencyIcon(ctx, img, role.emoji || "✨", left + 10, y, 20);
+          ctx.fillStyle = "#e2e8f0";
+          ctx.font = "bold 14px sans-serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          const name = role.name.slice(0, 28);
+          ctx.fillText(name, left + 28, y);
+          ctx.fillStyle = "#4ade80";
+          ctx.textAlign = "right";
+          const sign = role.income >= 0 ? "+" : "";
+          ctx.fillText(`${sign}${role.income.toLocaleString()}`, W - 48, y);
         });
+        if (roles.length > 12) {
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "12px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(`+${roles.length - 12} more roles`, cx, listTop + 12 * 28);
+        }
       }
 
-      if (t > 0.7) {
-        const balT = Math.min(1, (t - 0.7) / 0.3);
+      if (t > 0.72) {
+        const balT = Math.min(1, (t - 0.72) / 0.28);
         const cashShow = Math.floor(opts.newCash * balT + opts.newCash * (1 - balT) * 0.92);
         ctx.fillStyle = "#e2e8f0";
-        ctx.font = "bold 16px sans-serif";
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "center";
         ctx.fillText(
-          `Wallet  cash ${cashShow.toLocaleString()}  ·  bank ${opts.newBank.toLocaleString()}`,
+          `Wallet  cash ${cashShow.toLocaleString()} ${cashLabel}  ·  bank ${opts.newBank.toLocaleString()}`,
           cx,
-          H - 36,
+          H - 32,
         );
       }
     },
@@ -184,7 +252,7 @@ export async function renderDepositGif(opts: {
   newCash: number;
   newBank: number;
 }): Promise<AnimationResult | null> {
-  const label = opts.symbol.length <= 4 ? opts.symbol : "💵";
+  const label = symbolDisplayName(opts.symbol);
   return encodeAnimation({
     width: W, height: 260, durationMs: 1800, speed: "normal", maxFrames: 22, quality: 12,
     render: async ({ ctx, t }) => {
@@ -195,13 +263,11 @@ export async function renderDepositGif(opts: {
       ctx.textAlign = "center";
       ctx.fillText("CASINO DEPOSIT", W / 2, 36);
 
-      // Cash stack left → vault right
       const x = 80 + t * 260;
       drawCoin(ctx, x, 120, 22, 0.7 + Math.abs(Math.cos(t * Math.PI * 4)) * 0.3);
       drawCoin(ctx, x - 14, 132, 18, 0.8);
       drawCoin(ctx, x + 12, 136, 16, 0.75);
 
-      // Vault
       ctx.fillStyle = "#334155";
       ctx.fillRect(360, 70, 110, 110);
       ctx.fillStyle = "#64748b";
@@ -231,7 +297,7 @@ export async function renderWithdrawGif(opts: {
   newCash: number;
   newBank: number;
 }): Promise<AnimationResult | null> {
-  const label = opts.symbol.length <= 4 ? opts.symbol : "💵";
+  const label = symbolDisplayName(opts.symbol);
   return encodeAnimation({
     width: W, height: 260, durationMs: 1800, speed: "normal", maxFrames: 22, quality: 12,
     render: async ({ ctx, t }) => {
