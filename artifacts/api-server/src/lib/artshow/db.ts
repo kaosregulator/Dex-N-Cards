@@ -94,6 +94,32 @@ export async function listPiecesByAuthor(guildId: string, authorId: string, limi
     .limit(limit);
 }
 
+/** Pieces that never got a gallery message (failed hang) — for staff force-repost. */
+export async function listUnpostedPieces(guildId: string, opts?: {
+  weekKey?: string;
+  limit?: number;
+}): Promise<ArtshowPiece[]> {
+  const limit = opts?.limit ?? 25;
+  const week = opts?.weekKey;
+  if (week) {
+    return db.select().from(artshowPiecesTable)
+      .where(and(
+        eq(artshowPiecesTable.guildId, guildId),
+        eq(artshowPiecesTable.weekKey, week),
+        sql`${artshowPiecesTable.messageId} IS NULL`,
+      ))
+      .orderBy(desc(artshowPiecesTable.createdAt))
+      .limit(limit);
+  }
+  return db.select().from(artshowPiecesTable)
+    .where(and(
+      eq(artshowPiecesTable.guildId, guildId),
+      sql`${artshowPiecesTable.messageId} IS NULL`,
+    ))
+    .orderBy(desc(artshowPiecesTable.createdAt))
+    .limit(limit);
+}
+
 export async function topPieces(guildId: string, opts?: {
   weekKey?: string;
   limit?: number;

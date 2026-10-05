@@ -39,7 +39,7 @@ export function buildArtShowCommandJson() {
       .addIntegerOption(o => o.setName("crown_at").setDescription("Auto-crown at this many votes (0=off)").setMinValue(0).setMaxValue(500)))
     .addSubcommand(sc => sc
       .setName("submit")
-      .setDescription("Submit a piece with a Discord photo upload")
+      .setDescription("Submit a piece with Discord's photo uploader")
       .addAttachmentOption(o => o
         .setName("image")
         .setDescription("Your artwork photo")
@@ -54,6 +54,17 @@ export function buildArtShowCommandJson() {
         .setDescription("Optional description")
         .setRequired(false)
         .setMaxLength(400)))
+    .addSubcommand(sc => sc
+      .setName("repost")
+      .setDescription("Staff: force-post a piece to the gallery so voting can start")
+      .addIntegerOption(o => o
+        .setName("piece_id")
+        .setDescription("Piece id to repost (omit to repost all missing this week)")
+        .setRequired(false))
+      .addBooleanOption(o => o
+        .setName("missing_only")
+        .setDescription("Only pieces that never got a gallery message (default true)")
+        .setRequired(false)))
     .addSubcommand(sc => sc
       .setName("museum")
       .setDescription("Open the Hall of Fame museum"))

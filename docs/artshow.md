@@ -39,12 +39,22 @@ Defaults: 5 votes/day · +2 on submit · +1 every 6h · bump costs 3 · auto-cro
 
 ## Member submit flow
 
-**Drop a photo** in the board channel (optional title in the message text).  
-The bot hangs it in the gallery and clears the board drop.
+1. Tap **Submit art** on the station → Discord’s **file picker** (title + photo from your device)
+2. Or `/artshow submit` with an image attachment + title
+3. Or drop a photo on the board channel (backup)
 
-Or one-shot: `/artshow submit` with a Discord **image** attachment + title.
+The piece hangs in the **gallery** with ▲ vote buttons.
 
 No 2-minute timers. No Create/Cancel draft. No sticky board spam.
+
+### Staff: force / re-post
+
+If a submit failed (red ❌) but a DB row exists, or the gallery never got the message:
+
+```
+/artshow repost                  ← all missing messages this week
+/artshow repost piece_id:12      ← force one piece
+```
 
 ## Live piece buttons (gallery)
 

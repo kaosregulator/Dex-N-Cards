@@ -10,16 +10,19 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder,
   AttachmentBuilder, PermissionFlagsBits,
-  StringSelectMenuBuilder,
+  StringSelectMenuBuilder, ModalBuilder, LabelBuilder, FileUploadBuilder,
+  TextInputBuilder, TextInputStyle,
   type ChatInputCommandInteraction, type ButtonInteraction,
-  type StringSelectMenuInteraction, type Message, type TextChannel, type NewsChannel,
-  type Guild, type GuildChannel,
+  type StringSelectMenuInteraction, type ModalSubmitInteraction,
+  type Message, type TextChannel, type NewsChannel,
+  type Guild, type GuildChannel, type Attachment,
 } from "discord.js";
 import { logger } from "../../lib/logger.js";
 import { persistBotImage } from "../commands/edit-card.js";
+import { toAbsoluteImageUrl } from "../image-url.js";
 import {
   getOrCreateArtshowSettings, updateArtshowSettings, resetArtshowSettings,
-  insertPiece, setPieceMessage, getPiece, topPieces,
+  insertPiece, setPieceMessage, getPiece, topPieces, listUnpostedPieces,
   getOrRefreshWallet, grantSubmitBonus, spendVote, removeVote, spendBump, grantFreeBump,
   countAuthorSubmits, countVotesCast, countAuthorCrowns,
   crownPiece, getFame, listFame, utcWeekKey,
@@ -28,7 +31,7 @@ import { ARTSHOW_DEFAULTS } from "../../lib/artshow/defaults.js";
 import type { ArtshowPiece, ArtshowSettings } from "@workspace/db";
 import { awardArtShowBadges } from "../badges/engine.js";
 import { buildBadgeShowcase } from "../badges/announce.js";
-import { detectOrientation, renderArtHallGif, renderArtHallPng } from "./render-hall.js";
+import { detectOrientation, renderArtHallPng } from "./render-hall.js";
 import { renderMuseumGif } from "./render-museum.js";
 import { renderArtBadgeGuideGif } from "./render-guide.js";
 import { extractImageAttachment, titleFromDrop } from "./capture.js";
@@ -82,7 +85,7 @@ function stationButtons() {
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId("artshow:submit")
-        .setLabel("How to submit")
+        .setLabel("Submit art")
         .setEmoji("🖼️")
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
@@ -101,6 +104,81 @@ function stationButtons() {
         .setStyle(ButtonStyle.Secondary),
     ),
   ];
+}
+
+/** Discord-native file picker modal (same pattern as /emoji + UB store). */
+function buildSubmitModal(): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId("artshow:submit_modal")
+    .setTitle("Submit your art")
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel("Title")
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId("title")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(80)
+            .setPlaceholder("Midnight clay fox"),
+        ),
+      new LabelBuilder()
+        .setLabel("Your photo")
+        .setDescription("Discord’s file picker — photo from your device")
+        .setFileUploadComponent(
+          new FileUploadBuilder()
+            .setCustomId("image")
+            .setRequired(true)
+            .setMinValues(1)
+            .setMaxValues(1),
+        ),
+    );
+}
+
+function isImageAttachment(att: Attachment): boolean {
+  const type = att.contentType?.toLowerCase() ?? "";
+  const name = att.name?.toLowerCase() ?? "";
+  if (type.startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+}
+
+function attachmentSourceUrl(att: Attachment): string {
+  return att.proxyURL || att.url;
+}
+
+/** Public URL Discord embeds can load (never raw /objects/…). */
+function publicImageUrl(stored: string | null | undefined): string | null {
+  if (!stored) return null;
+  return toAbsoluteImageUrl(stored) ?? (/^https?:\/\//i.test(stored) ? stored : null);
+}
+
+async function fetchImageBytes(url: string): Promise<{ buf: Buffer; contentType: string; ext: string } | null> {
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(25_000) });
+    if (!resp.ok) return null;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (!buf.length || buf.length > 12 * 1024 * 1024) return null;
+    const ct = resp.headers.get("content-type") ?? "image/jpeg";
+    let ext = "jpg";
+    if (ct.includes("png") || url.includes(".png")) ext = "png";
+    else if (ct.includes("gif") || url.includes(".gif")) ext = "gif";
+    else if (ct.includes("webp") || url.includes(".webp")) ext = "webp";
+    return { buf, contentType: ct, ext };
+  } catch {
+    return null;
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(v => v).catch(() => null as T | null),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), ms); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function applyThresholdPatch(
@@ -229,9 +307,9 @@ async function buildStationEmbed(guildId: string): Promise<{
   const lines = [
     "Hang what you **made** — drawings, builds, clay, photos, crafts.",
     "",
-    "**Submit** — drop a photo in this channel (put a title in your message), or `/artshow submit`",
+    "**Submit** — tap **Submit art** → Discord’s photo uploader (or `/artshow submit`)",
     galleryId
-      ? `**Gallery** — hung pieces & votes live in <#${galleryId}>`
+      ? `**Gallery** — hung pieces & ▲ votes live in <#${galleryId}>`
       : "**Gallery** — staff still needs to set a gallery channel",
   ];
 
@@ -288,27 +366,62 @@ async function maybeAnnounceBadges(
   }
 }
 
-async function buildHallFiles(opts: {
+/**
+ * Build gallery message files. Prefer a quick hall PNG; always fall back to the
+ * original photo bytes so Discord hosts the image (never rely on /objects paths).
+ */
+async function buildGalleryFiles(opts: {
   title: string;
   artistName: string;
   description: string;
   imageUrl: string;
+  sourceHttpUrl?: string | null;
   orientation: "landscape" | "portrait" | "square";
   votes: number;
   weekLabel: string;
+  originalBytes?: { buf: Buffer; ext: string } | null;
 }): Promise<{ files: AttachmentBuilder[]; imageName: string | null }> {
-  const hallGif = await renderArtHallGif(opts);
-  const files: AttachmentBuilder[] = [];
-  if (hallGif && hallGif.length < 7_500_000) {
-    files.push(new AttachmentBuilder(hallGif, { name: "art-hall.gif" }));
-    return { files, imageName: "art-hall.gif" };
+  const renderUrl = publicImageUrl(opts.imageUrl) ?? opts.sourceHttpUrl ?? opts.imageUrl;
+  const hallPng = await withTimeout(
+    renderArtHallPng({
+      title: opts.title,
+      artistName: opts.artistName,
+      description: opts.description,
+      imageUrl: renderUrl,
+      orientation: opts.orientation,
+      votes: opts.votes,
+      weekLabel: opts.weekLabel,
+    }),
+    8_000,
+  );
+  if (hallPng && hallPng.length > 0 && hallPng.length < 7_500_000) {
+    return {
+      files: [new AttachmentBuilder(hallPng, { name: "art-hall.png" })],
+      imageName: "art-hall.png",
+    };
   }
-  const hallPng = await renderArtHallPng(opts);
-  if (hallPng) {
-    files.push(new AttachmentBuilder(hallPng, { name: "art-hall.png" }));
-    return { files, imageName: "art-hall.png" };
+
+  if (opts.originalBytes?.buf?.length) {
+    const name = `art.${opts.originalBytes.ext || "jpg"}`;
+    return {
+      files: [new AttachmentBuilder(opts.originalBytes.buf, { name })],
+      imageName: name,
+    };
   }
-  return { files, imageName: null };
+
+  const http = publicImageUrl(opts.imageUrl) ?? opts.sourceHttpUrl;
+  if (http) {
+    const downloaded = await fetchImageBytes(http);
+    if (downloaded) {
+      const name = `art.${downloaded.ext}`;
+      return {
+        files: [new AttachmentBuilder(downloaded.buf, { name })],
+        imageName: name,
+      };
+    }
+  }
+
+  return { files: [], imageName: null };
 }
 
 async function fetchTextChannel(
@@ -323,6 +436,117 @@ async function fetchTextChannel(
   return ch;
 }
 
+/**
+ * Persist Discord upload → store path, but keep the CDN URL for rendering.
+ * Never put `/objects/...` into Discord setImage — attach bytes instead.
+ */
+async function ingestUpload(att: Attachment): Promise<{
+  storedUrl: string;
+  sourceHttpUrl: string;
+  bytes: { buf: Buffer; ext: string } | null;
+  orientation: "landscape" | "portrait" | "square";
+}> {
+  const sourceHttpUrl = attachmentSourceUrl(att);
+  const bytes = await fetchImageBytes(sourceHttpUrl);
+  let storedUrl = sourceHttpUrl;
+  try {
+    storedUrl = await persistBotImage(sourceHttpUrl, att.contentType ?? bytes?.contentType);
+  } catch (err) {
+    logger.warn({ err }, "artshow persist skipped — using Discord CDN URL");
+    storedUrl = sourceHttpUrl;
+  }
+  // Discord rejects relative /objects paths; if persist returned one, keep CDN for display fallback.
+  const orientation = await detectOrientation(publicImageUrl(storedUrl) ?? sourceHttpUrl);
+  return {
+    storedUrl,
+    sourceHttpUrl,
+    bytes: bytes ? { buf: bytes.buf, ext: bytes.ext } : null,
+    orientation,
+  };
+}
+
+async function sendPieceMessage(opts: {
+  piece: ArtshowPiece;
+  channel: TextChannel | NewsChannel;
+  artistName: string;
+  content: string;
+  sourceHttpUrl?: string | null;
+  originalBytes?: { buf: Buffer; ext: string } | null;
+}): Promise<Message> {
+  const orientation = (opts.piece.orientation === "portrait" || opts.piece.orientation === "square")
+    ? opts.piece.orientation
+    : "landscape";
+
+  const { files, imageName } = await buildGalleryFiles({
+    title: opts.piece.title,
+    artistName: opts.artistName,
+    description: opts.piece.description,
+    imageUrl: opts.piece.imageUrl,
+    sourceHttpUrl: opts.sourceHttpUrl,
+    orientation,
+    votes: opts.piece.votes,
+    weekLabel: opts.piece.weekKey,
+    originalBytes: opts.originalBytes,
+  });
+
+  const embed = new EmbedBuilder()
+    .setColor(BRAND)
+    .setTitle(`🖼️ ${opts.piece.title}`)
+    .setDescription([
+      `by <@${opts.piece.authorId}>`,
+      opts.piece.description ? `*${opts.piece.description}*` : null,
+      "",
+      opts.piece.votes > 0
+        ? `**▲ ${opts.piece.votes}** upvotes`
+        : "**▲ Upvote** · **Remove vote** until crowned · **Bump** · **Browse**",
+      `_Piece #${opts.piece.id} · ${opts.piece.weekKey}_`,
+    ].filter(Boolean).join("\n"));
+
+  if (imageName) {
+    embed.setImage(`attachment://${imageName}`);
+  } else {
+    const abs = publicImageUrl(opts.piece.imageUrl) ?? opts.sourceHttpUrl ?? null;
+    if (abs) embed.setImage(abs);
+  }
+
+  try {
+    const sent = await opts.channel.send({
+      content: opts.content,
+      embeds: [embed],
+      files,
+      components: pieceButtons(opts.piece.id),
+    });
+    await setPieceMessage(opts.piece.id, sent.id);
+    return sent;
+  } catch (err) {
+    // Last-resort: no hall, no fancy embed image — just the raw photo + vote buttons.
+    logger.warn({ err, pieceId: opts.piece.id }, "artshow rich hang failed — trying simple attach");
+    const fallbackName = `art.${opts.originalBytes?.ext || "jpg"}`;
+    const fallbackFiles: AttachmentBuilder[] = [];
+    if (opts.originalBytes?.buf?.length) {
+      fallbackFiles.push(new AttachmentBuilder(opts.originalBytes.buf, { name: fallbackName }));
+    }
+    const simple = new EmbedBuilder()
+      .setColor(BRAND)
+      .setTitle(`🖼️ ${opts.piece.title}`)
+      .setDescription(`by <@${opts.piece.authorId}>\n\n**▲ Upvote** to vote\n_Piece #${opts.piece.id}_`);
+    if (fallbackFiles.length) {
+      simple.setImage(`attachment://${fallbackName}`);
+    } else {
+      const abs = publicImageUrl(opts.piece.imageUrl) ?? opts.sourceHttpUrl;
+      if (abs) simple.setImage(abs);
+    }
+    const sent = await opts.channel.send({
+      content: opts.content,
+      embeds: [simple],
+      files: fallbackFiles,
+      components: pieceButtons(opts.piece.id),
+    });
+    await setPieceMessage(opts.piece.id, sent.id);
+    return sent;
+  }
+}
+
 async function publishPiece(opts: {
   guildId: string;
   channel: TextChannel | NewsChannel;
@@ -330,50 +554,31 @@ async function publishPiece(opts: {
   authorName: string;
   title: string;
   description: string;
-  imageUrl: string;
+  storedUrl: string;
+  sourceHttpUrl: string;
+  originalBytes?: { buf: Buffer; ext: string } | null;
   orientation?: "landscape" | "portrait" | "square";
 }): Promise<ArtshowPiece> {
-  const orientation = opts.orientation ?? await detectOrientation(opts.imageUrl);
+  const orientation = opts.orientation
+    ?? await detectOrientation(opts.sourceHttpUrl || opts.storedUrl);
   const piece = await insertPiece({
     guildId: opts.guildId,
     authorId: opts.authorId,
     title: opts.title,
     description: opts.description,
-    imageUrl: opts.imageUrl,
+    imageUrl: opts.storedUrl,
     orientation,
     channelId: opts.channel.id,
   });
 
-  const { files, imageName } = await buildHallFiles({
-    title: piece.title,
+  await sendPieceMessage({
+    piece,
+    channel: opts.channel,
     artistName: opts.authorName,
-    description: piece.description,
-    imageUrl: piece.imageUrl,
-    orientation: orientation as "landscape" | "portrait" | "square",
-    votes: 0,
-    weekLabel: piece.weekKey,
-  });
-
-  const embed = new EmbedBuilder()
-    .setColor(BRAND)
-    .setTitle(`🖼️ ${piece.title}`)
-    .setDescription([
-      `by <@${opts.authorId}>`,
-      piece.description ? `*${piece.description}*` : null,
-      "",
-      "**▲ Upvote** · **Remove vote** until the week is crowned · **Bump** · **Browse halls**",
-      `_Piece #${piece.id} · ${piece.weekKey}_`,
-    ].filter(Boolean).join("\n"));
-  if (imageName) embed.setImage(`attachment://${imageName}`);
-  else embed.setImage(piece.imageUrl);
-
-  const sent = await opts.channel.send({
     content: `✨ **New hanging** — <@${opts.authorId}> entered the Art Show`,
-    embeds: [embed],
-    files,
-    components: pieceButtons(piece.id),
+    sourceHttpUrl: opts.sourceHttpUrl,
+    originalBytes: opts.originalBytes,
   });
-  await setPieceMessage(piece.id, sent.id);
 
   const settings = await getOrCreateArtshowSettings(opts.guildId);
   await grantSubmitBonus(opts.guildId, opts.authorId, settings);
@@ -393,42 +598,29 @@ async function refreshPieceMessage(
   channel: TextChannel | NewsChannel,
   artistName: string,
 ): Promise<Message | null> {
-  const orientation = (piece.orientation === "portrait" || piece.orientation === "square")
-    ? piece.orientation
-    : "landscape";
-  const { files, imageName } = await buildHallFiles({
-    title: piece.title,
+  return sendPieceMessage({
+    piece,
+    channel,
     artistName,
-    description: piece.description,
-    imageUrl: piece.imageUrl,
-    orientation,
-    votes: piece.votes,
-    weekLabel: piece.weekKey,
-  });
-
-  const embed = new EmbedBuilder()
-    .setColor(BRAND)
-    .setTitle(`🖼️ ${piece.title}`)
-    .setDescription([
-      `by <@${piece.authorId}>`,
-      piece.description ? `*${piece.description}*` : null,
-      "",
-      `**▲ ${piece.votes}** upvotes`,
-      `_Piece #${piece.id} · ${piece.weekKey}_`,
-    ].filter(Boolean).join("\n"));
-  if (imageName) embed.setImage(`attachment://${imageName}`);
-  else embed.setImage(piece.imageUrl);
-
-  const sent = await channel.send({
     content: piece.bumpedAt
       ? `📌 **Bumped** — <@${piece.authorId}>'s piece returns to the floor`
       : `▲ **${piece.title}**`,
-    embeds: [embed],
-    files,
-    components: pieceButtons(piece.id),
+    sourceHttpUrl: publicImageUrl(piece.imageUrl),
   });
-  await setPieceMessage(piece.id, sent.id);
-  return sent;
+}
+
+async function resolveGalleryOrThrow(
+  client: ChatInputCommandInteraction["client"] | ButtonInteraction["client"] | ModalSubmitInteraction["client"],
+  guildId: string,
+): Promise<TextChannel | NewsChannel> {
+  const settings = await getOrCreateArtshowSettings(guildId);
+  if (!settings.enabled) throw new Error("Art Show is disabled.");
+  const { galleryId } = channelIds(settings);
+  const channel = await fetchTextChannel(client, galleryId);
+  if (!channel) {
+    throw new Error("Gallery channel not set — staff should `/artshow post` first.");
+  }
+  return channel;
 }
 
 async function tryAutoCrown(
@@ -771,39 +963,104 @@ export async function handleArtShowCommand(interaction: ChatInputCommandInteract
 
   if (sub === "submit") {
     await interaction.deferReply({ ephemeral: true });
-    const settings = await getOrCreateArtshowSettings(interaction.guildId);
-    if (!settings.enabled) {
-      await interaction.editReply("Art Show is disabled.");
+    try {
+      const image = interaction.options.getAttachment("image", true);
+      const title = interaction.options.getString("title", true);
+      const description = interaction.options.getString("description") ?? "";
+      if (!isImageAttachment(image)) {
+        await interaction.editReply("Please upload an image file (PNG, JPG, GIF, or WebP).");
+        return;
+      }
+      const channel = await resolveGalleryOrThrow(interaction.client, interaction.guildId);
+      const ingested = await ingestUpload(image);
+      const piece = await publishPiece({
+        guildId: interaction.guildId,
+        channel,
+        authorId: interaction.user.id,
+        authorName: interaction.user.username,
+        title,
+        description,
+        storedUrl: ingested.storedUrl,
+        sourceHttpUrl: ingested.sourceHttpUrl,
+        originalBytes: ingested.bytes,
+        orientation: ingested.orientation,
+      });
+      await interaction.editReply(
+        `✅ Hung **${piece.title}** in <#${channel.id}> — piece \`#${piece.id}\`. Tap **▲ Upvote** there.`,
+      );
+    } catch (err) {
+      logger.warn({ err }, "artshow slash submit failed");
+      await interaction.editReply(
+        `❌ Couldn't hang that photo: ${err instanceof Error ? err.message : "unknown error"}. Try the **Submit art** button (Discord file picker).`,
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  if (sub === "repost") {
+    if (!isStaff(interaction)) {
+      await interaction.reply({ content: "Staff only.", ...EPHEMERAL });
       return;
     }
-    const { galleryId } = channelIds(settings);
-    const channel = await fetchTextChannel(interaction.client, galleryId);
-    if (!channel) {
-      await interaction.editReply("Gallery channel not set — staff should `/artshow post` first.");
-      return;
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const channel = await resolveGalleryOrThrow(interaction.client, interaction.guildId);
+      const pieceId = interaction.options.getInteger("piece_id");
+      const missingOnly = interaction.options.getBoolean("missing_only") ?? true;
+      const week = utcWeekKey();
+
+      let targets: ArtshowPiece[] = [];
+      if (pieceId != null) {
+        const one = await getPiece(pieceId);
+        if (!one || one.guildId !== interaction.guildId) {
+          await interaction.editReply(`Piece \`#${pieceId}\` not found.`);
+          return;
+        }
+        targets = [one];
+      } else if (missingOnly) {
+        targets = await listUnpostedPieces(interaction.guildId, { weekKey: week, limit: 25 });
+      } else {
+        targets = await topPieces(interaction.guildId, { weekKey: week, limit: 25 });
+      }
+
+      if (!targets.length) {
+        await interaction.editReply(
+          missingOnly
+            ? "No unposted pieces this week — nothing to force-repost."
+            : "No pieces this week to repost.",
+        );
+        return;
+      }
+
+      const lines: string[] = [];
+      for (const piece of targets) {
+        if (piece.messageId && missingOnly && pieceId == null) continue;
+        if (piece.messageId) {
+          await channel.messages.delete(piece.messageId).catch(() => {});
+        }
+        let artistName = piece.authorId;
+        try {
+          const u = await interaction.client.users.fetch(piece.authorId);
+          artistName = u.username;
+        } catch { /* keep */ }
+        await sendPieceMessage({
+          piece,
+          channel,
+          artistName,
+          content: `🔁 **Force posted** — <@${piece.authorId}> · **${piece.title}**`,
+          sourceHttpUrl: publicImageUrl(piece.imageUrl),
+        });
+        lines.push(`✅ \`#${piece.id}\` **${piece.title}**`);
+      }
+      await interaction.editReply(
+        [`**Reposted to** <#${channel.id}>`, ...lines].join("\n"),
+      );
+    } catch (err) {
+      logger.warn({ err }, "artshow repost failed");
+      await interaction.editReply(
+        `❌ Repost failed: ${err instanceof Error ? err.message : "unknown error"}`,
+      ).catch(() => {});
     }
-    const image = interaction.options.getAttachment("image", true);
-    const title = interaction.options.getString("title", true);
-    const description = interaction.options.getString("description") ?? "";
-    if (!image.contentType?.startsWith("image/") && !/\.(png|jpe?g|gif|webp)$/i.test(image.name)) {
-      await interaction.editReply("Please upload an image file.");
-      return;
-    }
-    const url = await persistBotImage(image.url, image.contentType ?? undefined);
-    const orientation = await detectOrientation(url);
-    const piece = await publishPiece({
-      guildId: interaction.guildId,
-      channel,
-      authorId: interaction.user.id,
-      authorName: interaction.user.username,
-      title,
-      description,
-      imageUrl: url,
-      orientation,
-    });
-    await interaction.editReply(
-      `✅ Hung **${piece.title}** in <#${channel.id}> — piece \`#${piece.id}\`.`,
-    );
     return;
   }
 
@@ -941,22 +1198,15 @@ export async function handleArtShowButton(interaction: ButtonInteraction): Promi
   const id = interaction.customId;
 
   if (id === "artshow:submit") {
-    const settings = await getOrCreateArtshowSettings(interaction.guildId);
-    const { boardId, galleryId } = channelIds(settings);
-    await interaction.reply({
-      content: [
-        "**Submit your art**",
-        "",
-        boardId
-          ? `1. Drop a **photo** in <#${boardId}> (put a short **title** in the message)`
-          : "1. Drop a **photo** in the submission board (put a short **title** in the message)",
-        "2. Or use `/artshow submit` and attach the image",
-        galleryId
-          ? `3. Your piece hangs in <#${galleryId}> for ▲ votes`
-          : "3. Your piece hangs in the gallery for ▲ votes",
-      ].join("\n"),
-      ...EPHEMERAL,
-    });
+    try {
+      await interaction.showModal(buildSubmitModal());
+    } catch (err) {
+      logger.warn({ err }, "artshow submit modal failed");
+      await interaction.reply({
+        content: "Couldn't open the uploader — try `/artshow submit` and attach your photo.",
+        ...EPHEMERAL,
+      }).catch(() => {});
+    }
     return;
   }
 
@@ -1092,11 +1342,12 @@ export async function handleArtShowSelect(interaction: StringSelectMenuInteracti
     const u = await interaction.client.users.fetch(piece.authorId);
     artistName = u.username;
   } catch { /* keep id */ }
-  const { files, imageName } = await buildHallFiles({
+  const { files, imageName } = await buildGalleryFiles({
     title: piece.title,
     artistName,
     description: piece.description,
     imageUrl: piece.imageUrl,
+    sourceHttpUrl: publicImageUrl(piece.imageUrl),
     orientation,
     votes: piece.votes,
     weekLabel: piece.weekKey,
@@ -1111,28 +1362,76 @@ export async function handleArtShowSelect(interaction: StringSelectMenuInteracti
       "_One of many halls — only the weekly champion owns the museum._",
     ].filter(Boolean).join("\n"));
   if (imageName) embed.setImage(`attachment://${imageName}`);
-  else embed.setImage(piece.imageUrl);
+  else {
+    const abs = publicImageUrl(piece.imageUrl);
+    if (abs) embed.setImage(abs);
+  }
   await interaction.editReply({ embeds: [embed], files });
 }
 
-/** Modal submit kept as no-op for old station messages still showing the modal flow. */
-export async function handleArtShowModal(interaction: { customId: string; reply: (o: object) => Promise<unknown> }): Promise<void> {
-  if (!interaction.customId.startsWith("artshow:")) return;
-  await interaction.reply({
-    content: "That submit flow was removed. Drop a photo on the board channel, or use `/artshow submit`.",
-    ...EPHEMERAL,
-  });
+/** Station **Submit art** → Discord file-picker modal. */
+export async function handleArtShowModal(interaction: ModalSubmitInteraction): Promise<void> {
+  if (!interaction.guildId || interaction.customId !== "artshow:submit_modal") return;
+
+  const title = (interaction.fields.getTextInputValue("title") ?? "").trim();
+  if (!title) {
+    await interaction.reply({ content: "Title required.", ...EPHEMERAL });
+    return;
+  }
+
+  const files = interaction.fields.getUploadedFiles("image", false);
+  const attachment = files?.first();
+  if (!attachment) {
+    await interaction.reply({
+      content: "No photo attached — tap **Submit art** again and pick a file from Discord’s uploader.",
+      ...EPHEMERAL,
+    });
+    return;
+  }
+  if (!isImageAttachment(attachment)) {
+    await interaction.reply({
+      content: "That file isn’t an image. Upload a PNG, JPG, GIF, or WebP.",
+      ...EPHEMERAL,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const channel = await resolveGalleryOrThrow(interaction.client, interaction.guildId);
+    const ingested = await ingestUpload(attachment);
+    const piece = await publishPiece({
+      guildId: interaction.guildId,
+      channel,
+      authorId: interaction.user.id,
+      authorName: interaction.user.username,
+      title,
+      description: "",
+      storedUrl: ingested.storedUrl,
+      sourceHttpUrl: ingested.sourceHttpUrl,
+      originalBytes: ingested.bytes,
+      orientation: ingested.orientation,
+    });
+    await interaction.editReply(
+      `✅ Hung **${piece.title}** in <#${channel.id}> — piece \`#${piece.id}\`. Tap **▲ Upvote** there.`,
+    );
+  } catch (err) {
+    logger.warn({ err }, "artshow modal submit failed");
+    await interaction.editReply(
+      `❌ Couldn't hang that photo: ${err instanceof Error ? err.message : "unknown error"}`,
+    ).catch(() => {});
+  }
 }
 
 /**
- * MessageCreate — photo dropped on the submission board → hang in gallery.
- * No timer, no Create/Cancel preview.
+ * MessageCreate backup — photo dropped on the submission board → hang in gallery.
+ * Primary path is the **Submit art** Discord file-picker modal.
  */
 export async function handleArtShowMessage(msg: Message): Promise<boolean> {
   if (!msg.guildId || msg.author.bot) return false;
 
-  const att = extractImageAttachment(msg);
-  if (!att) return false;
+  const attMeta = extractImageAttachment(msg);
+  if (!attMeta) return false;
 
   const settings = await getOrCreateArtshowSettings(msg.guildId);
   if (!settings.enabled) return false;
@@ -1149,10 +1448,13 @@ export async function handleArtShowMessage(msg: Message): Promise<boolean> {
     return true;
   }
 
+  const discordAtt = msg.attachments.find(a => a.url === attMeta.url) ?? msg.attachments.first();
+  if (!discordAtt) return false;
+
   try {
-    const url = await persistBotImage(att.url, att.contentType ?? undefined);
-    const orientation = await detectOrientation(url);
-    const title = titleFromDrop(msg.content, att.name);
+    await msg.react("⏳").catch(() => {});
+    const ingested = await ingestUpload(discordAtt);
+    const title = titleFromDrop(msg.content, attMeta.name);
     const description = msg.content.trim().includes("\n")
       ? msg.content.trim().split("\n").slice(1).join("\n").trim().slice(0, 400)
       : "";
@@ -1164,18 +1466,25 @@ export async function handleArtShowMessage(msg: Message): Promise<boolean> {
       authorName: msg.author.username,
       title,
       description,
-      imageUrl: url,
-      orientation,
+      storedUrl: ingested.storedUrl,
+      sourceHttpUrl: ingested.sourceHttpUrl,
+      originalBytes: ingested.bytes,
+      orientation: ingested.orientation,
     });
 
     await msg.delete().catch(() => {});
-    const ack = await gallery.send({
-      content: `📥 <@${msg.author.id}> submitted **${piece.title}** from the board.`,
-    }).catch(() => null);
-    if (ack) setTimeout(() => { ack.delete().catch(() => {}); }, 12_000);
+    const ack = await msg.channel.isTextBased() && !msg.channel.isDMBased()
+      ? await (msg.channel as TextChannel).send({
+        content: `✅ <@${msg.author.id}> hung **${piece.title}** in <#${gallery.id}>`,
+      }).catch(() => null)
+      : null;
+    if (ack) setTimeout(() => { ack.delete().catch(() => {}); }, 10_000);
   } catch (err) {
     logger.warn({ err }, "artshow board drop failed");
-    await msg.reply({ content: "Couldn't hang that photo — try `/artshow submit`." }).catch(() => {});
+    await msg.react("❌").catch(() => {});
+    await msg.reply({
+      content: `Couldn't hang that photo (${err instanceof Error ? err.message : "error"}). Tap **Submit art** on the station instead.`,
+    }).catch(() => {});
   }
   return true;
 }
