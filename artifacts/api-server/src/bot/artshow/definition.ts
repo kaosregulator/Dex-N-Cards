@@ -7,17 +7,31 @@ export function buildArtShowCommandJson() {
     .setDMPermission(false)
     .addSubcommand(sc => sc
       .setName("post")
-      .setDescription("Staff: create/pick gallery channel, set thresholds, post station + sticky board")
+      .setDescription("Staff: set submission board + gallery channels, post the station")
       .addChannelOption(o => o
-        .setName("channel")
-        .setDescription("Use an existing gallery channel")
+        .setName("board")
+        .setDescription("Existing submission-board channel (station + photo drops)")
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(false))
+      .addChannelOption(o => o
+        .setName("gallery")
+        .setDescription("Existing gallery channel where hung pieces appear")
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(false))
       .addStringOption(o => o
-        .setName("create_channel")
-        .setDescription("Create a new gallery channel with this name (ignored if channel is set)")
+        .setName("create_board")
+        .setDescription("Create a new submission-board channel with this name")
         .setRequired(false)
         .setMaxLength(90))
+      .addStringOption(o => o
+        .setName("create_gallery")
+        .setDescription("Create a new read-only gallery channel with this name")
+        .setRequired(false)
+        .setMaxLength(90))
+      .addRoleOption(o => o
+        .setName("staff_role")
+        .setDescription("Role that can still post in the read-only gallery (optional)")
+        .setRequired(false))
       .addIntegerOption(o => o.setName("votes_per_day").setDescription("Daily vote allowance").setMinValue(1).setMaxValue(50))
       .addIntegerOption(o => o.setName("bonus_on_submit").setDescription("Bonus votes when you submit").setMinValue(0).setMaxValue(20))
       .addIntegerOption(o => o.setName("refresh_hours").setDescription("Hours between +1 vote refresh").setMinValue(1).setMaxValue(24))
@@ -25,7 +39,7 @@ export function buildArtShowCommandJson() {
       .addIntegerOption(o => o.setName("crown_at").setDescription("Auto-crown at this many votes (0=off)").setMinValue(0).setMaxValue(500)))
     .addSubcommand(sc => sc
       .setName("submit")
-      .setDescription("Submit a piece (or use the station button)")
+      .setDescription("Submit a piece with a Discord photo upload")
       .addAttachmentOption(o => o
         .setName("image")
         .setDescription("Your artwork photo")
@@ -72,6 +86,10 @@ export function buildArtShowCommandJson() {
       .addBooleanOption(o => o
         .setName("reset_defaults")
         .setDescription("Reset all thresholds/cooldowns to defaults")
+        .setRequired(false))
+      .addRoleOption(o => o
+        .setName("staff_role")
+        .setDescription("Role allowed to post in the read-only gallery")
         .setRequired(false))
       .addIntegerOption(o => o.setName("votes_per_day").setDescription("Daily vote allowance").setMinValue(1).setMaxValue(50))
       .addIntegerOption(o => o.setName("bonus_on_submit").setDescription("Bonus votes when you submit").setMinValue(0).setMaxValue(20))
