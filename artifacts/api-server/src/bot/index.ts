@@ -433,6 +433,11 @@ export async function startBot() {
         await handleArtShowButton(interaction);
         return;
       }
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith("artshow:")) {
+        const { handleArtShowSelect } = await import("./artshow/commands.js");
+        await handleArtShowSelect(interaction);
+        return;
+      }
       if (interaction.isModalSubmit() && interaction.customId.startsWith("artshow:")) {
         const { handleArtShowModal } = await import("./artshow/commands.js");
         await handleArtShowModal(interaction);

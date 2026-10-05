@@ -1287,6 +1287,7 @@ async function runBootMigrations() {
       enabled                 BOOLEAN NOT NULL DEFAULT TRUE,
       channel_id              TEXT,
       station_message_id      TEXT,
+      sticky_message_id       TEXT,
       staff_role_id           TEXT,
       votes_per_day           INTEGER NOT NULL DEFAULT 5,
       bonus_votes_on_submit   INTEGER NOT NULL DEFAULT 2,
@@ -1297,6 +1298,7 @@ async function runBootMigrations() {
       updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS sticky_message_id TEXT`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS artshow_pieces (
       id                      SERIAL PRIMARY KEY,

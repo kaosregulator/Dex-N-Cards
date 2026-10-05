@@ -16,6 +16,8 @@ export const artshowSettingsTable = pgTable("artshow_settings", {
   /** Channel where pieces and the station live */
   channelId: text("channel_id"),
   stationMessageId: text("station_message_id"),
+  /** Glued top-3 board — delete+repost to stay at channel bottom */
+  stickyMessageId: text("sticky_message_id"),
   staffRoleId: text("staff_role_id"),
   /** Base votes granted each UTC day */
   votesPerDay: integer("votes_per_day").notNull().default(5),

@@ -14,6 +14,7 @@ import {
   type ArtshowFame,
 } from "@workspace/db";
 import { utcDayKey, utcWeekKey } from "./time.js";
+import { ARTSHOW_DEFAULTS } from "./defaults.js";
 
 export { utcDayKey, utcWeekKey };
 
@@ -250,6 +251,63 @@ export async function spendVote(
     .returning();
 
   return { ok: true, wallet: updatedWallet!, piece: updatedPiece! };
+}
+
+export async function hasVoted(pieceId: number, voterId: string): Promise<boolean> {
+  const [row] = await db.select({ id: artshowVotesTable.id })
+    .from(artshowVotesTable)
+    .where(and(eq(artshowVotesTable.pieceId, pieceId), eq(artshowVotesTable.voterId, voterId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+/**
+ * Remove a vote and refund 1 to the wallet — only while the week is still open
+ * (no Hall of Fame crown for that piece's week yet).
+ */
+export async function removeVote(
+  guildId: string,
+  voterId: string,
+  pieceId: number,
+  settings: ArtshowSettings,
+): Promise<{ ok: true; wallet: ArtshowWallet; piece: ArtshowPiece } | { ok: false; reason: string }> {
+  const piece = await getPiece(pieceId);
+  if (!piece || piece.guildId !== guildId) return { ok: false, reason: "Piece not found." };
+
+  const fame = await getFame(guildId, piece.weekKey);
+  if (fame) {
+    return { ok: false, reason: "Voting is locked — this week already has a Hall of Fame crown." };
+  }
+
+  const deleted = await db.delete(artshowVotesTable)
+    .where(and(
+      eq(artshowVotesTable.pieceId, pieceId),
+      eq(artshowVotesTable.voterId, voterId),
+    ))
+    .returning({ id: artshowVotesTable.id });
+  if (!deleted.length) {
+    return { ok: false, reason: "You haven't voted on this piece." };
+  }
+
+  const [updatedPiece] = await db.update(artshowPiecesTable)
+    .set({
+      votes: sql`GREATEST(0, ${artshowPiecesTable.votes} - 1)`,
+      updatedAt: new Date(),
+    })
+    .where(eq(artshowPiecesTable.id, pieceId))
+    .returning();
+
+  const wallet = await getOrRefreshWallet(guildId, voterId, settings);
+  const [updatedWallet] = await db.update(artshowWalletsTable)
+    .set({ remaining: wallet.remaining + 1, updatedAt: new Date() })
+    .where(eq(artshowWalletsTable.id, wallet.id))
+    .returning();
+
+  return { ok: true, wallet: updatedWallet!, piece: updatedPiece! };
+}
+
+export async function resetArtshowSettings(guildId: string): Promise<ArtshowSettings> {
+  return updateArtshowSettings(guildId, { ...ARTSHOW_DEFAULTS });
 }
 
 export async function spendBump(

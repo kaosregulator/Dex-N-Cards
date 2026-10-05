@@ -7,12 +7,22 @@ export function buildArtShowCommandJson() {
     .setDMPermission(false)
     .addSubcommand(sc => sc
       .setName("post")
-      .setDescription("Staff: post the Art Show station in a channel")
+      .setDescription("Staff: create/pick gallery channel, set thresholds, post station + sticky board")
       .addChannelOption(o => o
         .setName("channel")
-        .setDescription("Gallery channel (defaults to current)")
+        .setDescription("Use an existing gallery channel")
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-        .setRequired(false)))
+        .setRequired(false))
+      .addStringOption(o => o
+        .setName("create_channel")
+        .setDescription("Create a new gallery channel with this name (ignored if channel is set)")
+        .setRequired(false)
+        .setMaxLength(90))
+      .addIntegerOption(o => o.setName("votes_per_day").setDescription("Daily vote allowance").setMinValue(1).setMaxValue(50))
+      .addIntegerOption(o => o.setName("bonus_on_submit").setDescription("Bonus votes when you submit").setMinValue(0).setMaxValue(20))
+      .addIntegerOption(o => o.setName("refresh_hours").setDescription("Hours between +1 vote refresh").setMinValue(1).setMaxValue(24))
+      .addIntegerOption(o => o.setName("bump_cost").setDescription("Votes to bump your piece").setMinValue(1).setMaxValue(20))
+      .addIntegerOption(o => o.setName("crown_at").setDescription("Auto-crown at this many votes (0=off)").setMinValue(0).setMaxValue(500)))
     .addSubcommand(sc => sc
       .setName("submit")
       .setDescription("Submit a piece (or use the station button)")
@@ -37,6 +47,9 @@ export function buildArtShowCommandJson() {
       .setName("badges")
       .setDescription("See how Art Show emblems evolve"))
     .addSubcommand(sc => sc
+      .setName("browse")
+      .setDescription("Browse other art halls this week"))
+    .addSubcommand(sc => sc
       .setName("leaderboard")
       .setDescription("This week's top pieces")
       .addBooleanOption(o => o
@@ -55,7 +68,11 @@ export function buildArtShowCommandJson() {
         .setRequired(false)))
     .addSubcommand(sc => sc
       .setName("setup")
-      .setDescription("Staff: configure votes / bump / crown threshold")
+      .setDescription("Staff: configure votes / bump / crown — or reset to defaults")
+      .addBooleanOption(o => o
+        .setName("reset_defaults")
+        .setDescription("Reset all thresholds/cooldowns to defaults")
+        .setRequired(false))
       .addIntegerOption(o => o.setName("votes_per_day").setDescription("Daily vote allowance").setMinValue(1).setMaxValue(50))
       .addIntegerOption(o => o.setName("bonus_on_submit").setDescription("Bonus votes when you submit").setMinValue(0).setMaxValue(20))
       .addIntegerOption(o => o.setName("refresh_hours").setDescription("Hours between +1 vote refresh").setMinValue(1).setMaxValue(24))

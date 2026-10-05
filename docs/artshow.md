@@ -1,72 +1,73 @@
 # Community Art Show
 
-A gallery channel where members hang artwork (drawings, builds, clay, crafts — any photo of something they made), earn **button upvotes** (not emoji reactions), grow **Art Show emblems** on the shared badge system, and compete for a weekly **Hall of Fame** museum crown.
+A gallery channel where members hang artwork, earn **button upvotes** (not emoji reactions), grow **Art Show emblems**, browse other halls, and race for **one** weekly Hall of Fame champion. A **sticky top-3 board** stays glued to the bottom of the channel.
 
 ## Quick start (staff)
 
-1. `/artshow post` in (or targeting) your gallery channel — posts the station with **Submit your art**, **Hall of Fame**, **Emblem path**, **My votes**.
-2. Optional: `/artshow setup` to tune daily votes, submit bonus, refresh hours, bump cost, auto-crown threshold.
+```
+/artshow post
+  channel:#art-show          ← use existing
+  # OR
+  create_channel:art-show    ← bot creates the channel
 
-## Member flow
+  votes_per_day:5
+  bonus_on_submit:2
+  refresh_hours:6
+  bump_cost:3
+  crown_at:25
+```
 
-1. Press **Submit your art** → modal (title + description).
-2. Upload an image in the gallery channel within 2 minutes (Discord attachment from phone/laptop).  
-   Or one-shot: `/artshow submit image:… title:…`.
-3. The bot hangs a **hall canvas** (spotlight + frame). The photo is **letterboxed, never cropped**. Landscape / portrait / square pick different wall scenes.
-4. Others press **▲ Upvote** on the piece (one vote per member per piece). Votes spend from a daily wallet.
-5. Artists can **Bump** to re-post their piece at the bottom of the channel (reads as “back on top”).
+This posts:
+1. The **station embed** (Submit / Browse / Museum / Emblem path / My votes / Reset defaults)
+2. A **sticky top-3 board** at the bottom (pinned + delete/reposted on every vote so it stays last)
 
-## Vote wallet
+### Thresholds & reset
 
-| Source | Default |
-|--------|---------|
-| Base votes / UTC day | 5 |
-| Bonus when you submit | +2 |
-| Timed refresh | +1 every 6h (capped) |
-| Bump cost | 3 votes |
-| Rising Artist perk | 1 free bump / day |
+- Tune anytime: `/artshow setup votes_per_day:…` etc.
+- **Reset to defaults:** `/artshow setup reset_defaults:True` or station button **Reset defaults**
 
-Self-votes are blocked. Already-voted pieces cannot be voted again.
+Defaults: 5 votes/day · +2 on submit · +1 every 6h · bump costs 3 · auto-crown at 25 ▲
 
-## Emblems (badge trigger `artshow`)
+## Member submit flow
 
-Extends the community badge catalogue (see `/badges`):
+1. Press **Submit your art** → modal (title + description)
+2. Upload your photo in the gallery channel (Discord attachment)
+3. Preview appears with hall canvas + **Create** / **Cancel**
+4. **Create** hangs the piece in the gallery with live buttons; **Cancel** discards
 
-| Emblem | How |
-|--------|-----|
-| Exhibitor | First submit |
-| Studio Regular | 5 submits |
-| Gallery Maker | 15 submits |
-| Patron | 10 votes cast |
-| Critic | 50 votes cast |
-| Rising Artist | One piece hits 10 ▲ |
-| Crowd Favorite | One piece hits 25 ▲ |
-| Show Star | One piece hits 50 ▲ |
-| Hall Champion | Weekly museum crown |
-| Museum Legend | 3 crowns |
+One-shot alternative: `/artshow submit` → same Create/Cancel preview.
 
-Unlocks and tier-ups use the same animated emblem GIFs as trivia/manual badges. Station **Emblem path** shows the progression canvas.
+## Live piece buttons
 
-## Winning / museum
+| Button | Action |
+|--------|--------|
+| ▲ Upvote | Spend 1 vote (wallet). Blocked on own piece / already voted / no votes left |
+| Remove vote | Undo your vote **until the week is crowned** — refunds 1 vote |
+| Bump | Re-post your piece near the top (costs votes or Rising Artist free bump) |
+| Browse halls | Pick another piece’s hall canvas to view |
 
-- **Weekly lead** — highest ▲ for the ISO week (shown on the station).
-- **Auto-crown** — first piece to hit `crown_threshold` (default 25) that week enters the Hall of Fame.
-- **Staff crown** — `/artshow crown` locks the weekly champion if auto-crown is off or you want a judge pick.
-- **Museum canvas** — world wings (RU / UK / US / ES / CN / JP / FR / BR) as stylized cultural abstracts (not copyrighted masterpieces); the crowned community piece is **center stage** under museum lights.
+## Sticky board
 
-## Commands
+Always at the **bottom** of the gallery (delete + repost after votes/submits/bumps/crowns). Shows:
+- Current **champion** (if crowned) or “race open”
+- **Top 3** with live ▲ counts
+- Quick links: Browse / Museum / Submit
 
-| Command | Who | Purpose |
-|---------|-----|---------|
-| `/artshow post` | Staff | Post station |
-| `/artshow setup` | Staff | Tune economy |
-| `/artshow crown` | Staff | Crown weekly winner |
-| `/artshow submit` | Everyone | Submit with attachment |
-| `/artshow museum` | Everyone | Hall of Fame |
-| `/artshow badges` | Everyone | Emblem path |
-| `/artshow leaderboard` | Everyone | Week / all-time |
-| `/artshow votes` | Everyone | Wallet check |
+Discord has no true “glue to bottom” API — re-posting after updates is the sticky.
+
+## One winner
+
+Many halls on the floor; **one** weekly Hall of Fame champion:
+- Auto-crown: first piece to hit `crown_at` ▲ that week, **or**
+- Staff: `/artshow crown`
+
+After crowning, **Remove vote** locks for that week.
+
+## Emblems
+
+See badge catalogue (`artshow` trigger): Exhibitor → … → Hall Champion → Museum Legend.  
+Station **Emblem path** + `/badges`.
 
 ## Data
 
-Tables: `artshow_settings`, `artshow_pieces`, `artshow_votes`, `artshow_wallets`, `artshow_fame` (bootstrapped in API `index.ts`; Drizzle schema in `lib/db/src/schema/artshow.ts`).
+Tables: `artshow_settings` (incl. `sticky_message_id`), `artshow_pieces`, `artshow_votes`, `artshow_wallets`, `artshow_fame`.
