@@ -646,13 +646,15 @@ export async function handleRedBlack(interaction: ChatInputCommandInteraction): 
     const bet = interaction.options.getInteger("bet", true);
     const pick = interaction.options.getString("color", true) as "red" | "black";
     const spent = await spendFunds(interaction.guildId, interaction.user.id, bet, `Red/Black ${pick}`);
-    await markGameCooldown(interaction.guildId, interaction.user.id);
     const card = draw(freshDeck());
     const landed: "red" | "black" = isRed(card) ? "red" : "black";
     const win = pick === landed;
     let bal = spent.balance;
     if (win) bal = await earnCash(interaction.guildId, interaction.user.id, bet * 2, "Red/Black win");
-    const gif = await renderRedBlackGif({ pick, landed, win });
+    const [, gif] = await Promise.all([
+      markGameCooldown(interaction.guildId, interaction.user.id),
+      renderRedBlackGif({ pick, landed, win }),
+    ]);
     const { files, imageName } = await attachGif(gif, "redblack.gif");
     const embed = brandEmbed("Red or Black", [
       `${interaction.user} picked **${pick}** · card **${cardLabel(card)}** (${landed})`,
@@ -678,8 +680,11 @@ export async function handleCashWork(interaction: ChatInputCommandInteraction): 
     const pay = await getGuildPayouts(interaction.guildId);
     const payout = rollRange(pay.workMin, pay.workMax);
     const bal = await earnCash(interaction.guildId, interaction.user.id, payout, "Cash work");
-    await markIncomeCooldown(interaction.guildId, interaction.user.id, "work");
-    const gif = await renderWorkGif({ payout });
+    // Mark CD + encode GIF in parallel — shaves the post-command lag.
+    const [, gif] = await Promise.all([
+      markIncomeCooldown(interaction.guildId, interaction.user.id, "work"),
+      renderWorkGif({ payout }),
+    ]);
     const { files, imageName } = await attachGif(gif, "work.gif");
     const embed = brandEmbed("Work Shift", [
       `${interaction.user} finished a shift · **+${fmtCash(payout)}** ${bal.symbol}`,

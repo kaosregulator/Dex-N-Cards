@@ -53,15 +53,31 @@ function adminLockedCollect(meta: Record<string, unknown>): boolean {
   return meta.collectIncomeSet === true;
 }
 
+/** Short TTL so `.col` / `.store` don't hit the UB API on every keystroke. */
+const SYNC_TTL_MS = 45_000;
+const syncCache = new Map<string, { at: number; result: UbSyncResult }>();
+
 /**
  * Pull UB store items and ensure every ADD_ROLES item has a local role link.
  * New / unset links get collect income + default per-role CD seeded automatically.
+ * Cached ~45s per guild unless `force` is set (admin refresh).
  */
 export async function syncUbStoreRoleLinks(
   guildId: string,
   ubGuildId: string,
   guild?: Guild | null,
+  opts?: { force?: boolean },
 ): Promise<UbSyncResult> {
+  const cacheKey = `${guildId}:${ubGuildId}`;
+  if (!opts?.force) {
+    const hit = syncCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < SYNC_TTL_MS) {
+      // Refresh links from DB so collect/store see latest local edits.
+      const links = await listRoleLinks(guildId);
+      return { ...hit.result, links };
+    }
+  }
+
   const settings = await getOrCreateUbSettings(guildId);
   const guildCollectSec = readCooldowns(settings).collectSec;
   const rawItems = await fetchAllUbStoreItems(ubGuildId);
@@ -162,5 +178,7 @@ export async function syncUbStoreRoleLinks(
   }
 
   const freshLinks = await listRoleLinks(guildId);
-  return { items, links: freshLinks, created, updated, seededCollect };
+  const result: UbSyncResult = { items, links: freshLinks, created, updated, seededCollect };
+  syncCache.set(cacheKey, { at: Date.now(), result });
+  return result;
 }

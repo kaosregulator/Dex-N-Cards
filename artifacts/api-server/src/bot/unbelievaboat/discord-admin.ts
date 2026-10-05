@@ -472,7 +472,7 @@ async function renderRolesEconomy(
   let roles = await listRoleLinks(guildId);
   if (isUbConfigured() && settings.enabled) {
     try {
-      const synced = await syncUbStoreRoleLinks(guildId, settings.ubGuildId, interaction.guild);
+      const synced = await syncUbStoreRoleLinks(guildId, settings.ubGuildId, interaction.guild, { force: true });
       roles = synced.links;
       const bits: string[] = [];
       if (synced.created || synced.updated) {
