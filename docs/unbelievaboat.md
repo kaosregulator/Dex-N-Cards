@@ -33,15 +33,21 @@ Pick a command in the dropdown → edit cooldown + payout fields. Cooldown accep
 
 ### Prefix games (per guild)
 
-Default games prefix is `.` (separate from the admin/card prefix `!`):
+Default games prefix is `.` (separate from the admin/card prefix `!`).
+Short aliases match UnbelievaBoat habits:
 
 ```text
+.bj 50                 # also .blackjack / .21
 .slots 100
-.blackjack 50
-.daily
+.dep / .dep all        # deposit cash → bank
+.with / .wd            # withdraw
+.col / .daily / .bal
+.hl 50 · .rb 50 red
+.rr @user 50           # russian roulette
 .rob @user
-.setgamesprefix .     # via admin prefix: !setgamesprefix .
-!setprefix !          # admin/card commands
+.help                  # prefix cheat-sheet
+.setgamesprefix .      # via admin prefix: !setgamesprefix .
+!setprefix !           # admin/card commands
 ```
 
 Change either prefix per guild; they must not be identical.
@@ -61,7 +67,7 @@ forces lowercase, so the suffix avoids colliding with DN `/daily` (shards).
 | `daily` | Animated Cash Check-In — coins reverse-collect into wallet |
 | `collect` | Role income from owned perk roles (animated) |
 | `deposit` / `withdraw` | Casino vault |
-| `blackjack` | Interactive 21 — Hit / Stand / Double Down |
+| `blackjack` | Interactive 21 — shuffle intro → one-shot deal → Hit / Stand / Double (GIF settles to PNG so cards never re-flip) |
 | `higherlower` · `redblack` | Card guesses |
 | `roulette` · `slots` | Table games |
 | `uno` | Mini UNO vs house — buttons, 2× pot |

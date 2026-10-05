@@ -163,6 +163,7 @@ export {
   renderBlackjackTableGif,
   renderBlackjackTablePng,
   renderBlackjackShuffleGif,
+  renderBlackjackShufflePng,
 } from "./render-blackjack.js";
 
 /** @deprecated alias */

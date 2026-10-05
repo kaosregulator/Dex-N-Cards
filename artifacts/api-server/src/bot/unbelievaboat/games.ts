@@ -41,6 +41,7 @@ import {
 } from "./render-games.js";
 import {
   renderBlackjackShuffleGif,
+  renderBlackjackShufflePng,
   renderBlackjackTableGif,
   renderBlackjackTablePng,
   type BjTableOpts,
@@ -102,6 +103,8 @@ function sleep(ms: number) {
 /**
  * Play a GIF beat on the floor message, wait for one full playthrough, then
  * freeze to a static PNG so Discord’s GIF loop never re-flips the cards.
+ * Pre-renders the still during the wait so settle is instant (no gap where
+ * Discord can restart the GIF loop).
  */
 async function playBjBeat(
   floor: Message,
@@ -112,6 +115,8 @@ async function playBjBeat(
     gifName: string;
     stillOpts: BjTableOpts;
     stillName: string;
+    /** Optional pre-rendered still — skips encode during settle */
+    stillPng?: Buffer | null;
     components?: ActionRowBuilder<ButtonBuilder>[];
     /** Slightly under duration so settle lands before the loop restarts */
     waitScale?: number;
@@ -124,13 +129,16 @@ async function playBjBeat(
     content: opts.content ?? undefined,
     embeds: [emb],
     files,
-    components: opts.components ?? [],
+    components: [], // hide buttons while the flip plays
   });
 
-  const waitMs = Math.max(800, Math.floor((opts.gif?.durationMs ?? 1600) * (opts.waitScale ?? 0.92)));
-  await sleep(waitMs);
+  const waitMs = Math.max(700, Math.floor((opts.gif?.durationMs ?? 1400) * (opts.waitScale ?? 0.88)));
+  // Encode the still in parallel with the playthrough wait
+  const pngPromise = opts.stillPng !== undefined
+    ? Promise.resolve(opts.stillPng)
+    : renderBlackjackTablePng(opts.stillOpts);
+  const [, png] = await Promise.all([sleep(waitMs), pngPromise]);
 
-  const png = await renderBlackjackTablePng(opts.stillOpts);
   const still = attachPng(png, opts.stillName);
   const settled = EmbedBuilder.from(opts.embed);
   if (still.imageName) settled.setImage(`attachment://${still.imageName}`);
@@ -343,7 +351,10 @@ async function finishBlackjack(
   );
 
   if (interaction.isButton()) {
-    const gif = await renderBlackjackTableGif(tableOpts);
+    const [gif, stillPng] = await Promise.all([
+      renderBlackjackTableGif(tableOpts),
+      renderBlackjackTablePng(tableOpts),
+    ]);
     await playBjBeat(interaction.message, {
       content: null,
       embed,
@@ -351,6 +362,7 @@ async function finishBlackjack(
       gifName: "blackjack.gif",
       stillOpts: tableOpts,
       stillName: "blackjack.png",
+      stillPng,
       components: [],
     });
     return;
@@ -442,7 +454,8 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
     const player = [draw(deck), draw(deck)];
     const dealer = [draw(deck), draw(deck)];
 
-    // 1) Shuffle intro on the floor (full play, no buttons yet)
+    // 1) Shuffle intro on the floor (GIF), then settle to PNG before Discord loops.
+    // While the shuffle plays, pre-render the next beat so we never sit idle on a looping GIF.
     const shuffleGif = await renderBlackjackShuffleGif();
     const shuffleAtt = await attachGif(shuffleGif, "bj-shuffle.gif");
     const shuffleEmbed = brandEmbed("Blackjack — shuffle", [
@@ -468,75 +481,112 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
       return;
     }
 
-    await sleep(Math.max(1200, Math.floor((shuffleGif?.durationMs ?? 3600) * 0.95)));
+    const natural = isNaturalBlackjack(dealer) || isNaturalBlackjack(player);
+    const shuffleWaitMs = Math.max(900, Math.floor((shuffleGif?.durationMs ?? 2200) * 0.85));
 
-    // Natural blackjack after shuffle → reveal all, settle, done
-    if (isNaturalBlackjack(dealer) || isNaturalBlackjack(player)) {
+    // Pre-build the next table opts + assets during the shuffle playthrough
+    let nextOpts: BjTableOpts;
+    let nextEmbed: EmbedBuilder;
+    let nextContent: string;
+    let nextGifName: string;
+    let nextStillName: string;
+    let nextComponents: ActionRowBuilder<ButtonBuilder>[] = [];
+    let payoutBal = spent.balance;
+
+    if (natural) {
       const p = handTotal(player).total;
       const d = handTotal(dealer).total;
       let outcome: "win" | "lose" | "push" = "lose";
       if (isNaturalBlackjack(player) && isNaturalBlackjack(dealer)) outcome = "push";
       else if (isNaturalBlackjack(player)) outcome = "win";
       const payout = outcome === "win" ? bet * 2 : outcome === "push" ? bet : 0;
-      let bal = spent.balance;
-      if (payout > 0) bal = await earnCash(interaction.guildId, interaction.user.id, payout, `Blackjack ${outcome}`);
-      const tableOpts: BjTableOpts = {
-        player, dealer, hideDealer: false, revealHole: true, banner: "BLACKJACK",
-      };
-      const embed = brandEmbed("Blackjack — 21", [
+      if (payout > 0) {
+        payoutBal = await earnCash(interaction.guildId, interaction.user.id, payout, `Blackjack ${outcome}`);
+      }
+      nextOpts = { player, dealer, hideDealer: false, revealHole: true, banner: "BLACKJACK" };
+      nextEmbed = brandEmbed("Blackjack — 21", [
         `${interaction.user}`,
         `You ${formatHand(player)} (**${p}**)`,
         `Dealer ${formatHand(dealer)} (**${d}**)`,
         outcome === "win"
-          ? `🎉 Blackjack! **+${fmtCash(payout)}** ${bal.symbol}`
+          ? `🎉 Blackjack! **+${fmtCash(payout)}** ${payoutBal.symbol}`
           : outcome === "push"
             ? `🤝 Double blackjack — push`
             : `💀 Dealer blackjack — lost **${fmtCash(bet)}**`,
-        formatSpendNote(spent.fromCash, spent.fromBank, bal.symbol),
+        formatSpendNote(spent.fromCash, spent.fromBank, payoutBal.symbol),
       ].join("\n"));
-      const gif = await renderBlackjackTableGif(tableOpts);
-      await playBjBeat(floor, {
-        content: `${interaction.user} — natural`,
-        embed,
-        gif,
-        gifName: "bj-natural.gif",
-        stillOpts: tableOpts,
-        stillName: "bj-natural.png",
-        components: [],
-      });
-      return;
+      nextContent = `${interaction.user} — natural`;
+      nextGifName = "bj-natural.gif";
+      nextStillName = "bj-natural.png";
+    } else {
+      const session: BjSession = {
+        guildId: interaction.guildId, userId: interaction.user.id, bet,
+        fromCash: spent.fromCash, fromBank: spent.fromBank,
+        deck, player, dealer, doubled: false, expires: Date.now() + 3 * 60_000,
+      };
+      bjSessions.set(key, session);
+
+      const p = handTotal(player);
+      nextOpts = {
+        player, dealer, hideDealer: true,
+        animatePlayerFrom: 0,
+        animateDealerFrom: 0,
+      };
+      nextEmbed = brandEmbed("Blackjack — your move", [
+        `${interaction.user} · ${formatSpendNote(spent.fromCash, spent.fromBank, spent.balance.symbol)}`,
+        `You: ${formatHand(player)} (**${p.total}**${p.soft ? " soft" : ""})`,
+        `Dealer: ${formatHand(dealer, true)}`,
+        "",
+        "Choose **Hit**, **Stand**, or **Double Down**.",
+      ].join("\n"));
+      nextContent = `${interaction.user} — **your move**: press **Hit**, **Stand**, or **Double Down**`;
+      nextGifName = "bj-deal.gif";
+      nextStillName = "bj-deal.png";
+      nextComponents = bjButtons(interaction.user.id, true);
     }
 
-    const session: BjSession = {
-      guildId: interaction.guildId, userId: interaction.user.id, bet,
-      fromCash: spent.fromCash, fromBank: spent.fromBank,
-      deck, player, dealer, doubled: false, expires: Date.now() + 3 * 60_000,
-    };
-    bjSessions.set(key, session);
+    // Overlap: encode next beat while shuffle plays; settle shuffle → PNG at
+    // the end of its playthrough so Discord never restarts the GIF loop.
+    const [, dealGif, dealPng] = await Promise.all([
+      (async () => {
+        const [shufflePng] = await Promise.all([
+          renderBlackjackShufflePng(),
+          sleep(shuffleWaitMs),
+        ]);
+        try {
+          const still = attachPng(shufflePng, "bj-shuffle.png");
+          if (!still.imageName) return;
+          const settled = brandEmbed("Blackjack — shuffle", [
+            `${interaction.user} · stake **${fmtCash(bet)}**`,
+            formatSpendNote(spent.fromCash, spent.fromBank, spent.balance.symbol),
+            "",
+            "_Deck ready — dealing…_",
+          ].join("\n"));
+          settled.setImage(`attachment://${still.imageName}`);
+          await editUnbelievaBoatMessage(floor, {
+            content: `${interaction.user} — **dealing**…`,
+            embeds: [settled],
+            files: still.files,
+            components: [],
+          });
+        } catch {
+          // Best-effort; deal beat will replace the attachment next.
+        }
+      })(),
+      renderBlackjackTableGif(nextOpts),
+      renderBlackjackTablePng(nextOpts),
+    ]);
 
-    // 2) Deal + poker flips, then freeze to still + enable buttons
-    const p = handTotal(player);
-    const dealOpts: BjTableOpts = {
-      player, dealer, hideDealer: true,
-      animatePlayerFrom: 0,
-      animateDealerFrom: 0,
-    };
-    const embed = brandEmbed("Blackjack — your move", [
-      `${interaction.user} · ${formatSpendNote(spent.fromCash, spent.fromBank, spent.balance.symbol)}`,
-      `You: ${formatHand(player)} (**${p.total}**${p.soft ? " soft" : ""})`,
-      `Dealer: ${formatHand(dealer, true)}`,
-      "",
-      "Choose **Hit**, **Stand**, or **Double Down**.",
-    ].join("\n"));
-    const dealGif = await renderBlackjackTableGif(dealOpts);
+    // 2) Deal / natural reveal — one poker flip, then freeze + buttons
     await playBjBeat(floor, {
-      content: `${interaction.user} — **your move**: press **Hit**, **Stand**, or **Double Down**`,
-      embed,
+      content: nextContent,
+      embed: nextEmbed,
       gif: dealGif,
-      gifName: "bj-deal.gif",
-      stillOpts: dealOpts,
-      stillName: "bj-deal.png",
-      components: bjButtons(interaction.user.id, true),
+      gifName: nextGifName,
+      stillOpts: nextOpts,
+      stillName: nextStillName,
+      stillPng: dealPng,
+      components: nextComponents,
     });
   } catch (err) {
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);
@@ -861,13 +911,16 @@ export async function handleUnbGameComponent(interaction: ButtonInteraction): Pr
         `You: ${formatHand(session.player)} (**${p.total}**${p.soft ? " soft" : ""})`,
         `Dealer: ${formatHand(session.dealer, true)}`,
       ].join("\n"));
-      // Clear buttons during the flip, then settle still + re-enable
-      await updateGameMessage(interaction, {
-        content: `<@${ownerId}> — dealing…`,
-        embeds: [embed],
-        components: [],
-      });
-      const gif = await renderBlackjackTableGif(hitOpts);
+      // Clear buttons + encode flip/still in parallel, then play one beat
+      const [, gif, stillPng] = await Promise.all([
+        updateGameMessage(interaction, {
+          content: `<@${ownerId}> — dealing…`,
+          embeds: [embed],
+          components: [],
+        }),
+        renderBlackjackTableGif(hitOpts),
+        renderBlackjackTablePng(hitOpts),
+      ]);
       await playBjBeat(interaction.message, {
         content: `<@${ownerId}> — **your move**: press **Hit** or **Stand**`,
         embed,
@@ -875,6 +928,7 @@ export async function handleUnbGameComponent(interaction: ButtonInteraction): Pr
         gifName: "bj-hit.gif",
         stillOpts: hitOpts,
         stillName: "bj-hit.png",
+        stillPng,
         components: bjButtons(ownerId, false),
       });
       return;
