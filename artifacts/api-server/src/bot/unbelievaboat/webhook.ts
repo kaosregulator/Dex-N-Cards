@@ -19,6 +19,15 @@ import {
 const WEBHOOK_NAME = "UnbelievaBoat Economy";
 const webhookCache = new Map<string, Webhook | null>();
 
+/**
+ * Show `<@&role>` pills in embeds/content, but never notify role holders.
+ * Users still resolve (e.g. collect receipts mention the collector).
+ */
+export const UB_NO_ROLE_PINGS = {
+  parse: ["users"] as ("users")[],
+  roles: [] as string[],
+};
+
 type WebhookCapableChannel = TextChannel | NewsChannel;
 
 function webhookHost(channel: Interaction["channel"] | Message["channel"]): {
@@ -105,7 +114,7 @@ export async function sendChannelAsUnbelievaBoat(
         embeds: opts.embeds,
         files: opts.files,
         components: opts.components,
-        allowedMentions: { parse: ["users"] },
+        allowedMentions: UB_NO_ROLE_PINGS,
       });
       return sent;
     } catch (err) {
@@ -119,7 +128,7 @@ export async function sendChannelAsUnbelievaBoat(
       embeds: opts.embeds,
       files: opts.files,
       components: opts.components,
-      allowedMentions: { parse: ["users"] },
+      allowedMentions: UB_NO_ROLE_PINGS,
     });
   } catch (err) {
     logger.debug({ err, channelId: channel.id }, "UnbelievaBoat channel fallback send failed");
@@ -178,7 +187,7 @@ export async function postAsUnbelievaBoat(
       files: opts.files,
       components: opts.components,
       ...(threadId ? { threadId } : {}),
-      allowedMentions: { parse: ["users"] },
+      allowedMentions: UB_NO_ROLE_PINGS,
     });
     return sent.id;
   } catch (err) {
@@ -218,11 +227,13 @@ export async function replyThenPostAsUnbelievaBoat(
   }
 
   // Fallback: bot message (still branded via embed author).
+  // Must set allowedMentions — Discord defaults can ping roles otherwise.
   await interaction.editReply({
     content: undefined,
     embeds: publicPayload.embeds ?? [],
     files: publicPayload.files ?? [],
     components: publicPayload.components ?? [],
+    allowedMentions: UB_NO_ROLE_PINGS,
   });
 }
 
@@ -266,6 +277,7 @@ export async function openTableAsUnbelievaBoat(
       embeds: publicPayload.embeds ?? [],
       files: publicPayload.files ?? [],
       components: publicPayload.components ?? [],
+      allowedMentions: UB_NO_ROLE_PINGS,
     });
     return null;
   }
@@ -274,6 +286,7 @@ export async function openTableAsUnbelievaBoat(
     embeds: publicPayload.embeds ?? [],
     files: publicPayload.files ?? [],
     components: publicPayload.components ?? [],
+    allowedMentions: UB_NO_ROLE_PINGS,
   });
   await interaction.editReply({
     content: "_Webhook unavailable — table posted as bot fallback._",
