@@ -174,15 +174,17 @@ async function resolvePull(
   const other = aimedAt === "challenger" ? target : challenger;
   const bang = session.nextChamber === session.bulletIndex;
 
-  // Countdown 3…2…1 on the table
-  for (let n = 3; n >= 1; n--) {
-    const gif = await sceneGif({
-      scene: "raise",
-      challenger,
-      target,
-      aimedAt,
-      countdown: n,
-    });
+  // Pre-render countdown + outcome while the first beat plays — less dead air.
+  const [count3, count2, count1, outcomeGif] = await Promise.all([
+    sceneGif({ scene: "raise", challenger, target, aimedAt, countdown: 3 }),
+    sceneGif({ scene: "raise", challenger, target, aimedAt, countdown: 2 }),
+    sceneGif({ scene: "raise", challenger, target, aimedAt, countdown: 1 }),
+    bang
+      ? sceneGif({ scene: "bang", challenger, target, aimedAt, chamber: session.bulletIndex })
+      : sceneGif({ scene: "click", challenger, target, aimedAt }),
+  ]);
+
+  for (const [n, gif] of [[3, count3], [2, count2], [1, count1]] as const) {
     const { files, imageName } = await attachGif(gif, `rr-count-${n}.gif`);
     const embed = brandEmbed(`🔫 ${n}…`, [
       `${challenger} vs ${target}`,
@@ -190,18 +192,12 @@ async function resolvePull(
     ].join("\n"));
     if (imageName) embed.setImage(`attachment://${imageName}`);
     await updateTable(interaction, { content: `**${n}…**`, embeds: [embed], files, components: [] });
-    await new Promise(r => setTimeout(r, 700));
+    await new Promise(r => setTimeout(r, 550));
   }
 
   if (bang) {
     duels.delete(key);
-    const gif = await sceneGif({
-      scene: "bang",
-      challenger,
-      target,
-      aimedAt,
-      chamber: session.bulletIndex,
-    });
+    const gif = outcomeGif;
     const { files, imageName } = await attachGif(gif, "rr-bang.gif");
     const pot = session.mode === "challenge" ? session.bet * 2 : session.bet * 2;
     let resultLine: string;
@@ -235,12 +231,7 @@ async function resolvePull(
   session.turn = aimedAt === "challenger" ? "target" : "challenger";
   duels.set(key, session);
 
-  const gif = await sceneGif({
-    scene: "click",
-    challenger,
-    target,
-    aimedAt,
-  });
+  const gif = outcomeGif;
   const { files, imageName } = await attachGif(gif, "rr-click.gif");
   const nextUser = session.turn === "challenger" ? challenger : target;
   const embed = brandEmbed("🔫 Click — safe", [
@@ -249,17 +240,25 @@ async function resolvePull(
     `**${6 - session.nextChamber}** left · next: ${nextUser}`,
   ].join("\n"));
   if (imageName) embed.setImage(`attachment://${imageName}`);
+
+  // Overlap AI spin encode with the click hold when the AI is next.
+  const aiSpinPromise = session.mode === "ai" && session.turn === "target"
+    ? sceneGif({ scene: "spin", challenger, target, aimedAt: "target" })
+    : Promise.resolve(null);
+
   await updateTable(interaction, {
     content: `🟢 Click — ${nextUser}'s turn`,
     embeds: [embed],
     files,
     components: [],
   });
-  await new Promise(r => setTimeout(r, 1200));
+  const [, waitGif] = await Promise.all([
+    new Promise(r => setTimeout(r, 1000)),
+    aiSpinPromise,
+  ]);
 
   // AI turn — auto pull (no button)
   if (session.mode === "ai" && session.turn === "target") {
-    const waitGif = await sceneGif({ scene: "spin", challenger, target, aimedAt: "target" });
     const waitAtt = await attachGif(waitGif, "rr-ai.gif");
     const waitEmbed = brandEmbed("🔫 AI pulling…", [
       `${challenger} vs ${target} *(AI)*`,
@@ -272,7 +271,7 @@ async function resolvePull(
       files: waitAtt.files,
       components: [],
     });
-    await new Promise(r => setTimeout(r, 1400));
+    await new Promise(r => setTimeout(r, 1100));
     await resolvePull(interaction, session, challenger, target);
     return;
   }
@@ -298,12 +297,18 @@ export async function handleRussian(interaction: ChatInputCommandInteraction): P
     const target = interaction.options.getUser("target", true);
     const bet = interaction.options.getInteger("bet", true);
     const mode = interaction.options.getString("mode") ?? "challenge";
-    if (target.bot || target.id === interaction.user.id) {
-      await interaction.editReply("Pick another real member (or use mode **ai** with any member avatar).");
+    if (target.id === interaction.user.id) {
+      await interaction.editReply("Pick someone else (or use mode **ai** with another member’s avatar).");
+      return;
+    }
+    // Challenge needs a real human; AI mode can use any avatar (including bots).
+    if (mode === "challenge" && target.bot) {
+      await interaction.editReply("Challenge a real member — or use mode **ai** with any avatar (bots OK).");
       return;
     }
 
     if (mode === "challenge") {
+      await markGameCooldown(interaction.guildId, interaction.user.id);
       const key = duelKey(interaction.guildId, interaction.user.id, target.id);
       challenges.set(key, {
         guildId: interaction.guildId,

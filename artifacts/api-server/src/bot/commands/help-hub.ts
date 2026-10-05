@@ -216,10 +216,10 @@ const PAGES: Record<HelpSection, PageFn> = {
         { name: "🎁 Gifting", value:
           "`/trade` → **Gift shards** — send shards to a friend." },
         { name: "💵 Casino (UnbelievaBoat)", value:
-          "`/casino` — floor panel: wallet, mega slots, public blackjack, UNO, collect, store, leaderboard\n" +
-          "`/vaultvalue` — Vault Values panel (info · calc · list · help)\n" +
-          "`/unbelievaboat` — (admin) economy dashboard, log channel, rob immunity\n" +
-          "`/tatsu` — (staff) Tatsu score/points leaderboard, lookup, spam strip" },
+          "`/casino` — button floor: wallet · slots · blackjack · roulette · UNO · collect · store · top\n" +
+          "Shortcuts: `/daily_ub` `/blackjack_ub` `/slots_ub` `/collect_ub` … (all `*_ub`)\n" +
+          "Prefix (default `.`): `.bj 50` · `.slots` · `.dep`/`.with` · `.col` · `.work`/`.crime` · `.rr @user 50` · `.rr ai @user 50` · `.help`\n" +
+          "`/unbelievaboat` — (admin) **Roles & economy** = per-role collect CDs · Casino station for daily/work/… · `/tatsu`" },
       );
   },
 

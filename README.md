@@ -38,6 +38,14 @@ Collect, trade, battle, and build — with a User Hub for daily profile flow, co
 - Staff force-out: `/quiet user:@Member` · setup: `/quiet_setup`
 - Optional CC0 ambience + **Stones in the Water** release exercise — see [`docs/quiet-mode.md`](./docs/quiet-mode.md)
 
+### 💵 Casino (UnbelievaBoat)
+- **`/casino`** — button floor: wallet, mega slots, interactive blackjack, roulette, UNO, collect, store, leaderboard
+- **Interactive blackjack** — shuffle intro → one-shot poker deal → Hit / Stand / Double (no looping card flips)
+- **Short slash aliases** — `/daily_ub`, `/blackjack_ub`, `/slots_ub`, `/collect_ub`, …
+- **Prefix games** (default `.`) — `.bj 50`, `.slots 100`, `.dep` / `.with`, `.col`, `.work` / `.crime`, `.rr @user 50`, `.rr ai @user 50`
+- **`/unbelievaboat`** — admin cooldowns, payouts, per-role collect, store icons (Discord emoji / Tenor GIF pick), rob immunity, logs
+- See [`docs/unbelievaboat.md`](./docs/unbelievaboat.md)
+
 ### ⚙️ Admin tools
 - **`/setup`** (and `!setup`) — guided configuration
 - **`/config`** — visual toggles, intervals, rates, pack settings
@@ -158,7 +166,8 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/vaultvalue` | Vault Values prices + calculator ([valuevaultx.com](https://valuevaultx.com)) |
 | `/pet` | Pets (when enabled) |
 | `/casino` | UnbelievaBoat casino hub — deposit/withdraw, daily, collect, games, UNO, leaderboard, store |
-| `/unbelievaboat` | Admin Discord dashboard (cooldowns, cash, store, logs, rob immunity) |
+| `*_ub` shortcuts | `/daily_ub`, `/blackjack_ub`, `/slots_ub`, `/collect_ub`, … (same actions as `/casino`) |
+| `/unbelievaboat` | Admin Discord dashboard (cooldowns, cash, store icons, logs, rob immunity) |
 | `/tatsu` | Staff Tatsu dashboard (leaderboard, points/score, spam watch) |
 | `/trivia` | Staff community trivia host (flash, QOTD, picture rounds) |
 
@@ -184,6 +193,10 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `!setup` | Interactive setup wizard |
 | `!addcard` | Add a card to the pool |
 | `!settings` | View current server configuration |
+| `.bj 50` · `.slots 100` | Casino tables (guild `gamesPrefix`, default `.`) |
+| `.dep` / `.with` / `.col` / `.daily` | Wallet · collect · Cash Check-In |
+| `.rr @user 50` · `.hl 50` · `.rb 50 red` | Russian · Higher/Lower · Red/Black |
+| `.help` | Casino prefix cheat-sheet |
 
 > **Moved into hubs (no longer standalone slash):** many older one-offs. Prefer **`/help`** for the live map.
 >

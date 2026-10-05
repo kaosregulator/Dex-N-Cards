@@ -150,7 +150,8 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
         emoji: r.emoji || "✨",
         roleIds: [r.discordRoleId],
         imageUrl,
-        animated: isAnimatedStoreImage(imageUrl),
+        // Prefer persisted capture flag (Tenor/Giphy), else URL sniff.
+        animated: m.animated === true || isAnimatedStoreImage(imageUrl),
         localLinkId: r.id,
       });
     }

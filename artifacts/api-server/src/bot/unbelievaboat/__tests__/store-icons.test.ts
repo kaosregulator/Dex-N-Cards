@@ -71,6 +71,9 @@ describe("store-icons", () => {
     expect(isAnimatedStoreImage(discordEmojiCdnUrl("222", true))).toBe(true);
     expect(isAnimatedStoreImage(discordEmojiCdnUrl("111", false))).toBe(false);
     expect(isAnimatedStoreImage("https://cdn.example.com/icon.png")).toBe(false);
+    // Tenor/Giphy share links rarely end in .gif
+    expect(isAnimatedStoreImage("https://media.tenor.com/abc/xyz")).toBe(true);
+    expect(isAnimatedStoreImage("https://media.giphy.com/media/abc/giphy.webp")).toBe(true);
   });
 
   it("formats guild emoji markup", () => {

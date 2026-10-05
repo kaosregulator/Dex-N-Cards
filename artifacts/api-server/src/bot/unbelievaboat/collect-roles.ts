@@ -134,15 +134,18 @@ export async function markRolesCollected(
 
 /**
  * Owned income roles split into ready vs cooling down (per-role timers).
- * When a role has no per-link timer yet, falls back to the old global lastCollectAt
- * so existing UB-style cooldowns still apply after upgrade.
+ *
+ * Legacy: if `roleCollectAt` is still empty, use global `lastCollectAt` so
+ * pre-migration cooldowns keep working.
+ * After any per-role mark exists, missing link ids mean “never collected”
+ * (so a newly bought income role is ready immediately).
  */
 export function planRoleCollect(opts: {
   links: UbRoleLink[];
   member: GuildMember;
   guildCollectSec: number;
   lastByLinkId: Record<string, number>;
-  /** Legacy global collect timestamp (ms) used only when a link has never been marked. */
+  /** Legacy global collect timestamp (ms) — only when roleCollectAt is empty. */
   fallbackLastCollectAt?: number;
   guild?: Guild | null;
 }): { ready: CollectRoleRow[]; cooling: CollectRoleRow[]; zeroIncomeOwned: UbRoleLink[] } {
@@ -152,6 +155,7 @@ export function planRoleCollect(opts: {
   const cooling: CollectRoleRow[] = [];
   const zeroIncomeOwned: UbRoleLink[] = [];
   const fallback = opts.fallbackLastCollectAt ?? 0;
+  const hasPerRoleMap = Object.keys(opts.lastByLinkId).length > 0;
 
   const seenRole = new Set<string>();
   const candidates = opts.links
@@ -164,14 +168,17 @@ export function planRoleCollect(opts: {
     seenRole.add(rid);
 
     const income = link.incomeAmount ?? 0;
-    if (income === 0) {
-      zeroIncomeOwned.push(link);
+    // Collect pays positive income only — skip zero/negative.
+    if (income <= 0) {
+      if (income === 0) zeroIncomeOwned.push(link);
       continue;
     }
 
     const cooldownSec = roleCollectCooldownSec(link, opts.guildCollectSec);
     const keyed = opts.lastByLinkId[String(link.id)];
-    const last = typeof keyed === "number" ? keyed : fallback;
+    let last = 0;
+    if (typeof keyed === "number") last = keyed;
+    else if (!hasPerRoleMap && fallback > 0) last = fallback;
     const readyAt = last + cooldownSec * 1000;
     const readyInMs = Math.max(0, readyAt - now);
     const row: CollectRoleRow = {

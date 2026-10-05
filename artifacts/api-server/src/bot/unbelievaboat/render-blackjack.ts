@@ -226,9 +226,9 @@ export async function renderBlackjackTableGif(opts: BjTableOpts): Promise<Animat
     || animateDealerFrom > 0
     || (!!opts.revealHole && opts.dealer.length <= 2);
 
-  // Longer hold tail so Discord’s loop pause sits on the settled table
-  const durationMs = opts.banner ? 2800 : onlyNew ? 1800 : 2400;
-  const maxFrames = opts.banner ? 28 : onlyNew ? 20 : 26;
+  // Short motion + hold tail. Caller settles to PNG before Discord loops.
+  const durationMs = opts.banner ? 1800 : onlyNew ? 1100 : 1500;
+  const maxFrames = opts.banner ? 20 : onlyNew ? 14 : 18;
 
   return encodeAnimation({
     width: BJ_W, height: BJ_H, durationMs, speed: "normal", maxFrames, quality: 14,
@@ -252,18 +252,60 @@ export async function renderBlackjackTablePng(opts: BjTableOpts): Promise<Buffer
   }
 }
 
+function drawSquaredDeck(ctx: Ctx, label = "Deck ready", title = "DECK READY") {
+  felt(ctx);
+  tableLabels(ctx);
+  ctx.fillStyle = "#fde68a";
+  ctx.font = "bold 18px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(title, BJ_W / 2, 36);
+  const cx = BJ_W / 2;
+  const cy = BJ_H / 2 + 10;
+  const cw = 48;
+  const ch = 68;
+  for (let i = 0; i < 12; i++) {
+    drawCardBackAt(ctx, cx - cw / 2 + i * 0.6, cy - ch / 2 + i * 0.6, cw, ch, 0);
+  }
+  ctx.fillStyle = "#4ade80";
+  ctx.font = "bold 15px sans-serif";
+  ctx.fillText(label, cx, BJ_H - 28);
+}
+
+/** Squared deck still — swap onto the floor so the shuffle GIF cannot loop. */
+export async function renderBlackjackShufflePng(): Promise<Buffer | null> {
+  const mod = await getCanvas();
+  if (!mod) return null;
+  try {
+    const canvas = mod.createCanvas(BJ_W, BJ_H);
+    const ctx = canvas.getContext("2d") as unknown as Ctx;
+    drawSquaredDeck(ctx, "Deck ready — dealing…", "DECK READY");
+    return await canvas.encode("png");
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Casino-grade shuffle intro: side riffle → bridge cascade → overhand → square-up.
- * Plays once; caller awaits duration then moves to the deal beat.
+ * Keep it snappy (~2.2s). Caller MUST settle to PNG before Discord loops it.
  */
 export async function renderBlackjackShuffleGif(): Promise<AnimationResult | null> {
-  const durationMs = 3600;
-  const maxFrames = 36;
+  const durationMs = 2200;
+  const maxFrames = 24;
   const captionY = BJ_H - 28;
+  // Freeze motion early so coalesced hold frames dominate the loop pause.
+  const MOTION_END = 0.82;
 
   return encodeAnimation({
     width: BJ_W, height: BJ_H, durationMs, speed: "normal", maxFrames, quality: 14,
     render: async ({ ctx, t }) => {
+      const mt = motionT(t, MOTION_END);
+      // Hard freeze on squared deck for the hold tail
+      if (t >= MOTION_END) {
+        drawSquaredDeck(ctx, "Deck ready — dealing…", "DECK READY");
+        return;
+      }
+
       felt(ctx);
       tableLabels(ctx);
 
@@ -277,8 +319,8 @@ export async function renderBlackjackShuffleGif(): Promise<AnimationResult | nul
       const cw = 48;
       const ch = 68;
 
-      if (t < 0.28) {
-        const p = easeInOutCubic(t / 0.28);
+      if (mt < 0.28) {
+        const p = easeInOutCubic(mt / 0.28);
         const leftX = cx - 70 + Math.sin(p * Math.PI * 6) * 8;
         const rightX = cx + 22 - Math.sin(p * Math.PI * 6) * 8;
         for (let i = 0; i < 8; i++) {
@@ -291,8 +333,8 @@ export async function renderBlackjackShuffleGif(): Promise<AnimationResult | nul
         ctx.fillStyle = "#a7f3d0";
         ctx.font = "14px sans-serif";
         ctx.fillText("Side riffle…", cx, captionY);
-      } else if (t < 0.55) {
-        const p = easeInOutCubic((t - 0.28) / 0.27);
+      } else if (mt < 0.55) {
+        const p = easeInOutCubic((mt - 0.28) / 0.27);
         const arch = Math.sin(p * Math.PI) * 55;
         const spread = lerp(40, 90, p);
         for (let i = 0; i < 10; i++) {
@@ -315,8 +357,8 @@ export async function renderBlackjackShuffleGif(): Promise<AnimationResult | nul
         ctx.fillStyle = "#fbbf24";
         ctx.font = "14px sans-serif";
         ctx.fillText("Bridge cascade…", cx, captionY);
-      } else if (t < 0.78) {
-        const p = easeInOutCubic((t - 0.55) / 0.23);
+      } else if (mt < 0.78) {
+        const p = easeInOutCubic((mt - 0.55) / 0.23);
         const packets = 5;
         for (let i = 0; i < packets; i++) {
           const start = i / packets;
@@ -332,16 +374,17 @@ export async function renderBlackjackShuffleGif(): Promise<AnimationResult | nul
         ctx.font = "14px sans-serif";
         ctx.fillText("Overhand shuffle…", cx, captionY);
       } else {
-        const p = clamp01((t - 0.78) / 0.14);
-        const jitter = (1 - p) * 6;
+        // Square-up — no oscillating jitter (that looked like infinite shuffle)
+        const p = clamp01((mt - 0.78) / 0.22);
+        const jitter = (1 - p) * 5;
         for (let i = 0; i < 12; i++) {
-          const x = cx - cw / 2 + (Math.sin(i * 2.1 + t * 20) * jitter);
-          const y = cy - ch / 2 + i * 0.7 + (Math.cos(i * 1.7) * jitter * 0.4);
-          drawCardBackAt(ctx, x, y, cw, ch, (1 - p) * (i - 6) * 0.01);
+          const x = cx - cw / 2 + Math.sin(i * 2.1) * jitter;
+          const y = cy - ch / 2 + i * 0.7 + Math.cos(i * 1.7) * jitter * 0.35;
+          drawCardBackAt(ctx, x, y, cw, ch, (1 - p) * (i - 6) * 0.008);
         }
-        ctx.fillStyle = p > 0.85 ? "#4ade80" : "#e2e8f0";
+        ctx.fillStyle = p > 0.7 ? "#4ade80" : "#e2e8f0";
         ctx.font = "bold 15px sans-serif";
-        ctx.fillText(p > 0.85 ? "Deck ready — dealing…" : "Squaring up…", cx, captionY);
+        ctx.fillText(p > 0.7 ? "Deck ready — dealing…" : "Squaring up…", cx, captionY);
       }
     },
   });

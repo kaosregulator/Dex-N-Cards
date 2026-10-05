@@ -10,7 +10,8 @@ import { CashError } from "./cash.js";
 /** Defaults aligned with UnbelievaBoat FAQ (income + game window). */
 export const DEFAULT_COOLDOWNS = {
   dailySec: 20 * 60 * 60,       // Cash Check-In (our addon)
-  collectSec: 24 * 60 * 60,     // Role income collect
+  // Fallback only — each role can override via meta.collectCooldownSec (UB Role Income style).
+  collectSec: 24 * 60 * 60,
   workSec: 4 * 60 * 60,         // /work style
   crimeSec: 4 * 60 * 60,
   begSec: 4 * 60 * 60,          // /slut
@@ -129,15 +130,16 @@ export function parseCooldownInput(raw: string, label = "Cooldown"): number {
   );
 }
 
-type IncomeKey = "daily" | "work" | "crime" | "beg" | "rob" | "collect";
+// Note: role collect does NOT use this API — it uses per-role timers via
+// planRoleCollect / markRolesCollected. Keep "collect" out of IncomeKey.
+type IncomeKey = "daily" | "work" | "crime" | "beg" | "rob";
 
-const INCOME_FIELD: Record<IncomeKey, "lastDailyAt" | "lastRobAt" | "lastBegAt" | "lastWorkAt" | "lastCrimeAt" | "lastCollectAt"> = {
+const INCOME_FIELD: Record<IncomeKey, "lastDailyAt" | "lastRobAt" | "lastBegAt" | "lastWorkAt" | "lastCrimeAt"> = {
   daily: "lastDailyAt",
   work: "lastWorkAt",
   crime: "lastCrimeAt",
   beg: "lastBegAt",
   rob: "lastRobAt",
-  collect: "lastCollectAt",
 };
 
 const INCOME_SEC: Record<IncomeKey, keyof CooldownConfig> = {
@@ -146,7 +148,6 @@ const INCOME_SEC: Record<IncomeKey, keyof CooldownConfig> = {
   crime: "crimeSec",
   beg: "begSec",
   rob: "robSec",
-  collect: "collectSec",
 };
 
 export async function assertIncomeCooldown(guildId: string, userId: string, kind: IncomeKey): Promise<void> {
