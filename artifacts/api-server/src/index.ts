@@ -1286,6 +1286,8 @@ async function runBootMigrations() {
       guild_id                TEXT NOT NULL UNIQUE,
       enabled                 BOOLEAN NOT NULL DEFAULT TRUE,
       channel_id              TEXT,
+      board_channel_id        TEXT,
+      gallery_channel_id      TEXT,
       station_message_id      TEXT,
       sticky_message_id       TEXT,
       staff_role_id           TEXT,
@@ -1299,6 +1301,16 @@ async function runBootMigrations() {
     )
   `);
   await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS sticky_message_id TEXT`);
+  await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS board_channel_id TEXT`);
+  await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS gallery_channel_id TEXT`);
+  // Migrate legacy single-channel setups into board + gallery when possible.
+  await pool.query(`
+    UPDATE artshow_settings
+    SET gallery_channel_id = COALESCE(gallery_channel_id, channel_id),
+        board_channel_id = COALESCE(board_channel_id, channel_id)
+    WHERE channel_id IS NOT NULL
+      AND (gallery_channel_id IS NULL OR board_channel_id IS NULL)
+  `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS artshow_pieces (
       id                      SERIAL PRIMARY KEY,

@@ -3,7 +3,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Art Show — community gallery with button votes, evolving artist badges,
+// Art Show — submission board + read-only gallery, button votes, emblems,
 // vote wallets, bump perks, and a Hall of Fame / museum crown.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -13,10 +13,17 @@ export const artshowSettingsTable = pgTable("artshow_settings", {
   id: serial("id").primaryKey(),
   guildId: text("guild_id").notNull().unique(),
   enabled: boolean("enabled").notNull().default(true),
-  /** Channel where pieces and the station live */
+  /**
+   * Legacy single-channel id (pre two-channel split).
+   * Kept for migration; prefer boardChannelId + galleryChannelId.
+   */
   channelId: text("channel_id"),
+  /** Channel with the submission station — members drop photos here */
+  boardChannelId: text("board_channel_id"),
+  /** Channel where hung pieces live — read-only for non-staff */
+  galleryChannelId: text("gallery_channel_id"),
   stationMessageId: text("station_message_id"),
-  /** Glued top-3 board — delete+repost to stay at channel bottom */
+  /** @deprecated Sticky board removed — column retained for existing DBs */
   stickyMessageId: text("sticky_message_id"),
   staffRoleId: text("staff_role_id"),
   /** Base votes granted each UTC day */
@@ -25,7 +32,7 @@ export const artshowSettingsTable = pgTable("artshow_settings", {
   bonusVotesOnSubmit: integer("bonus_votes_on_submit").notNull().default(2),
   /** Hours between partial wallet refreshes (+1 vote, capped) */
   voteRefreshHours: integer("vote_refresh_hours").notNull().default(6),
-  /** Votes spent to bump a piece back to the top of the channel */
+  /** Votes spent to bump a piece back to the top of the gallery */
   bumpCostVotes: integer("bump_cost_votes").notNull().default(3),
   /** First piece to hit this many votes in a week is auto-crowned (0 = off) */
   crownThreshold: integer("crown_threshold").notNull().default(25),
