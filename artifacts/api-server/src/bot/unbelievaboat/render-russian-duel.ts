@@ -8,6 +8,8 @@ import {
 import type { AnimationResult } from "../animations/types.js";
 import { loadArt } from "../animations/effects.js";
 import { drawSparks, drawEmbers, shakeOffset } from "../animations/particles.js";
+import { drawTextWithEmojis, preloadEmojiTexts } from "./canvas-emoji-text.js";
+import type { CurrencyImg } from "./currency-canvas.js";
 
 const W = 640;
 const H = 360;
@@ -29,6 +31,8 @@ export type RussianSceneOpts = {
   /** Whose turn / who the gun points at for raise/click/bang */
   aimedAt?: "challenger" | "target";
   chamber?: number;
+  /** Optional 3-2-1 countdown overlay on raise */
+  countdown?: number;
 };
 
 async function loadAvatar(mod: CanvasMod, url: string | null) {
@@ -46,6 +50,7 @@ function drawAvatarCircle(
   cx: number, cy: number, r: number,
   label: string,
   highlight: boolean,
+  emojiImgs: Map<string, CurrencyImg | null>,
 ) {
   ctx.save();
   ctx.beginPath();
@@ -56,7 +61,6 @@ function drawAvatarCircle(
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.clip();
   if (img) {
-    // LoadedImage from @napi-rs/canvas
     ctx.drawImage(img as never, cx - r, cy - r, r * 2, r * 2);
   } else {
     ctx.fillStyle = "#475569";
@@ -68,10 +72,13 @@ function drawAvatarCircle(
     ctx.fillText(label.slice(0, 1).toUpperCase(), cx, cy);
   }
   ctx.restore();
-  ctx.fillStyle = "#f1f5f9";
-  ctx.font = "bold 14px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(label.slice(0, 16), cx, cy + r + 20);
+  drawTextWithEmojis(ctx, label, cx, cy + r + 20, emojiImgs, {
+    font: "bold 14px sans-serif",
+    fillStyle: "#f1f5f9",
+    align: "center",
+    maxWidth: 140,
+    emojiSize: 14,
+  });
 }
 
 /** Toy western revolver — silhouette, not realistic gore. */
@@ -143,19 +150,20 @@ export async function renderRussianScene(opts: RussianSceneOpts): Promise<Animat
     loadAvatar(mod, opts.challengerUrl),
     loadAvatar(mod, opts.targetUrl),
   ]);
+  const emojiImgs = await preloadEmojiTexts(mod, [opts.challengerName, opts.targetName]);
 
   const scene = opts.scene;
   const durationMs =
     scene === "spin" ? 2200
-      : scene === "raise" ? 1600
-        : scene === "bang" ? 1800
+      : scene === "raise" ? (opts.countdown != null ? 900 : 1600)
+        : scene === "bang" ? 2000
           : scene === "click" ? 1400
             : scene === "load" ? 1800
               : 1600;
 
   return encodeAnimation({
     width: W, height: H, durationMs, speed: "normal",
-    maxFrames: scene === "spin" ? 24 : 18,
+    maxFrames: scene === "bang" ? 22 : scene === "spin" ? 24 : 18,
     quality: 14, renderScale: 0.8,
     render: async ({ ctx, t }) => {
       feltTable(ctx);
@@ -167,36 +175,42 @@ export async function renderRussianScene(opts: RussianSceneOpts): Promise<Animat
 
       drawAvatarCircle(
         ctx, challengerImg, leftX, avY, 52,
-        opts.challengerName, aimLeft && (scene === "raise" || scene === "bang" || scene === "click"),
+        opts.challengerName,
+        aimLeft && (scene === "raise" || scene === "bang" || scene === "click" || scene === "intro"),
+        emojiImgs,
       );
       drawAvatarCircle(
         ctx, targetImg, rightX, avY, 52,
-        opts.targetName, aimRight && (scene === "raise" || scene === "bang" || scene === "click"),
+        opts.targetName,
+        aimRight && (scene === "raise" || scene === "bang" || scene === "click" || scene === "intro"),
+        emojiImgs,
       );
 
-      // VS badge
       ctx.fillStyle = "#fbbf24";
       ctx.font = "bold 22px sans-serif";
       ctx.textAlign = "center";
       ctx.fillText("VS", W / 2, 60);
 
-      const gunY = H / 2 + 40;
-      let gunAngle = 0;
-      let gunX = W / 2;
+      // Hold the gun near the active player's hand — not floating mid-table.
+      const holderLeft = aimLeft || (!opts.aimedAt && scene === "intro");
+      let gunX = holderLeft ? leftX + 55 : rightX - 55;
+      let gunY = avY + 55;
+      let gunAngle = holderLeft ? -0.55 : Math.PI + 0.55;
       let spin = 0;
-      let scale = 1.1;
+      let scale = 0.95;
 
       if (scene === "intro") {
-        gunAngle = -0.4;
-        scale = 0.9 + easeOutBack(clamp01(t)) * 0.25;
+        scale = 0.85 + easeOutBack(clamp01(t)) * 0.2;
         ctx.fillStyle = "#a7f3d0";
         ctx.font = "16px sans-serif";
-        ctx.fillText("Toy duel · pull when ready", W / 2, H - 28);
+        ctx.fillText("Press Pull Trigger when it’s your turn", W / 2, H - 28);
       } else if (scene === "load") {
+        gunX = W / 2;
+        gunY = H / 2 + 20;
+        gunAngle = -0.2;
         const loadT = easeInOutCubic(t);
         spin = loadT * Math.PI * 2;
-        gunAngle = -0.2;
-        // chamber dots lighting up
+        scale = 1.15;
         for (let i = 0; i < 6; i++) {
           const lit = loadT > (i + 1) / 6;
           ctx.fillStyle = lit ? "#ef4444" : "#334155";
@@ -208,8 +222,11 @@ export async function renderRussianScene(opts: RussianSceneOpts): Promise<Animat
         ctx.font = "bold 16px sans-serif";
         ctx.fillText("Loading chambers…", W / 2, H - 24);
       } else if (scene === "spin") {
+        gunX = W / 2;
+        gunY = H / 2 + 20;
         spin = t * Math.PI * 8;
         gunAngle = Math.sin(t * Math.PI * 6) * 0.15;
+        scale = 1.2;
         const sh = shakeOffset(`spin-${Math.floor(t * 20)}`, 2);
         ctx.translate(sh.dx, sh.dy);
         ctx.fillStyle = "#cbd5e1";
@@ -217,42 +234,67 @@ export async function renderRussianScene(opts: RussianSceneOpts): Promise<Animat
         ctx.fillText("Spinning the cylinder…", W / 2, H - 28);
       } else if (scene === "raise") {
         const raise = easeOutBack(clamp01(t));
-        gunX = lerp(W / 2, aimLeft ? leftX + 70 : rightX - 70, raise);
-        gunAngle = lerp(0, aimLeft ? Math.PI : 0, raise) + (aimLeft ? 0.2 : -0.2);
-        scale = lerp(1.1, 1.35, raise);
-        ctx.fillStyle = "#fbbf24";
-        ctx.font = "bold 16px sans-serif";
-        ctx.fillText("Raising…", W / 2, H - 28);
+        gunX = lerp(W / 2, aimLeft ? leftX + 40 : rightX - 40, raise);
+        gunY = lerp(H / 2 + 30, avY + 10, raise);
+        gunAngle = aimLeft ? -0.2 : Math.PI + 0.2;
+        scale = lerp(1.0, 1.25, raise);
+        if (opts.countdown != null) {
+          ctx.fillStyle = `rgba(251,191,36,${0.9})`;
+          ctx.font = "bold 72px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(String(opts.countdown), W / 2, H / 2 + 20);
+        } else {
+          ctx.fillStyle = "#fbbf24";
+          ctx.font = "bold 16px sans-serif";
+          ctx.fillText("Raising…", W / 2, H - 28);
+        }
       } else if (scene === "click") {
-        gunX = aimLeft ? leftX + 70 : rightX - 70;
-        gunAngle = aimLeft ? Math.PI + 0.2 : -0.2;
-        scale = 1.3;
-        if (t > 0.3) {
-          drawSparks(ctx, gunX + (aimLeft ? -40 : 40), gunY - 10, {
-            count: 10, color: 0x4ade80, seed: `click-${Math.floor(t * 8)}`,
+        gunX = aimLeft ? leftX + 40 : rightX - 40;
+        gunY = avY + 10;
+        gunAngle = aimLeft ? -0.15 : Math.PI + 0.15;
+        scale = 1.2;
+        if (t > 0.25) {
+          drawSparks(ctx, gunX + (aimLeft ? 30 : -30), gunY - 8, {
+            count: 12, color: 0x4ade80, seed: `click-${Math.floor(t * 8)}`,
           });
         }
         ctx.fillStyle = "#4ade80";
         ctx.font = "bold 28px sans-serif";
         ctx.fillText("CLICK — safe", W / 2, H - 32);
       } else if (scene === "bang") {
-        gunX = aimLeft ? leftX + 70 : rightX - 70;
-        gunAngle = aimLeft ? Math.PI + 0.2 : -0.2;
-        scale = 1.35;
-        const sh = shakeOffset(`bang-${Math.floor(t * 25)}`, 6 * (1 - t));
+        gunX = aimLeft ? leftX + 40 : rightX - 40;
+        gunY = avY + 10;
+        gunAngle = aimLeft ? -0.1 : Math.PI + 0.1;
+        scale = 1.3;
+        const sh = shakeOffset(`bang-${Math.floor(t * 30)}`, 10 * (1 - t));
         ctx.translate(sh.dx, sh.dy);
-        if (t < 0.5) {
-          drawSparks(ctx, gunX + (aimLeft ? -50 : 50), gunY - 10, {
-            count: 20, color: 0xff6644, maxLen: 80, seed: `bang-${Math.floor(t * 10)}`,
-          });
-          ctx.fillStyle = hexToRgba(0xffe4a0, 0.5 * (1 - t * 2));
+        // Muzzle flash + expanding blast
+        const muzzleX = gunX + (aimLeft ? 48 : -48);
+        const muzzleY = gunY - 6;
+        if (t < 0.55) {
+          const flash = 1 - t / 0.55;
+          ctx.fillStyle = hexToRgba(0xfff1a8, 0.7 * flash);
           ctx.beginPath();
-          ctx.arc(gunX + (aimLeft ? -40 : 40), gunY - 10, 40 + t * 80, 0, Math.PI * 2);
+          ctx.arc(muzzleX, muzzleY, 30 + t * 120, 0, Math.PI * 2);
           ctx.fill();
+          ctx.fillStyle = hexToRgba(0xff6644, 0.55 * flash);
+          ctx.beginPath();
+          ctx.arc(muzzleX, muzzleY, 18 + t * 70, 0, Math.PI * 2);
+          ctx.fill();
+          drawSparks(ctx, muzzleX, muzzleY, {
+            count: 28, color: 0xffaa44, maxLen: 100, seed: `bang-${Math.floor(t * 12)}`,
+          });
         }
+        // Red vignette
+        ctx.fillStyle = `rgba(127,29,29,${0.35 * Math.min(1, t * 2)})`;
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "#fecaca";
+        ctx.font = "bold 48px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("BANG!", W / 2, H / 2 + 16);
         ctx.fillStyle = "#f87171";
-        ctx.font = "bold 28px sans-serif";
-        ctx.fillText("BANG!", W / 2, H - 32);
+        ctx.font = "bold 18px sans-serif";
+        ctx.fillText("Out of the duel", W / 2, H - 32);
       }
 
       drawToyGun(ctx, gunX, gunY, {

@@ -262,14 +262,25 @@ export async function handleUbPrefixCommand(msg: Message, gamesPrefix: string): 
       return true;
     }
     if (cmd === "russian") {
-      const target = resolveMentionUser(msg, args[0]) ?? msg.mentions.users.first() ?? null;
-      const bet = parseBet(args[1] ?? args[0]);
-      // Allow `.russian @user 100` or `.russian 100 @user`
-      const t = target ?? (args[1] ? resolveMentionUser(msg, args[1]) : null);
-      const b = bet ?? parseBet(args[0]);
-      if (!t || !b) { await msg.reply(`Usage: \`${gamesPrefix}rr @user <bet>\``); return true; }
+      // `.rr @user 100` challenge · `.rr ai @user 100` avatar/AI duel
+      const modeArg = (args[0] ?? "").toLowerCase();
+      const mode = modeArg === "ai" || modeArg === "bot" ? "ai" : "challenge";
+      const rest = mode === "ai" ? args.slice(1) : args;
+      const target = resolveMentionUser(msg, rest[0]) ?? msg.mentions.users.first()
+        ?? (rest[1] ? resolveMentionUser(msg, rest[1]) : null);
+      const bet = parseBet(rest[1] ?? rest[0]) ?? parseBet(rest[0]);
+      if (!target || !bet) {
+        await msg.reply(
+          `Usage: \`${gamesPrefix}rr @user <bet>\` (challenge) or \`${gamesPrefix}rr ai @user <bet>\``,
+        );
+        return true;
+      }
       const { handleRussian } = await import("./russian-duel.js");
-      await run(handleRussian, { users: { target: t }, integers: { bet: b } });
+      await run(handleRussian, {
+        users: { target },
+        integers: { bet },
+        strings: { mode },
+      });
       return true;
     }
   } catch (err) {

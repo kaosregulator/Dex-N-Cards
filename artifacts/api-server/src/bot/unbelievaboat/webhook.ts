@@ -189,6 +189,15 @@ export async function postAsUnbelievaBoat(
       ...(threadId ? { threadId } : {}),
       allowedMentions: UB_NO_ROLE_PINGS,
     });
+    // Interactive tables need buttons. If Discord dropped components (rare with
+    // large file uploads), treat as failure so the caller can fall back to a
+    // bot-owned message where Hit/Stand/Pull Trigger always stick.
+    const wantedRows = opts.components?.length ?? 0;
+    if (wantedRows > 0 && (sent.components?.length ?? 0) === 0) {
+      await sent.delete().catch(() => {});
+      logger.debug({ channelId: host.id }, "UnbelievaBoat webhook dropped components — falling back");
+      return null;
+    }
     return sent.id;
   } catch (err) {
     webhookCache.delete(host.id);

@@ -1,5 +1,5 @@
 import {
-  encodeAnimation, hexToRgba, roundRectPath, clamp01,
+  encodeAnimation, getCanvas, hexToRgba, roundRectPath, clamp01,
   type Ctx, type CanvasMod,
 } from "../../animations/engine.js";
 import { drawConfetti } from "../../animations/particles.js";
@@ -18,6 +18,7 @@ import {
   drawCurrencyAmount,
   drawCurrencyIcon,
 } from "../currency-canvas.js";
+import { drawTextWithEmojis, preloadEmojiTexts } from "../canvas-emoji-text.js";
 
 const W = 720;
 const H = 400;
@@ -791,6 +792,10 @@ export async function renderLotteryWinnersGif(opts: {
   if (winners.length === 0) return null;
   const multi = winners.length > 1;
   try {
+    const mod0 = await getCanvas();
+    const emojiImgs = mod0
+      ? await preloadEmojiTexts(mod0, winners.map(w => w.displayName))
+      : new Map();
     const result = await encodeAnimation({
       width: multi ? 840 : W,
       height: multi ? 460 : H,
@@ -825,9 +830,13 @@ export async function renderLotteryWinnersGif(opts: {
         if (!multi) {
           const w0 = winners[0]!;
           await drawAvatarCircle(ctx, mod, w0.avatarUrl, width / 2 - 48, 100, 96);
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 26px sans-serif";
-          ctx.fillText(w0.displayName.slice(0, 24), width / 2, 230);
+          drawTextWithEmojis(ctx, w0.displayName, width / 2, 230, emojiImgs, {
+            font: "bold 26px sans-serif",
+            fillStyle: "#ffffff",
+            align: "center",
+            maxWidth: 400,
+            emojiSize: 24,
+          });
           drawCurrencyAmount(
             ctx, symImg, opts.symbol, w0.amount,
             width / 2, 275,
@@ -846,10 +855,13 @@ export async function renderLotteryWinnersGif(opts: {
             const w = winners[i]!;
             const cx = 50 + slotW * i + slotW / 2;
             await drawAvatarCircle(ctx, mod, w.avatarUrl, cx - 44, 110, 88);
-            ctx.fillStyle = "#ffffff";
-            ctx.font = "bold 20px sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText(w.displayName.slice(0, 18), cx, 230);
+            drawTextWithEmojis(ctx, w.displayName, cx, 230, emojiImgs, {
+              font: "bold 20px sans-serif",
+              fillStyle: "#ffffff",
+              align: "center",
+              maxWidth: slotW - 12,
+              emojiSize: 18,
+            });
             drawCurrencyAmount(
               ctx, symImg, opts.symbol, w.amount,
               cx, 262,

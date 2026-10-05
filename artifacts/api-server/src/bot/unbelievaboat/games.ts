@@ -35,8 +35,8 @@ import {
 } from "./cards.js";
 import { replyThenPostAsUnbelievaBoat, openTableAsUnbelievaBoat } from "./webhook.js";
 import {
-  renderBegGif, renderBlackjackTableGif, renderCoinSpinGif, renderHigherLowerGif,
-  renderRedBlackGif, renderRobGif, renderWorkGif,
+  renderBegGif, renderBlackjackTableGif, renderCoinSpinGif, renderCrimeGif,
+  renderHigherLowerGif, renderRedBlackGif, renderRobGif, renderWorkGif,
 } from "./render-games.js";
 
 export { handleSlots } from "./live-slots.js";
@@ -89,15 +89,36 @@ async function assertGamesOn(guildId: string) {
 
 function bjButtons(userId: string, canDouble: boolean) {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`unbgame:bj:hit:${userId}`).setLabel("Hit").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`unbgame:bj:stand:${userId}`).setLabel("Stand").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`unbgame:bj:hit:${userId}`).setLabel("Hit").setEmoji("🃏").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`unbgame:bj:stand:${userId}`).setLabel("Stand").setEmoji("🛑").setStyle(ButtonStyle.Secondary),
   );
   if (canDouble) {
     row.addComponents(
-      new ButtonBuilder().setCustomId(`unbgame:bj:double:${userId}`).setLabel("Double Down").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`unbgame:bj:double:${userId}`).setLabel("Double Down").setEmoji("💰").setStyle(ButtonStyle.Success),
     );
   }
   return [row];
+}
+
+/** Update the floor table message (webhook or bot) after a button press. */
+async function updateGameMessage(
+  interaction: ButtonInteraction,
+  payload: {
+    content?: string | null;
+    embeds?: EmbedBuilder[];
+    files?: AttachmentBuilder[];
+    components?: ActionRowBuilder<ButtonBuilder>[];
+  },
+) {
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(payload);
+      return;
+    }
+    await interaction.update(payload);
+  } catch {
+    await interaction.message.edit(payload).catch(() => {});
+  }
 }
 
 // ── Command builders ──────────────────────────────────────────────────────────
@@ -265,7 +286,14 @@ async function finishBlackjack(
   if (imageName) embed.setImage(`attachment://${imageName}`);
 
   // Update the floor table message (webhook or bot) — do not re-post as the user.
-  if (interaction.deferred || interaction.replied) {
+  if (interaction.isButton()) {
+    await updateGameMessage(interaction, {
+      content: null,
+      embeds: [embed],
+      files,
+      components: [],
+    });
+  } else if (interaction.deferred || interaction.replied) {
     await interaction.editReply({ embeds: [embed], files, components: [] }).catch(() => {});
   }
 }
@@ -417,11 +445,12 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
     if (imageName) embed.setImage(`attachment://${imageName}`);
 
     await openTableAsUnbelievaBoat(interaction, {
+      content: `${interaction.user} — **your move**: press **Hit**, **Stand**, or **Double Down**`,
       embeds: [embed],
       files,
       components: bjButtons(interaction.user.id, true),
       slashHint: `/blackjack_ub bet:${bet}`,
-    }, "✅ Blackjack table opened as **UnbelievaBoat** — play on the floor.");
+    }, "✅ Blackjack table opened as **UnbelievaBoat** — play Hit/Stand/Double on the floor message.");
   } catch (err) {
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);
   }
@@ -536,25 +565,45 @@ export async function handleCashCrime(interaction: ChatInputCommandInteraction):
     const pay = await getGuildPayouts(interaction.guildId);
     const fail = rollChance(pay.crimeFailChancePct);
     await markIncomeCooldown(interaction.guildId, interaction.user.id, "crime");
+    const avatarUrl = interaction.user.displayAvatarURL({ size: 256, extension: "png" });
     if (fail) {
       const bal0 = await getCashBalance(interaction.guildId, interaction.user.id);
       const fine = rollCrimeFine((bal0.cash ?? 0) + (bal0.bank ?? 0), pay);
       const spent = await spendFunds(interaction.guildId, interaction.user.id, Math.min(fine, bal0.cash + bal0.bank), "Crime fine");
-      const embed = brandEmbed("Crime — Caught", [
-        `${interaction.user} got pinched.`,
+      const gif = await renderCrimeGif({
+        success: false,
+        avatarUrl,
+        displayName: interaction.member && "displayName" in interaction.member
+          ? String(interaction.member.displayName)
+          : interaction.user.username,
+      });
+      const { files, imageName } = await attachGif(gif, "crime.gif");
+      const embed = brandEmbed("Crime — Busted", [
+        `${interaction.user} got pinched and dragged to jail.`,
         formatSpendNote(spent.fromCash, spent.fromBank, spent.balance.symbol),
         `Cash **${fmtCash(spent.balance.cash)}** · bank **${fmtCash(spent.balance.bank)}**`,
       ].join("\n"));
-      await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], slashHint: "/crime_ub" });
+      if (imageName) embed.setImage(`attachment://${imageName}`);
+      await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], files, slashHint: "/crime_ub" });
       return;
     }
     const payout = rollRange(pay.crimeWinMin, pay.crimeWinMax);
     const bal = await earnCash(interaction.guildId, interaction.user.id, payout, "Crime payout");
+    const gif = await renderCrimeGif({
+      success: true,
+      avatarUrl,
+      displayName: interaction.member && "displayName" in interaction.member
+        ? String(interaction.member.displayName)
+        : interaction.user.username,
+      payout,
+    });
+    const { files, imageName } = await attachGif(gif, "crime.gif");
     const embed = brandEmbed("Crime — Clean Getaway", [
       `${interaction.user} pulled it off · **+${fmtCash(payout)}** ${bal.symbol}`,
       `Cash **${fmtCash(bal.cash)}** · bank **${fmtCash(bal.bank)}**`,
     ].join("\n"));
-    await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], slashHint: "/crime_ub" });
+    if (imageName) embed.setImage(`attachment://${imageName}`);
+    await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], files, slashHint: "/crime_ub" });
   } catch (err) {
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);
   }
@@ -596,11 +645,19 @@ export async function handleRob(interaction: ChatInputCommandInteraction): Promi
     const success = rollChance(pay.robSuccessChancePct);
     await markIncomeCooldown(interaction.guildId, interaction.user.id, "rob");
     const { logGameEvent } = await import("../logging/channel-log.js");
+    const thiefUrl = interaction.user.displayAvatarURL({ size: 256, extension: "png" });
+    const victimUrl = target.displayAvatarURL({ size: 256, extension: "png" });
     if (success) {
       const amount = rollRobSteal(their.cash ?? 0, pay);
       await spendFunds(interaction.guildId, target.id, amount, `Robbed by ${interaction.user.id}`);
       const bal = await earnCash(interaction.guildId, interaction.user.id, amount, `Robbed ${target.id}`);
-      const gif = await renderRobGif({ success: true });
+      const gif = await renderRobGif({
+        success: true,
+        thiefAvatarUrl: thiefUrl,
+        victimAvatarUrl: victimUrl,
+        thiefName: interaction.user.username,
+        victimName: target.username,
+      });
       const { files, imageName } = await attachGif(gif, "rob.gif");
       const embed = brandEmbed("Stick-up", [
         `${interaction.user} robbed ${target} for **${fmtCash(amount)}** ${bal.symbol}`,
@@ -614,7 +671,13 @@ export async function handleRob(interaction: ChatInputCommandInteraction): Promi
     } else {
       const fine = rollRange(pay.robFailFineMin, pay.robFailFineMax);
       const spent = await spendFunds(interaction.guildId, interaction.user.id, fine, `Failed rob`);
-      const gif = await renderRobGif({ success: false });
+      const gif = await renderRobGif({
+        success: false,
+        thiefAvatarUrl: thiefUrl,
+        victimAvatarUrl: victimUrl,
+        thiefName: interaction.user.username,
+        victimName: target.username,
+      });
       const { files, imageName } = await attachGif(gif, "rob.gif");
       const embed = brandEmbed("Stick-up failed", [
         `${interaction.user} got fined trying to rob ${target}.`,
@@ -714,7 +777,12 @@ export async function handleUnbGameComponent(interaction: ButtonInteraction): Pr
         `Dealer: ${formatHand(session.dealer, true)}`,
       ].join("\n"));
       if (imageName) embed.setImage(`attachment://${imageName}`);
-      await interaction.editReply({ embeds: [embed], files, components: bjButtons(ownerId, false) });
+      await updateGameMessage(interaction, {
+        content: `<@${ownerId}> — **your move**: press **Hit** or **Stand**`,
+        embeds: [embed],
+        files,
+        components: bjButtons(ownerId, false),
+      });
       return;
     }
 
@@ -778,7 +846,7 @@ export async function handleUnbGameComponent(interaction: ButtonInteraction): Pr
       `Cash **${fmtCash(bal.cash)}** · bank **${fmtCash(bal.bank)}**`,
     ].join("\n"));
     if (imageName) embed.setImage(`attachment://${imageName}`);
-    await interaction.editReply({ embeds: [embed], files, components: [] });
+    await updateGameMessage(interaction, { content: null, embeds: [embed], files, components: [] });
     return;
   }
 

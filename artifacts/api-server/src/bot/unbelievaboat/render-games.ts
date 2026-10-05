@@ -1,8 +1,10 @@
 // Animated GIFs for UnbelievaBoat casino — felt-table look, GIF-safe flats.
 
-import { encodeAnimation, type Ctx } from "../animations/engine.js";
+import { encodeAnimation, getCanvas, type Ctx, type CanvasMod } from "../animations/engine.js";
 import type { AnimationResult } from "../animations/types.js";
+import { loadArt } from "../animations/effects.js";
 import { cardLabel, type Card } from "./cards.js";
+import { drawTextWithEmojis, preloadEmojiTexts } from "./canvas-emoji-text.js";
 
 const W = 480;
 const H = 280;
@@ -498,35 +500,207 @@ export async function renderRussianGif(opts: {
   });
 }
 
-export async function renderRobGif(opts: { success: boolean }): Promise<AnimationResult | null> {
+function drawStickBody(ctx: Ctx, x: number, y: number, color: string, run: number) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x, y - 18); ctx.lineTo(x, y + 10);
+  ctx.moveTo(x, y - 8); ctx.lineTo(x - 14, y + 4 + Math.sin(run) * 4);
+  ctx.moveTo(x, y - 8); ctx.lineTo(x + 14, y + 4 - Math.sin(run) * 4);
+  ctx.moveTo(x, y + 10); ctx.lineTo(x - 10, y + 28 + Math.cos(run) * 3);
+  ctx.moveTo(x, y + 10); ctx.lineTo(x + 10, y + 28 - Math.cos(run) * 3);
+  ctx.stroke();
+}
+
+function drawAvatarHead(
+  ctx: Ctx,
+  img: Awaited<ReturnType<typeof loadArt>>,
+  x: number,
+  y: number,
+  r: number,
+) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  if (img) ctx.drawImage(img as never, x - r, y - r, r * 2, r * 2);
+  else {
+    ctx.fillStyle = "#475569";
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  ctx.restore();
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+async function loadAvatar(mod: CanvasMod, url: string | null | undefined) {
+  if (!url) return null;
+  return loadArt(mod, url).catch(() => null);
+}
+
+export async function renderRobGif(opts: {
+  success: boolean;
+  thiefAvatarUrl?: string | null;
+  victimAvatarUrl?: string | null;
+  thiefName?: string;
+  victimName?: string;
+}): Promise<AnimationResult | null> {
+  const mod = await getCanvas();
+  if (!mod) return null;
+  const [thiefImg, victimImg] = await Promise.all([
+    loadAvatar(mod, opts.thiefAvatarUrl),
+    loadAvatar(mod, opts.victimAvatarUrl),
+  ]);
+  const emojiImgs = await preloadEmojiTexts(mod, [opts.thiefName ?? "", opts.victimName ?? ""]);
+
   return encodeAnimation({
-    width: W, height: H, durationMs: 1500, speed: "normal", maxFrames: 18, quality: 12,
+    width: W, height: H, durationMs: 1600, speed: "normal", maxFrames: 18, quality: 12,
     render: async ({ ctx, t }) => {
       felt(ctx);
-      const drawStick = (x: number, y: number, color: string, run: number) => {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 3;
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.arc(x, y - 28, 10, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x, y - 18); ctx.lineTo(x, y + 10);
-        ctx.moveTo(x, y - 8); ctx.lineTo(x - 14, y + 4 + Math.sin(run) * 4);
-        ctx.moveTo(x, y - 8); ctx.lineTo(x + 14, y + 4 - Math.sin(run) * 4);
-        ctx.moveTo(x, y + 10); ctx.lineTo(x - 10, y + 28 + Math.cos(run) * 3);
-        ctx.moveTo(x, y + 10); ctx.lineTo(x + 10, y + 28 - Math.cos(run) * 3);
-        ctx.stroke();
-      };
-      const thiefX = 80 + t * 200;
-      drawStick(thiefX, 130, "#f472b6", t * 20);
-      drawStick(340, 130, "#60a5fa", 0);
+      const thiefX = opts.success ? 80 + t * 220 : 80 + Math.min(t, 0.55) * 160;
+      const headY = 102;
+      drawStickBody(ctx, thiefX, 130, "#f472b6", t * 20);
+      drawAvatarHead(ctx, thiefImg, thiefX, headY, 16);
+      // bandit mask
+      ctx.fillStyle = "rgba(15,23,42,0.75)";
+      ctx.fillRect(thiefX - 14, headY - 2, 28, 8);
+      drawStickBody(ctx, 340, 130, "#60a5fa", 0);
+      drawAvatarHead(ctx, victimImg, 340, headY, 16);
+      drawTextWithEmojis(ctx, opts.thiefName ?? "thief", thiefX, 175, emojiImgs, {
+        font: "11px sans-serif", fillStyle: "#fbcfe8", align: "center", maxWidth: 90, emojiSize: 12,
+      });
+      drawTextWithEmojis(ctx, opts.victimName ?? "target", 340, 175, emojiImgs, {
+        font: "11px sans-serif", fillStyle: "#bfdbfe", align: "center", maxWidth: 90, emojiSize: 12,
+      });
       ctx.fillStyle = "#fbbf24";
       ctx.beginPath(); ctx.arc(thiefX + 18, 110, 10, 0, Math.PI * 2); ctx.fill();
+      if (!opts.success && t > 0.55) {
+        // jail bars slam
+        ctx.fillStyle = "rgba(15,23,42,0.55)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.strokeStyle = "#94a3b8";
+        ctx.lineWidth = 6;
+        for (let i = 0; i < 8; i++) {
+          const x = 40 + i * 55;
+          ctx.beginPath(); ctx.moveTo(x, 40); ctx.lineTo(x, H - 40); ctx.stroke();
+        }
+      }
       ctx.fillStyle = opts.success ? "#4ade80" : "#f87171";
       ctx.font = "bold 20px sans-serif";
       ctx.textAlign = "center";
-      if (t > 0.65) ctx.fillText(opts.success ? "GOT AWAY!" : "CAUGHT!", W / 2, H - 28);
+      if (t > 0.65) ctx.fillText(opts.success ? "GOT AWAY!" : "BUSTED!", W / 2, H - 28);
+    },
+  });
+}
+
+/** Masked bandit heist — Discord avatar on the stick figure; jail on fail. */
+export async function renderCrimeGif(opts: {
+  success: boolean;
+  avatarUrl?: string | null;
+  displayName?: string;
+  payout?: number;
+}): Promise<AnimationResult | null> {
+  const mod = await getCanvas();
+  if (!mod) return null;
+  const av = await loadAvatar(mod, opts.avatarUrl);
+  const emojiImgs = await preloadEmojiTexts(mod, [opts.displayName ?? ""]);
+
+  return encodeAnimation({
+    width: W, height: H, durationMs: 1800, speed: "normal", maxFrames: 20, quality: 12,
+    render: async ({ ctx, t }) => {
+      felt(ctx);
+      // city silhouette
+      ctx.fillStyle = "rgba(15,23,42,0.45)";
+      for (let i = 0; i < 6; i++) {
+        const bw = 40 + (i % 3) * 12;
+        const bh = 40 + ((i * 37) % 80);
+        ctx.fillRect(30 + i * 75, H - 70 - bh, bw, bh);
+      }
+
+      const run = t * 18;
+      const x = opts.success
+        ? 60 + t * 280
+        : 60 + Math.min(t, 0.5) * 180;
+      const y = 140;
+      drawStickBody(ctx, x, y, "#fbbf24", run);
+      drawAvatarHead(ctx, av, x, y - 28, 18);
+      // mask + beanie
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.ellipse(x, y - 40, 16, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(15,23,42,0.8)";
+      ctx.fillRect(x - 15, y - 30, 30, 9);
+      // loot bag
+      ctx.fillStyle = "#fbbf24";
+      ctx.beginPath();
+      ctx.arc(x + 20, y - 6, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#92400e";
+      ctx.font = "bold 10px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("$", x + 20, y - 2);
+
+      drawTextWithEmojis(ctx, opts.displayName ?? "bandit", x, y + 48, emojiImgs, {
+        font: "bold 13px sans-serif", fillStyle: "#fde68a", align: "center", maxWidth: 140, emojiSize: 14,
+      });
+
+      if (opts.success) {
+        // dust trail / getaway
+        ctx.fillStyle = `rgba(251,191,36,${0.35 * (1 - t)})`;
+        for (let i = 0; i < 5; i++) {
+          ctx.beginPath();
+          ctx.arc(x - 20 - i * 14, y + 20 + Math.sin(t * 20 + i) * 4, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#4ade80";
+        ctx.font = "bold 22px sans-serif";
+        ctx.textAlign = "center";
+        if (t > 0.6) {
+          ctx.fillText("CLEAN GETAWAY!", W / 2, H - 36);
+          if (opts.payout != null) {
+            ctx.font = "16px sans-serif";
+            ctx.fillStyle = "#a7f3d0";
+            ctx.fillText(`+${opts.payout.toLocaleString()} cash`, W / 2, H - 14);
+          }
+        }
+      } else {
+        // siren flash → jail
+        if (t > 0.35 && t < 0.7) {
+          ctx.fillStyle = `rgba(239,68,68,${0.25 + 0.25 * Math.sin(t * 40)})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+        if (t > 0.55) {
+          const jailT = Math.min(1, (t - 0.55) / 0.35);
+          ctx.fillStyle = `rgba(15,23,42,${0.65 * jailT})`;
+          ctx.fillRect(0, 0, W, H);
+          ctx.strokeStyle = "#cbd5e1";
+          ctx.lineWidth = 7;
+          for (let i = 0; i < 9; i++) {
+            const bx = 36 + i * 50;
+            ctx.beginPath();
+            ctx.moveTo(bx, 30);
+            ctx.lineTo(bx, H - 30);
+            ctx.stroke();
+          }
+          // locked avatar behind bars
+          drawAvatarHead(ctx, av, W / 2, 120, 28);
+          ctx.fillStyle = "#f87171";
+          ctx.font = "bold 24px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("BUSTED — JAIL", W / 2, H - 40);
+        } else {
+          ctx.fillStyle = "#fde68a";
+          ctx.font = "bold 16px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("Committing the crime…", W / 2, H - 28);
+        }
+      }
     },
   });
 }
