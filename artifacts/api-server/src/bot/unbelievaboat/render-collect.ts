@@ -196,7 +196,9 @@ export async function renderCoinCollectGif(opts: {
       ctx.textBaseline = "middle";
       ctx.fillText(title, cx, 40);
 
-      const shownAmt = Math.floor(opts.amount * Math.min(1, t / 0.85));
+      const shownAmt = t >= 0.85
+        ? opts.amount
+        : Math.floor(opts.amount * Math.min(1, t / 0.85));
       ctx.fillStyle = "#4ade80";
       ctx.font = "bold 28px sans-serif";
       const amtText = `+${shownAmt.toLocaleString()}`;

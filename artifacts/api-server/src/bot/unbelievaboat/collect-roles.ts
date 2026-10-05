@@ -27,6 +27,17 @@ function metaOf(link: UbRoleLink): Record<string, unknown> {
   return ((link.meta ?? {}) as Record<string, unknown>);
 }
 
+/**
+ * Suggest collect income from shop price (~1%, clamped).
+ * UB Role Income amounts aren't on the public API — used when syncing/seeding.
+ */
+export function suggestedCollectIncome(price: number): number {
+  const p = Math.max(0, Math.floor(price));
+  if (p <= 0) return 1_000;
+  return Math.min(100_000, Math.max(500, Math.round(p * 0.01)));
+}
+
+
 /** Per-role collect cooldown in seconds (meta override → guild collect CD). */
 export function roleCollectCooldownSec(link: UbRoleLink, guildCollectSec: number): number {
   const m = metaOf(link);

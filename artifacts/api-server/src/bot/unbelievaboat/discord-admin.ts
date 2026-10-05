@@ -41,7 +41,7 @@ import {
   summarizeRequirements,
 } from "./ub-items.js";
 import { syncUbStoreRoleLinks } from "./ub-sync.js";
-import { roleCollectCooldownSec } from "./collect-roles.js";
+import { roleCollectCooldownSec, suggestedCollectIncome } from "./collect-roles.js";
 import {
   getOrCreateUbSettings,
   updateUbSettings,
@@ -415,10 +415,30 @@ async function syncEmojiToUbItem(
   }
 }
 
+const ROLES_PAGE_SIZE = 8;
+
+function formatCdShort(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec % 3600 === 0) return `${sec / 3600}h`;
+  if (sec % 60 === 0) return `${Math.round(sec / 60)}m`;
+  return `${Math.round(sec / 60)}m`;
+}
+
+function sortRoleLinksForAdmin(roles: Awaited<ReturnType<typeof listRoleLinks>>) {
+  return [...roles].sort((a, b) => {
+    const ai = Math.abs(a.incomeAmount ?? 0);
+    const bi = Math.abs(b.incomeAmount ?? 0);
+    if ((ai === 0) !== (bi === 0)) return ai === 0 ? 1 : -1;
+    if (bi !== ai) return bi - ai;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 async function renderRolesEconomy(
   interaction: ButtonInteraction | StringSelectMenuInteraction,
   guildId: string,
   flash?: string,
+  page = 0,
 ): Promise<void> {
   const settings = await getOrCreateUbSettings(guildId);
   let syncNote = "";
@@ -427,71 +447,101 @@ async function renderRolesEconomy(
     try {
       const synced = await syncUbStoreRoleLinks(guildId, settings.ubGuildId, interaction.guild);
       roles = synced.links;
+      const bits: string[] = [];
       if (synced.created || synced.updated) {
-        syncNote = `Synced UB store → **${synced.created}** new · **${synced.updated}** updated role links.`;
+        bits.push(`**${synced.created}** new · **${synced.updated}** updated`);
       }
+      if (synced.seededCollect) {
+        bits.push(`**${synced.seededCollect}** collect-ready`);
+      }
+      if (bits.length) syncNote = `Synced UB store → ${bits.join(" · ")}.`;
     } catch (err) {
       syncNote = `UB sync warning: ${err instanceof Error ? err.message : "failed"}`;
     }
   }
+
   const cds = readCooldowns(settings);
-  const roleLines = roles.slice(0, 15).map(r => {
-    const ub = r.ubItemId ? " · UB" : "";
+  const sorted = sortRoleLinksForAdmin(roles);
+  const shopCount = sorted.filter(r => r.ubItemId || r.enabled).length;
+  const linkedCount = sorted.filter(r => !r.ubItemId).length;
+  const collectOn = sorted.filter(r => (r.incomeAmount ?? 0) !== 0).length;
+  const totalPages = Math.max(1, Math.ceil(sorted.length / ROLES_PAGE_SIZE));
+  const safePage = Math.min(Math.max(0, page), totalPages - 1);
+  const pageRoles = sorted.slice(safePage * ROLES_PAGE_SIZE, (safePage + 1) * ROLES_PAGE_SIZE);
+
+  const roleLines = pageRoles.map(r => {
+    const kind = r.ubItemId ? "UB shop" : "linked";
     const cdSec = roleCollectCooldownSec(r, cds.collectSec);
-    const cdMin = Math.round(cdSec / 60);
     const income = (r.incomeAmount ?? 0) !== 0
-      ? ` · collect ${fmt(r.incomeAmount ?? 0)}/${cdMin}m`
-      : " · collect off";
-    return `${r.enabled ? "✅" : "⏸"} ${r.emoji || "✨"} **${r.name}** — ${fmt(r.price)} cash` +
-      income +
+      ? `collect **+${fmt(r.incomeAmount ?? 0)}** / ${formatCdShort(cdSec)}`
+      : "collect **off**";
+    return `${r.enabled ? "✅" : "⏸"} ${r.emoji || "✨"} **${r.name}** · ${fmt(r.price)} · ${income}` +
       (r.discordRoleId ? ` · <@&${r.discordRoleId}>` : "") +
-      ub;
-  }).join("\n") || "_No roles yet — **Sync** pulls UB store roles, or **Add collect role** for any Discord role._";
+      ` · _${kind}_`;
+  }).join("\n") || "_No roles yet — **Sync UB** pulls shop roles, or **Add collect role** / **Add perk**._";
 
   const embed = new EmbedBuilder()
     .setColor(0xe91e8c)
     .setAuthor({ name: "Roles & economy", iconURL: UB_ICON })
-    .setTitle("Server roles · UB store · collect")
+    .setTitle("Shop roles · linked perks · collect")
     .setDescription(
       [
         flash ? `${flash}\n` : null,
         syncNote || null,
-        `API **${settings.enabled ? "on" : "off"}** · Store **${settings.storeEnabled !== false ? "on" : "off"}** · Games **${settings.gamesEnabled !== false ? "on" : "off"}**`,
-        `Daily **${settings.dailyMin ?? 100}–${settings.dailyMax ?? 250}** · Collect CD **${Math.round((cds.collectSec || 86400) / 60)}m** · LB **${settings.leaderboardSort}**`,
+        `Store **${settings.storeEnabled !== false ? "on" : "off"}** · **${shopCount}** shop · **${linkedCount}** linked · **${collectOn}/${sorted.length}** collect-on`,
+        `Default collect CD **${formatCdShort(cds.collectSec || 86400)}** (fallback when a role has no custom timer)`,
         "",
-        "Open a role to edit **collect income + per-role cooldown**, **Discord emoji·GIF**, and UB **actions / requirements**.",
-        "Synced UB store roles start at income **0** — set income to include them in Collect. **Add collect role** for any Discord role (UB Role Income style).",
+        "Open a role to set **income + per-role cooldown** (UB Role Income style), icon, actions.",
+        "Sync seeds collect income for new/unset UB shop roles. Tune amounts to match your UB dashboard.",
       ].filter(Boolean).join("\n"),
     )
-    .addFields({ name: `Roles (${roles.length})`, value: roleLines.slice(0, 1024) || "_None_" })
-    .setFooter({ text: "Per-role collect CD · Discord icon pickers · UB actions" });
+    .addFields({
+      name: `Roles · page ${safePage + 1}/${totalPages} (${sorted.length})`,
+      value: roleLines.slice(0, 1024) || "_None_",
+    })
+    .setFooter({ text: "Per-role collect timers · Sync seeds income · Discord icons" });
 
-  const editChoices = roles.slice(0, 25).map(r => {
+  const editChoices = pageRoles.slice(0, 25).map(r => {
     const emoji = resolveSelectEmoji(r.emoji || "✨");
     const cdMin = Math.round(roleCollectCooldownSec(r, cds.collectSec) / 60);
     return {
-      label: `Open · ${r.name}`.slice(0, 100),
-      description: `collect ${r.incomeAmount ?? 0} / ${cdMin}m${r.ubItemId ? " · UB" : ""}`.slice(0, 100),
+      label: `${r.name}`.slice(0, 100),
+      description: `+${r.incomeAmount ?? 0} / ${cdMin}m · ${r.ubItemId ? "UB shop" : "linked"}`.slice(0, 100),
       value: String(r.id),
       ...(emoji ? { emoji } : {}),
     };
   });
 
+  const nav = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`ubadmin:re_page:${safePage - 1}`)
+      .setLabel("◀ Prev")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(safePage <= 0),
+    new ButtonBuilder()
+      .setCustomId(`ubadmin:re_page:${safePage + 1}`)
+      .setLabel("Next ▶")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(safePage >= totalPages - 1),
+    new ButtonBuilder().setCustomId("ubadmin:re_refresh").setLabel("Sync UB").setEmoji("🔄").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("ubadmin:re_seed_collect").setLabel("Seed collect").setEmoji("🏦").setStyle(ButtonStyle.Success),
+  );
+
   const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("ubadmin:overview").setLabel("← Hub").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("ubadmin:re_add_collect").setLabel("Add collect role").setEmoji("🏦").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("ubadmin:re_economy").setLabel("Economy").setEmoji("⚙️").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("ubadmin:re_refresh").setLabel("Sync UB").setEmoji("🔄").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("ubadmin:re_add_collect").setLabel("Add collect").setEmoji("🏦").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("ubadmin:re_economy").setLabel("Daily / defaults").setEmoji("⚙️").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("ubadmin:add_perk").setLabel("Add perk").setEmoji("✨").setStyle(ButtonStyle.Primary),
     ),
+    nav,
   ];
   if (editChoices.length) {
     components.push(
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
         new StringSelectMenuBuilder()
           .setCustomId("ubadmin:re_edit_pick")
-          .setPlaceholder("Open a role to edit…")
+          .setPlaceholder(`Open a role (page ${safePage + 1}/${totalPages})…`)
           .addOptions(editChoices),
       ),
     );
@@ -920,6 +970,45 @@ export async function handleUbAdminComponent(
     return;
   }
 
+  if (id.startsWith("ubadmin:re_page:") && interaction.isButton()) {
+    await interaction.deferUpdate();
+    const page = Number(id.split(":")[2]) || 0;
+    await renderRolesEconomy(interaction, guildId, undefined, page);
+    return;
+  }
+
+  if (id === "ubadmin:re_seed_collect" && interaction.isButton()) {
+    await interaction.deferUpdate();
+    const settings = await getOrCreateUbSettings(guildId);
+    const cds = readCooldowns(settings);
+    const roles = await listRoleLinks(guildId);
+    let seeded = 0;
+    for (const row of roles) {
+      const meta = { ...(row.meta as Record<string, unknown>) };
+      if (meta.collectIncomeSet === true) continue;
+      if ((row.incomeAmount ?? 0) !== 0) continue;
+      const income = suggestedCollectIncome(row.price);
+      if (typeof meta.collectCooldownSec !== "number") {
+        meta.collectCooldownSec = cds.collectSec;
+      }
+      meta.collectIncomeSeeded = true;
+      await updateRoleLink(guildId, row.id, {
+        incomeAmount: income,
+        meta,
+      });
+      seeded += 1;
+    }
+    await writeUbAudit(guildId, interaction.user.id, "discord_collect_seed", { seeded });
+    await renderRolesEconomy(
+      interaction,
+      guildId,
+      seeded
+        ? `Seeded collect on **${seeded}** role(s) (~1% of shop price, default CD). Tune each role to match UB Role Income.`
+        : "Every unset role already has collect income (or was locked by an admin).",
+    );
+    return;
+  }
+
   if (id === "ubadmin:re_add_collect" && interaction.isButton()) {
     const roleMenu = new RoleSelectMenuBuilder()
       .setCustomId("ubadmin:re_add_collect_role")
@@ -1035,12 +1124,12 @@ export async function handleUbAdminComponent(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId("cooldown_min")
-          .setLabel(`Collect cooldown minutes (default ${defaultCdMin})`)
+          .setLabel(`This role collect CD minutes (UB-style)`)
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
           .setMaxLength(8)
           .setValue(String(Math.round(cdSec / 60)))
-          .setPlaceholder(`Match UB Role Income timer, e.g. ${defaultCdMin}`),
+          .setPlaceholder(`Per-role timer; guild default ${defaultCdMin}m`),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -1276,7 +1365,7 @@ export async function handleUbAdminComponent(
     const cds = readCooldowns(s);
     const modal = new ModalBuilder()
       .setCustomId("ubadmin:re_economy_modal")
-      .setTitle("Economy quick settings");
+      .setTitle("Daily & default collect CD");
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -1297,10 +1386,11 @@ export async function handleUbAdminComponent(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId("collect_cd")
-          .setLabel("Collect cooldown (minutes)")
+          .setLabel("Default role-collect CD (minutes)")
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
-          .setValue(String(Math.max(1, Math.round((cds.collectSec || 86400) / 60)))),
+          .setValue(String(Math.max(1, Math.round((cds.collectSec || 86400) / 60))))
+          .setPlaceholder("Fallback only — each role can override (UB style)"),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -2253,6 +2343,7 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     const icon = normalizeStoreIconInput(emojiRaw);
     const meta: Record<string, unknown> = {
       collectCooldownSec: Math.max(0, Math.floor(cooldownMin * 60)),
+      collectIncomeSet: true,
     };
     if (icon.imageUrl) meta.imageUrl = icon.imageUrl;
     const row = await createRoleLink(guildId, {
@@ -2311,6 +2402,7 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     const meta: Record<string, unknown> = {
       ...(row.meta as Record<string, unknown>),
       collectCooldownSec: Math.max(0, Math.floor(cooldownMin * 60)),
+      collectIncomeSet: true,
     };
     await updateRoleLink(guildId, linkId, {
       price: Math.floor(price),
@@ -2429,7 +2521,11 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       dailyMin, dailyMax, collectSec: nextCds.collectSec, sort,
     });
     await interaction.editReply(
-      `Economy updated: daily **${fmt(dailyMin)}–${fmt(dailyMax)}** · collect CD **${Math.round(nextCds.collectSec / 60)}m** · LB **${sort}**.`,
+      [
+        `Updated daily **${fmt(dailyMin)}–${fmt(dailyMax)}** · leaderboard **${sort}**.`,
+        `Default role-collect CD **${Math.round(nextCds.collectSec / 60)}m** — used only when a role has no custom timer.`,
+        `_Per-role collect times: open each role → Price / income (UB Role Income style)._`,
+      ].join("\n"),
     );
     return;
   }

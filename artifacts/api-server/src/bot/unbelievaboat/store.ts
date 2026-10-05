@@ -261,7 +261,7 @@ async function purchaseItem(interaction: StringSelectMenuInteraction, item: Stas
         `You already have ${item.emoji} **${item.name}**.`,
         income > 0
           ? `Claim **${fmtCash(income)}** income with **\`/casino\` → Collect** (or \`/collect_ub\`).`
-          : "Ask an admin to set **collect income** on this role in `/unbelievaboat` → Roles & economy.",
+          : "You own this role — ask an admin to **Sync UB** / **Seed collect** in `/unbelievaboat` → Roles & economy.",
         "_No cash was charged._",
       ].join("\n"),
     );

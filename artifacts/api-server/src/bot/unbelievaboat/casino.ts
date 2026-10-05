@@ -647,7 +647,6 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
       loadRoleCollectState,
       markRolesCollected,
       planRoleCollect,
-      resolveRoleDisplayEmoji,
     } = await import("./collect-roles.js");
 
     // Sync UB store role items, then collect every owned role with income that is off CD.
@@ -680,19 +679,10 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
     });
 
     if (!planned.ready.length && !planned.cooling.length) {
-      const zeroLines = planned.zeroIncomeOwned.slice(0, 8).map(l =>
-        `• ${resolveRoleDisplayEmoji(l, interaction.guild)} **${l.name}**` +
-        (l.discordRoleId ? ` · <@&${l.discordRoleId}>` : ""),
-      );
-      const hint = planned.zeroIncomeOwned.length
-        ? `\nYou own **${planned.zeroIncomeOwned.length}** role(s) with **collect income = 0** (synced UB shop roles start at 0 until an admin sets income):\n` +
-          zeroLines.join("\n") +
-          `\n→ \`/unbelievaboat\` → **Roles & economy** → set income + cooldown minutes (match UB Role Income).`
-        : "";
       await interaction.editReply(
         "You don’t own any collectable income roles yet.\n" +
-        "Buy/sync a role in the store, or **Add collect role** in `/unbelievaboat` → Roles & economy." +
-        hint,
+        "Buy a role in `/casino` → Store (synced UB + linked perks), then collect again.\n" +
+        "_Admins: `/unbelievaboat` → Roles & economy → **Sync UB** / **Seed collect**._",
       );
       return;
     }
@@ -755,18 +745,11 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
       })),
     });
     const { files, imageName } = await attachGif(gif, "collect.gif");
-    const zeroHint = planned.zeroIncomeOwned.length
-      ? `\n_${planned.zeroIncomeOwned.length} owned role(s) have collect income unset (0): ` +
-        planned.zeroIncomeOwned.slice(0, 5).map(l => l.name).join(", ") +
-        (planned.zeroIncomeOwned.length > 5 ? "…" : "") +
-        " — set income in Roles & economy._"
-      : null;
     const embed = brandEmbed("Role Income Collected", [
       `${interaction.user} swept **${fmtCash(total)}** ${bal.symbol}` +
-        (planned.ready.length > 1 ? ` from **${planned.ready.length}** roles:` : " from:"),
+        (planned.ready.length > 1 ? ` from **${planned.ready.length}** owned roles:` : " from owned role:"),
       ...roleLinesEmbed,
-      coolingLines.length ? `\n_On cooldown:_\n${coolingLines.join("\n")}` : null,
-      zeroHint,
+      coolingLines.length ? `\n_Still cooling:_\n${coolingLines.join("\n")}` : null,
       "",
       `💵 Cash **${fmtCash(bal.cash)}** · 🏦 Bank **${fmtCash(bal.bank)}**`,
     ].filter(Boolean).join("\n"));
