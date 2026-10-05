@@ -1,14 +1,21 @@
 # Community Art Show
 
-A gallery channel where members hang artwork, earn **button upvotes** (not emoji reactions), grow **Art Show emblems**, browse other halls, and race for **one** weekly Hall of Fame champion. A **sticky top-3 board** stays glued to the bottom of the channel.
+Two channels:
+
+1. **Submission board** — slim station + members drop photos like a normal Discord upload  
+2. **Gallery** — hung pieces with ▲ vote buttons (read-only for everyone except staff)
 
 ## Quick start (staff)
 
 ```
 /artshow post
-  channel:#art-show          ← use existing
-  # OR
-  create_channel:art-show    ← bot creates the channel
+  create_board:art-show
+  create_gallery:art-hall
+  staff_role:@Mods          ← optional; can still post in the gallery
+
+  # OR pick existing channels:
+  board:#art-show
+  gallery:#art-hall
 
   votes_per_day:5
   bonus_on_submit:2
@@ -17,27 +24,29 @@ A gallery channel where members hang artwork, earn **button upvotes** (not emoji
   crown_at:25
 ```
 
-This posts:
-1. The **station embed** (Submit / Browse / Museum / Emblem path / My votes / Reset defaults)
-2. A **sticky top-3 board** at the bottom (pinned + delete/reposted on every vote so it stays last)
+This:
+- Posts a **slim station** on the board (How to submit / Browse / Hall of Fame / My votes)
+- Pins the station
+- Makes the **gallery read-only** for `@everyone` (bot + optional `staff_role` can still send)
+- Lets members **Send + Attach** on the board so they can drop photos
 
 ### Thresholds & reset
 
 - Tune anytime: `/artshow setup votes_per_day:…` etc.
-- **Reset to defaults:** `/artshow setup reset_defaults:True` or station button **Reset defaults**
+- **Reset to defaults:** `/artshow setup reset_defaults:True`
 
 Defaults: 5 votes/day · +2 on submit · +1 every 6h · bump costs 3 · auto-crown at 25 ▲
 
 ## Member submit flow
 
-1. Press **Submit your art** → modal (title + description)
-2. Upload your photo in the gallery channel (Discord attachment)
-3. Preview appears with hall canvas + **Create** / **Cancel**
-4. **Create** hangs the piece in the gallery with live buttons; **Cancel** discards
+**Drop a photo** in the board channel (optional title in the message text).  
+The bot hangs it in the gallery and clears the board drop.
 
-One-shot alternative: `/artshow submit` → same Create/Cancel preview.
+Or one-shot: `/artshow submit` with a Discord **image** attachment + title.
 
-## Live piece buttons
+No 2-minute timers. No Create/Cancel draft. No sticky board spam.
+
+## Live piece buttons (gallery)
 
 | Button | Action |
 |--------|--------|
@@ -45,15 +54,6 @@ One-shot alternative: `/artshow submit` → same Create/Cancel preview.
 | Remove vote | Undo your vote **until the week is crowned** — refunds 1 vote |
 | Bump | Re-post your piece near the top (costs votes or Rising Artist free bump) |
 | Browse halls | Pick another piece’s hall canvas to view |
-
-## Sticky board
-
-Always at the **bottom** of the gallery (delete + repost after votes/submits/bumps/crowns). Shows:
-- Current **champion** (if crowned) or “race open”
-- **Top 3** with live ▲ counts
-- Quick links: Browse / Museum / Submit
-
-Discord has no true “glue to bottom” API — re-posting after updates is the sticky.
 
 ## One winner
 
@@ -66,16 +66,13 @@ After crowning, **Remove vote** locks for that week.
 ## Museum look
 
 The Hall of Fame canvas stamps a real gallery hall photo, hangs shuffled
-**public-domain masterpieces** in gold frames by country (Russia · UK · USA ·
-Spain · China · Japan · France · Brazil), places classical marble statues on
-pedestals, and puts the community champion **center stage** under a spotlight —
-letterboxed, never cropped. Assets + credits: `assets/artshow/ATTRIBUTION.md`.
+**public-domain masterpieces** in gold frames, places classical marble statues on
+pedestals, and puts the community champion **center stage**.  
+Assets + credits: `assets/artshow/ATTRIBUTION.md`.
 
-## Emblems
-
-See badge catalogue (`artshow` trigger): Exhibitor → … → Hall Champion → Museum Legend.  
-Station **Emblem path** + `/badges`.
+Emblem GIFs live under `/artshow badges` and `/badges` — not on the station board.
 
 ## Data
 
-Tables: `artshow_settings` (incl. `sticky_message_id`), `artshow_pieces`, `artshow_votes`, `artshow_wallets`, `artshow_fame`.
+Tables: `artshow_settings` (`board_channel_id`, `gallery_channel_id`, …),
+`artshow_pieces`, `artshow_votes`, `artshow_wallets`, `artshow_fame`.
