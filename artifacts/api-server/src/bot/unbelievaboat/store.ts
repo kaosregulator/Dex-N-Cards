@@ -23,7 +23,7 @@ import {
   CashError, spendFunds, fmtCash, requireEconomy, formatSpendNote, getCashBalance,
 } from "./cash.js";
 import { replyThenPostAsUnbelievaBoat } from "./webhook.js";
-import { isAnimatedStoreImage, resolveSelectEmoji } from "./store-icons.js";
+import { isAnimatedStoreImage, resolveSelectEmoji, titleSafeStoreEmoji } from "./store-icons.js";
 import {
   applyUbBuyActions,
   checkUbRequirements,
@@ -311,7 +311,7 @@ async function purchaseItem(interaction: StringSelectMenuInteraction, item: Stas
     const purchaseEmbed = new EmbedBuilder()
       .setColor(UNBELIEVABOAT_COLOR)
       .setAuthor(UNBELIEVABOAT_AUTHOR)
-      .setTitle(`${item.emoji} Purchased — ${item.name}`)
+      .setTitle(`${titleSafeStoreEmoji(item.emoji)} Purchased — ${item.name}`)
       .setDescription(
         [
           `${interaction.user} bought **${item.name}** for **${fmtCash(item.price)}** ${spent.balance.symbol}`,
@@ -369,7 +369,7 @@ async function purchaseItem(interaction: StringSelectMenuInteraction, item: Stas
   const purchaseEmbed = new EmbedBuilder()
     .setColor(UNBELIEVABOAT_COLOR)
     .setAuthor(UNBELIEVABOAT_AUTHOR)
-    .setTitle(`${item.emoji} Purchased — ${item.name}`)
+    .setTitle(`${titleSafeStoreEmoji(item.emoji)} Purchased — ${item.name}`)
     .setDescription(
       [
         `${interaction.user} bought **${item.name}** for **${fmtCash(item.price)}** ${spent.balance.symbol}`,

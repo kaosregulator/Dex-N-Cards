@@ -9,6 +9,7 @@ import {
   normalizeStoreIconInput,
   presetById,
   resolveSelectEmoji,
+  titleSafeStoreEmoji,
 } from "../store-icons.js";
 
 describe("store-icons", () => {
@@ -52,11 +53,18 @@ describe("store-icons", () => {
     expect(normalizeStoreIconInput("   ")).toEqual({ emoji: "✨" });
   });
 
-  it("accepts http(s) image URLs including Discord CDN", () => {
+  it("accepts http(s) image URLs including Discord CDN + GIF hosts", () => {
     expect(isHttpImageUrl("https://cdn.example.com/icon.png")).toBe(true);
     expect(isHttpImageUrl("https://cdn.discordapp.com/emojis/1.png?size=64")).toBe(true);
+    expect(isHttpImageUrl("https://media.tenor.com/abc/x.gif")).toBe(true);
     expect(isHttpImageUrl("ftp://nope.com/x.png")).toBe(false);
     expect(isHttpImageUrl("not-a-url")).toBe(false);
+  });
+
+  it("keeps custom emoji markup out of embed titles", () => {
+    expect(titleSafeStoreEmoji("<:Angel:1>", "🖼️")).toBe("🖼️");
+    expect(titleSafeStoreEmoji("<a:spin:2>")).toBe("✨");
+    expect(titleSafeStoreEmoji("👑")).toBe("👑");
   });
 
   it("detects animated GIF store images", () => {

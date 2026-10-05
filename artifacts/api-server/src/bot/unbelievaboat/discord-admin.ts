@@ -43,6 +43,11 @@ import {
 import { syncUbStoreRoleLinks } from "./ub-sync.js";
 import { roleCollectCooldownSec, suggestedCollectIncome } from "./collect-roles.js";
 import {
+  beginIconCapture,
+  cancelIconCapture,
+  type CapturedIcon,
+} from "./icon-capture.js";
+import {
   getOrCreateUbSettings,
   updateUbSettings,
   listCatalog,
@@ -62,14 +67,13 @@ import {
   adminCrackEgg,
 } from "../pets/engine.js";
 import {
-  DEFAULT_STORE_ICONS,
   discordEmojiCdnUrl,
   formatGuildEmoji,
   isAnimatedStoreImage,
   isHttpImageUrl,
   normalizeStoreIconInput,
-  presetById,
   resolveSelectEmoji,
+  titleSafeStoreEmoji,
 } from "./store-icons.js";
 import { readCooldowns } from "./cooldowns.js";
 
@@ -260,22 +264,7 @@ function storeNavRows() {
   ];
 }
 
-function buildEmojiPasteModal(linkId: number) {
-  return new ModalBuilder()
-    .setCustomId(`ubadmin:perk_icon_emoji:${linkId}`)
-    .setTitle("Pick a Discord emoji")
-    .addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("emoji")
-          .setLabel("Use Discord’s emoji picker, then paste")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(80)
-          .setPlaceholder("😀 or pick a custom / animated server emoji"),
-      ),
-    );
-}
+const GUILD_EMOJI_PAGE = 25;
 
 function buildGifUploadModal(linkId: number) {
   return new ModalBuilder()
@@ -284,7 +273,7 @@ function buildGifUploadModal(linkId: number) {
     .addLabelComponents(
       new LabelBuilder()
         .setLabel("GIF or image from Discord")
-        .setDescription("Use Discord’s file picker — animated GIFs play on the store board")
+        .setDescription("Discord’s file picker — animated GIFs play on the store board")
         .setFileUploadComponent(
           new FileUploadBuilder()
             .setCustomId("image")
@@ -295,35 +284,51 @@ function buildGifUploadModal(linkId: number) {
     );
 }
 
+function guildEmojiPages(guild?: Guild | null) {
+  const all = guild?.emojis?.cache
+    ? [...guild.emojis.cache.values()]
+      .filter(e => Boolean(e.id && e.name))
+      .sort((a, b) => Number(b.animated) - Number(a.animated) || a.name!.localeCompare(b.name!))
+    : [];
+  const pages = Math.max(1, Math.ceil(all.length / GUILD_EMOJI_PAGE) || 1);
+  return { all, pages };
+}
+
 function buildPerkIconPicker(
   linkId: number,
   perkName: string,
   currentEmoji: string,
   guild?: Guild | null,
+  page = 0,
 ) {
+  // Never put raw custom-emoji markup into the title name — Discord renders it
+  // as part of the title and it looks “stuck” after icon changes.
+  const titleEmoji = titleSafeStoreEmoji(currentEmoji, "🖼️");
   const embed = new EmbedBuilder()
     .setColor(0xe91e8c)
     .setAuthor({ name: "Store icon", iconURL: UB_ICON })
-    .setTitle(`${currentEmoji || "✨"} ${perkName}`)
+    .setTitle(`${titleEmoji} ${perkName}`)
     .setDescription(
       [
-        "Use **Discord’s own pickers** — no hunting for URLs:",
-        "• **Discord emoji** — open the emoji picker in the modal and paste",
-        "• **Server emoji** — pick any custom emoji (animated GIFs play on the board)",
-        "• **Upload GIF** — Discord’s file picker (PNG/JPG/GIF/WebP)",
-        "• **Quick defaults** — optional Twemoji fallbacks",
+        "**Use Discord’s emoji / GIF bar** (same bar at the bottom of chat):",
+        "1. Tap **Pick in chat**",
+        "2. Open Discord’s emoji or GIF picker in this channel",
+        "3. Send it — I’ll apply it and delete your message",
         "",
-        "_Animated custom emoji and GIF uploads use `setImage` so Discord plays them._",
+        "Or page through **all server emoji** below. **Upload GIF** opens Discord’s file picker.",
       ].join("\n"),
-    )
-    .setThumbnail(DEFAULT_STORE_ICONS[0]!.imageUrl);
+    );
+
+  const { all, pages } = guildEmojiPages(guild);
+  const safePage = Math.min(Math.max(0, page), pages - 1);
+  const slice = all.slice(safePage * GUILD_EMOJI_PAGE, (safePage + 1) * GUILD_EMOJI_PAGE);
 
   const actions = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`ubadmin:perk_icon_emoji_btn:${linkId}`)
-      .setLabel("Discord emoji")
-      .setEmoji("😀")
-      .setStyle(ButtonStyle.Primary),
+      .setCustomId(`ubadmin:perk_icon_chat:${linkId}`)
+      .setLabel("Pick in chat")
+      .setEmoji("💬")
+      .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId(`ubadmin:perk_icon_upload_btn:${linkId}`)
       .setLabel("Upload GIF")
@@ -331,55 +336,77 @@ function buildPerkIconPicker(
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`ubadmin:perk_icon_only_btn:${linkId}`)
-      .setLabel("Emoji only")
-      .setEmoji("✨")
+      .setLabel("Clear image")
       .setStyle(ButtonStyle.Secondary),
   );
 
   const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [actions];
 
-  const guildEmojis = guild?.emojis?.cache
-    ? [...guild.emojis.cache.values()]
-      .filter(e => Boolean(e.id && e.name))
-      .sort((a, b) => Number(b.animated) - Number(a.animated) || a.name!.localeCompare(b.name!))
-      .slice(0, 25)
-    : [];
-
-  if (guildEmojis.length) {
+  if (slice.length) {
     components.push(
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
         new StringSelectMenuBuilder()
           .setCustomId(`ubadmin:perk_icon_guild:${linkId}`)
-          .setPlaceholder("Server emoji (animated first)…")
+          .setPlaceholder(`Server emoji · page ${safePage + 1}/${pages}`)
           .addOptions(
-            guildEmojis.map(e => ({
-              label: `${e.animated ? "🎞️ " : ""}${e.name}`.slice(0, 100),
-              description: (e.animated ? "Animated GIF emoji" : "Custom emoji").slice(0, 100),
+            slice.map(e => ({
+              label: `${e.animated ? "GIF · " : ""}${e.name}`.slice(0, 100),
+              description: (e.animated ? "Animated custom emoji" : "Custom emoji").slice(0, 100),
               value: e.id,
               emoji: { id: e.id, name: e.name!, ...(e.animated ? { animated: true } : {}) },
             })),
           ),
       ),
     );
+    if (pages > 1) {
+      components.push(
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ubadmin:perk_icon_gpage:${linkId}:${safePage - 1}`)
+            .setLabel("◀ Emoji")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(safePage <= 0),
+          new ButtonBuilder()
+            .setCustomId(`ubadmin:perk_icon_gpage:${linkId}:${safePage + 1}`)
+            .setLabel("Emoji ▶")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(safePage >= pages - 1),
+        ),
+      );
+    }
   }
 
-  components.push(
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(`ubadmin:perk_icon:${linkId}`)
-        .setPlaceholder("Quick default icons…")
-        .addOptions(
-          DEFAULT_STORE_ICONS.map(p => ({
-            label: p.label,
-            description: "Twemoji default",
-            value: p.id,
-            emoji: p.emoji,
-          })),
-        ),
-    ),
-  );
-
   return { embeds: [embed], components };
+}
+
+async function applyCapturedIconToLink(
+  guildId: string,
+  linkId: number,
+  icon: CapturedIcon,
+  userId: string,
+): Promise<{ name: string; ubItemId: string | null } | null> {
+  const roles = await listRoleLinks(guildId);
+  const row = roles.find(r => r.id === linkId);
+  if (!row) return null;
+  const meta: Record<string, unknown> = { ...(row.meta as Record<string, unknown>) };
+  if (icon.imageUrl) {
+    meta.imageUrl = icon.imageUrl;
+    delete meta.iconGif;
+  } else {
+    delete meta.imageUrl;
+    delete meta.iconGif;
+  }
+  // Icon never mutates the role display name.
+  await updateRoleLink(guildId, linkId, { emoji: icon.emoji.slice(0, 64), meta });
+  await syncEmojiToUbItem(guildId, row.ubItemId, icon.emoji);
+  await writeUbAudit(guildId, userId, "discord_perk_icon", {
+    id: linkId,
+    preset: icon.source,
+    emoji: icon.emoji,
+    imageUrl: icon.imageUrl,
+    animated: icon.animated,
+  });
+  return { name: row.name, ubItemId: row.ubItemId };
 }
 
 function applyStoreImageToEmbed(embed: EmbedBuilder, imageUrl: string) {
@@ -593,7 +620,7 @@ async function renderRoleDetail(
   const embed = new EmbedBuilder()
     .setColor(0xe91e8c)
     .setAuthor({ name: "Edit role", iconURL: UB_ICON })
-    .setTitle(`${row.emoji || "✨"} ${row.name}`)
+    .setTitle(`${titleSafeStoreEmoji(row.emoji)} ${row.name}`)
     .setDescription(
       [
         flash ? `${flash}\n` : null,
@@ -1157,7 +1184,7 @@ export async function handleUbAdminComponent(
     }
     const picker = buildPerkIconPicker(linkId, row.name, row.emoji || "✨", interaction.guild);
     await interaction.editReply({
-      content: "Pick an icon with **Discord’s emoji picker**, **server emoji**, or **Upload GIF** — animated GIFs play on the store board.",
+      content: "Tap **Pick in chat** and use Discord’s emoji/GIF bar — or browse server emoji / Upload GIF.",
       ...picker,
     });
     return;
@@ -1814,10 +1841,95 @@ export async function handleUbAdminComponent(
     return;
   }
 
-  // Discord emoji picker modal (must be first response).
-  if (id.startsWith("ubadmin:perk_icon_emoji_btn:") && interaction.isButton()) {
+  // Native Discord emoji / GIF bar — send in chat, we delete the message.
+  if (id.startsWith("ubadmin:perk_icon_chat:") && interaction.isButton()) {
     const linkId = Number(id.split(":")[2]);
-    await interaction.showModal(buildEmojiPasteModal(linkId));
+    await interaction.deferUpdate();
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row) {
+      await interaction.editReply({ content: "That perk is gone.", components: [], embeds: [] });
+      return;
+    }
+    beginIconCapture({
+      guildId,
+      userId: interaction.user.id,
+      linkId,
+      channelId: interaction.channelId,
+      confirm: async (icon) => {
+        const applied = await applyCapturedIconToLink(guildId, linkId, icon, interaction.user.id);
+        if (!applied) {
+          await interaction.editReply({ content: "That perk is gone.", components: [], embeds: [] });
+          return;
+        }
+        const preview = new EmbedBuilder()
+          .setColor(0xe91e8c)
+          .setTitle(`${titleSafeStoreEmoji(icon.emoji, "🖼️")} ${applied.name}`)
+          .setDescription(
+            icon.animated
+              ? "Animated icon set — Discord plays it on the store board."
+              : "Icon set from Discord’s picker.",
+          );
+        if (icon.imageUrl) applyStoreImageToEmbed(preview, icon.imageUrl);
+        await interaction.editReply({
+          content: `Set icon for **${applied.name}**.` +
+            (applied.ubItemId ? " _(synced emoji to UnbelievaBoat item)_" : ""),
+          embeds: [preview],
+          components: [],
+        });
+      },
+      abort: async () => {
+        await interaction.editReply({
+          content: "Icon pick cancelled.",
+          embeds: [],
+          components: [],
+        });
+      },
+    });
+    const cancelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ubadmin:perk_icon_chat_cancel:${linkId}`)
+        .setLabel("Cancel pick")
+        .setStyle(ButtonStyle.Danger),
+    );
+    await interaction.editReply({
+      content:
+        `**Send an emoji or GIF in this channel** for **${row.name}** (90s).\n` +
+        `Use Discord’s emoji / GIF / file bar at the bottom — I’ll apply it and delete your message.\n` +
+        `_Type \`cancel\` or tap Cancel pick to abort._`,
+      embeds: [],
+      components: [cancelRow],
+    });
+    return;
+  }
+
+  if (id.startsWith("ubadmin:perk_icon_chat_cancel:") && interaction.isButton()) {
+    await interaction.deferUpdate();
+    cancelIconCapture(guildId, interaction.user.id);
+    await interaction.editReply({
+      content: "Icon pick cancelled.",
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+
+  if (id.startsWith("ubadmin:perk_icon_gpage:") && interaction.isButton()) {
+    await interaction.deferUpdate();
+    const partsId = id.split(":");
+    const linkId = Number(partsId[2]);
+    const page = Number(partsId[3]) || 0;
+    const roles = await listRoleLinks(guildId);
+    const row = roles.find(r => r.id === linkId);
+    if (!row) {
+      await interaction.editReply({ content: "That perk is gone.", components: [], embeds: [] });
+      return;
+    }
+    const picker = buildPerkIconPicker(linkId, row.name, row.emoji || "✨", interaction.guild, page);
+    await interaction.editReply({
+      content: "Pick a **server emoji**, or **Pick in chat** to use Discord’s emoji/GIF bar.",
+      ...picker,
+    });
     return;
   }
 
@@ -1837,13 +1949,15 @@ export async function handleUbAdminComponent(
       const meta = { ...(row.meta as Record<string, unknown>) };
       delete meta.imageUrl;
       delete meta.iconGif;
-      await updateRoleLink(guildId, linkId, { meta });
+      // Keep a simple unicode emoji so custom markup doesn’t stick in titles.
+      const keep = titleSafeStoreEmoji(row.emoji, "✨");
+      await updateRoleLink(guildId, linkId, { emoji: keep, meta });
       await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
-        id: linkId, preset: "emoji_only", emoji: row.emoji,
+        id: linkId, preset: "emoji_only", emoji: keep,
       });
     }
     await interaction.editReply({
-      content: "Kept emoji-only icon (no image). Players still see the emoji in `/casino` store.",
+      content: "Cleared uploaded image — emoji-only icon for the store.",
       components: [],
       embeds: [],
     });
@@ -1884,7 +1998,7 @@ export async function handleUbAdminComponent(
     });
     const preview = new EmbedBuilder()
       .setColor(0xe91e8c)
-      .setTitle(`${emoji} ${row.name}`)
+      .setTitle(`${titleSafeStoreEmoji(emoji, "🖼️")} ${row.name}`)
       .setDescription(
         guildEmoji.animated
           ? "Animated server emoji — Discord plays the GIF on the store board."
@@ -1892,48 +2006,8 @@ export async function handleUbAdminComponent(
       );
     applyStoreImageToEmbed(preview, imageUrl);
     await interaction.editReply({
-      content: `Set store icon to ${emoji} for **${row.name}**.` +
+      content: `Set store icon for **${row.name}**.` +
         (row.ubItemId ? " _(synced emoji to UnbelievaBoat item)_" : ""),
-      embeds: [preview],
-      components: [],
-    });
-    return;
-  }
-
-  if (id.startsWith("ubadmin:perk_icon:") && interaction.isStringSelectMenu()) {
-    const linkId = Number(id.split(":")[2]);
-    const choice = interaction.values[0]!;
-    await interaction.deferUpdate();
-    const preset = presetById(choice);
-    if (!preset) {
-      await interaction.editReply({ content: "Unknown icon preset.", components: [], embeds: [] });
-      return;
-    }
-    const roles = await listRoleLinks(guildId);
-    const row = roles.find(r => r.id === linkId);
-    if (!row) {
-      await interaction.editReply({ content: "That perk is gone.", components: [], embeds: [] });
-      return;
-    }
-    const meta: Record<string, unknown> = {
-      ...(row.meta as Record<string, unknown>),
-      imageUrl: preset.imageUrl,
-    };
-    delete meta.iconGif;
-    await updateRoleLink(guildId, linkId, {
-      emoji: row.emoji || preset.emoji,
-      meta,
-    });
-    await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
-      id: linkId, preset: preset.id, imageUrl: preset.imageUrl,
-    });
-    const preview = new EmbedBuilder()
-      .setColor(0xe91e8c)
-      .setTitle(`${row.emoji || preset.emoji} ${row.name}`)
-      .setDescription("Default icon preview for the perk store");
-    applyStoreImageToEmbed(preview, preset.imageUrl);
-    await interaction.editReply({
-      content: `Set store icon to **${preset.label}** ${preset.emoji} for **${row.name}**.`,
       embeds: [preview],
       components: [],
     });
@@ -2215,50 +2289,17 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
         `Created perk **${name}** ${icon.emoji} → <@&${roleId}> for **${fmt(price)}** cash` +
         (incomeAmount > 0 ? ` · collect income **${fmt(incomeAmount)}**/claim` : "") +
         `.\nPlayers buy with \`/casino store\` · claim with \`/casino collect\`.` +
-        `\n\n**Next:** Discord emoji · server emoji · upload GIF · or a quick default.`,
+        `\n\n**Next:** tap **Pick in chat** (Discord emoji/GIF bar), browse server emoji, or **Upload GIF**.`,
       ...picker,
     });
     return;
   }
 
+  // Legacy paste-modal submit — redirect to Pick in chat (no more shortcode paste).
   if (parts[1] === "perk_icon_emoji" && parts[2]) {
-    const linkId = Number(parts[2]);
-    const emojiRaw = interaction.fields.getTextInputValue("emoji").trim();
-    if (!emojiRaw) {
-      await interaction.reply({ content: "Paste an emoji from Discord’s picker.", ...EPHEMERAL });
-      return;
-    }
-    await interaction.deferReply(EPHEMERAL);
-    const icon = normalizeStoreIconInput(emojiRaw);
-    const roles = await listRoleLinks(guildId);
-    const row = roles.find(r => r.id === linkId);
-    if (!row) {
-      await interaction.editReply("That perk is gone.");
-      return;
-    }
-    const meta: Record<string, unknown> = { ...(row.meta as Record<string, unknown>) };
-    if (icon.imageUrl) {
-      meta.imageUrl = icon.imageUrl;
-      delete meta.iconGif;
-    }
-    await updateRoleLink(guildId, linkId, { emoji: icon.emoji, meta });
-    await syncEmojiToUbItem(guildId, row.ubItemId, icon.emoji);
-    await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
-      id: linkId, preset: "discord_emoji", emoji: icon.emoji, imageUrl: icon.imageUrl, animated: icon.animated,
-    });
-    const preview = new EmbedBuilder()
-      .setColor(0xe91e8c)
-      .setTitle(`${icon.emoji} ${row.name}`)
-      .setDescription(
-        icon.animated
-          ? "Animated emoji — Discord plays the GIF on the store board."
-          : "Emoji set for menus and the store board.",
-      );
-    if (icon.imageUrl) applyStoreImageToEmbed(preview, icon.imageUrl);
-    await interaction.editReply({
-      content: `Set emoji ${icon.emoji} for **${row.name}**.` +
-        (row.ubItemId ? " _(synced to UnbelievaBoat item)_" : ""),
-      embeds: [preview],
+    await interaction.reply({
+      content: "That paste form is gone — open **Pick in chat** and use Discord’s emoji / GIF bar.",
+      ...EPHEMERAL,
     });
     return;
   }
@@ -2275,15 +2316,17 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       return;
     }
     const type = attachment.contentType?.toLowerCase() ?? "";
-    if (type && !type.startsWith("image/") && type !== "image/gif") {
+    const fileName = attachment.name?.toLowerCase() ?? "";
+    const looksImage = !type || type.startsWith("image/") || /\.(gif|png|jpe?g|webp)$/i.test(fileName);
+    if (!looksImage) {
       await interaction.reply({
         content: "Need an image or GIF from Discord’s picker (PNG/JPG/GIF/WebP).",
         ...EPHEMERAL,
       });
       return;
     }
-    const imageUrl = attachment.url;
-    if (!isHttpImageUrl(imageUrl) && !imageUrl.includes("discord")) {
+    const imageUrl = attachment.proxyURL || attachment.url;
+    if (!imageUrl || (!isHttpImageUrl(imageUrl) && !imageUrl.includes("discord"))) {
       await interaction.reply({ content: "Couldn’t read that upload URL.", ...EPHEMERAL });
       return;
     }
@@ -2294,19 +2337,21 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       await interaction.editReply("That perk is gone.");
       return;
     }
-    const animated = type.includes("gif") || isAnimatedStoreImage(imageUrl) || /\.gif(\?|$)/i.test(attachment.name ?? "");
+    const animated = type.includes("gif") || fileName.endsWith(".gif") || isAnimatedStoreImage(imageUrl);
     const meta: Record<string, unknown> = {
       ...(row.meta as Record<string, unknown>),
       imageUrl,
     };
     delete meta.iconGif;
-    await updateRoleLink(guildId, linkId, { meta });
+    // Replace stuck custom-emoji markup so the name/title isn’t glued to the old emoji.
+    const nextEmoji = animated ? "🎞️" : "🖼️";
+    await updateRoleLink(guildId, linkId, { emoji: nextEmoji, meta });
     await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
       id: linkId, preset: "discord_upload", imageUrl, animated, name: attachment.name,
     });
     const preview = new EmbedBuilder()
       .setColor(0xe91e8c)
-      .setTitle(`${row.emoji || "✨"} ${row.name}`)
+      .setTitle(`${nextEmoji} ${row.name}`)
       .setDescription(
         animated
           ? "Uploaded GIF — Discord plays the animation on the store board."
@@ -2316,6 +2361,7 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     await interaction.editReply({
       content: `Set uploaded ${animated ? "GIF" : "image"} for **${row.name}**.`,
       embeds: [preview],
+      components: [],
     });
     return;
   }

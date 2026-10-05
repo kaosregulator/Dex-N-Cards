@@ -40,16 +40,16 @@ export function buildUbSlashCommandJsons() {
 
     new SlashCommandBuilder()
       .setName("deposit_ub")
-      .setDescription(`${UB} — move cash into bank`)
+      .setDescription(`${UB} — move cash into bank (omit amount = all)`)
       .setDMPermission(false)
-      .addIntegerOption(o => o.setName("amount").setDescription("Amount").setRequired(true).setMinValue(1))
+      .addIntegerOption(o => o.setName("amount").setDescription("Amount (omit for all cash)").setRequired(false).setMinValue(1))
       .toJSON(),
 
     new SlashCommandBuilder()
       .setName("withdraw_ub")
-      .setDescription(`${UB} — move bank to cash`)
+      .setDescription(`${UB} — move bank to cash (omit amount = all)`)
       .setDMPermission(false)
-      .addIntegerOption(o => o.setName("amount").setDescription("Amount").setRequired(true).setMinValue(1))
+      .addIntegerOption(o => o.setName("amount").setDescription("Amount (omit for all bank)").setRequired(false).setMinValue(1))
       .toJSON(),
 
     new SlashCommandBuilder()
