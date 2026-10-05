@@ -831,14 +831,14 @@ async function beginScratchPurchase(
     ];
 
     if (vis === "pub") {
-      const hookId = await postAsUnbelievaBoat(interaction, {
+      const posted = await postAsUnbelievaBoat(interaction, {
         content: `${interaction.user} bought a **${tier.name}** (${tier.gameLabel})!`,
         embeds: [embed],
         files,
         components,
       });
       await interaction.editReply({
-        content: hookId
+        content: posted
           ? `📢 **${tier.name}** opened publicly as **UnbelievaBoat**.`
           : `📢 **${tier.name}** opened publicly (bot fallback — webhook unavailable).`,
         embeds: [],
@@ -849,7 +849,7 @@ async function beginScratchPurchase(
           ),
         ],
       });
-      if (!hookId) {
+      if (!posted) {
         await interaction.followUp({
           content: `${interaction.user} bought a **${tier.name}**!`,
           embeds: [embed],

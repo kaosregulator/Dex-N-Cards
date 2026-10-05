@@ -7,6 +7,8 @@ import { loadArt } from "../animations/effects.js";
 import type { AnimationResult } from "../animations/types.js";
 import { brandAsset, BRAND_LOGO_FILE, BRAND_NAME } from "../help-banners.js";
 import { UNBELIEVABOAT_COLOR, UNBELIEVABOAT_NAME } from "./branding.js";
+import { drawTextWithEmojis, preloadEmojiTexts } from "./canvas-emoji-text.js";
+import { loadCurrencyImage } from "./currency-canvas.js";
 
 const W = 900;
 const H = 560;
@@ -69,7 +71,12 @@ export async function renderUbLeaderboardGif(opts: {
     avatars.push(await loadArt(mod, r.avatarUrl).catch(() => null));
   }
 
-  const symbol = opts.symbol.length <= 4 ? opts.symbol : "💵";
+  const emojiImgs = await preloadEmojiTexts(mod, [
+    ...rows.map(r => r.name),
+    opts.symbol,
+    `${BRAND_NAME} × ${UNBELIEVABOAT_NAME}`,
+  ]);
+  const symbolImg = await loadCurrencyImage(mod, opts.symbol);
 
   return encodeAnimation({
     width: W, height: H, durationMs: 2200, speed: "normal", maxFrames: 24, quality: 14,
@@ -147,29 +154,61 @@ export async function renderUbLeaderboardGif(opts: {
           }
         }
 
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold 15px sans-serif";
-        ctx.textAlign = "center";
-        const name = row.name.length > 14 ? `${row.name.slice(0, 13)}…` : row.name;
-        ctx.fillText(`#${row.rank} ${name}`, o.px, baseY + o.ph + 18);
-        ctx.fillStyle = hexToRgba(medal, 1);
+        drawTextWithEmojis(ctx, `#${row.rank} ${row.name}`, o.px, baseY + o.ph + 18, emojiImgs, {
+          font: "bold 15px sans-serif",
+          fillStyle: "#fff",
+          align: "center",
+          maxWidth: 160,
+          emojiSize: 16,
+        });
+        // Total + currency icon (Twemoji / custom — never tofu)
+        const totalLabel = fmt(row.total);
         ctx.font = "bold 18px sans-serif";
-        ctx.fillText(`${fmt(row.total)} ${symbol}`, o.px, baseY + o.ph + 40);
+        ctx.fillStyle = hexToRgba(medal, 1);
+        ctx.textAlign = "center";
+        const tw = ctx.measureText(totalLabel).width;
+        const iconSz = 18;
+        const groupW = tw + (symbolImg ? iconSz + 6 : 0);
+        const gx = o.px - groupW / 2;
+        ctx.textAlign = "left";
+        ctx.fillText(totalLabel, gx, baseY + o.ph + 40);
+        if (symbolImg) {
+          ctx.drawImage(
+            symbolImg as never,
+            gx + tw + 4,
+            baseY + o.ph + 40 - iconSz + 2,
+            iconSz,
+            iconSz,
+          );
+        } else {
+          drawTextWithEmojis(
+            ctx,
+            opts.symbol,
+            gx + tw + 8,
+            baseY + o.ph + 40,
+            emojiImgs,
+            { font: "bold 16px sans-serif", fillStyle: hexToRgba(medal, 1), align: "left", emojiSize: 16 },
+          );
+        }
       }
 
       // Rows 4–10
       let y = 430;
-      ctx.font = "14px sans-serif";
       for (let i = 0; i < rest.length; i++) {
         const r = rest[i]!;
         const idx = i + 3;
         ctx.fillStyle = "rgba(255,255,255,0.05)";
         ctx.fillRect(40, y - 14, W - 80, 26);
-        ctx.fillStyle = "#aab0c0";
-        ctx.textAlign = "left";
-        ctx.fillText(`#${r.rank}  ${r.name}`, 52, y);
+        drawTextWithEmojis(ctx, `#${r.rank}  ${r.name}`, 52, y, emojiImgs, {
+          font: "14px sans-serif",
+          fillStyle: "#aab0c0",
+          align: "left",
+          maxWidth: 320,
+          emojiSize: 14,
+        });
         ctx.textAlign = "right";
         ctx.fillStyle = hexToRgba(UNBELIEVABOAT_COLOR, 1);
+        ctx.font = "14px sans-serif";
         ctx.fillText(
           `cash ${fmt(r.cash)} · bank ${fmt(r.bank)} · ${fmt(r.total)}`,
           W - 52,

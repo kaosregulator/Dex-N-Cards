@@ -9,6 +9,7 @@ import {
   loadImageUrl,
   symbolDisplayName,
 } from "./currency-canvas.js";
+import { drawTextWithEmojis, preloadEmojiTexts } from "./canvas-emoji-text.js";
 
 const W = 560;
 
@@ -150,6 +151,7 @@ export async function renderCoinCollectGif(opts: {
       return null;
     }),
   );
+  const emojiImgs = await preloadEmojiTexts(mod, roles.map(r => r.name));
 
   const cashLabel = symbolDisplayName(opts.symbol);
 
@@ -212,14 +214,18 @@ export async function renderCoinCollectGif(opts: {
           const img = roleImgs[i] ?? null;
           const left = 48;
           drawCurrencyIcon(ctx, img, role.emoji || "✨", left + 10, y, 20);
-          ctx.fillStyle = "#e2e8f0";
-          ctx.font = "bold 14px sans-serif";
-          ctx.textAlign = "left";
-          ctx.textBaseline = "middle";
-          const name = role.name.slice(0, 28);
-          ctx.fillText(name, left + 28, y);
+          drawTextWithEmojis(ctx, role.name, left + 28, y, emojiImgs, {
+            font: "bold 14px sans-serif",
+            fillStyle: "#e2e8f0",
+            align: "left",
+            baseline: "middle",
+            maxWidth: 300,
+            emojiSize: 14,
+          });
           ctx.fillStyle = "#4ade80";
+          ctx.font = "bold 14px sans-serif";
           ctx.textAlign = "right";
+          ctx.textBaseline = "middle";
           const sign = role.income >= 0 ? "+" : "";
           ctx.fillText(`${sign}${role.income.toLocaleString()}`, W - 48, y);
         });
