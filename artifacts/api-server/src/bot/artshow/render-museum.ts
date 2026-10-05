@@ -1,85 +1,40 @@
 /**
- * Hall of Fame museum — world wings (stylized cultural abstracts, not
- * copyrighted masterpieces) frame the crowned piece center stage.
+ * Hall of Fame museum — stamped real gallery hall, famous PD masterpieces
+ * in ornate gold frames (shuffled world wings), classical statues on pedestals,
+ * and the community champion BIG and bold at center stage.
  */
 
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import {
   encodeAnimation, getCanvas, hexToRgba, roundRectPath, clamp01, easeOutBack,
   TITLE_FONT_FAMILY, type Ctx, type CanvasMod,
 } from "../animations/engine.js";
 import { loadArt } from "../animations/effects.js";
-import { seededRng } from "../animations/particles.js";
 import { logger } from "../../lib/logger.js";
+import {
+  pickHall, pickWingArt, pickStatues,
+} from "./museum-assets.js";
 
-const W = 900;
-const H = 520;
+const W = 960;
+const H = 560;
 
-type Wing = { code: string; label: string; hue: number };
+type Img = { width: number; height: number };
 
-const WORLD_WINGS: Wing[] = [
-  { code: "RU", label: "Russia", hue: 0xc41e3a },
-  { code: "UK", label: "United Kingdom", hue: 0x00247d },
-  { code: "US", label: "United States", hue: 0xb22234 },
-  { code: "ES", label: "Spain", hue: 0xaa151b },
-  { code: "CN", label: "China", hue: 0xde2910 },
-  { code: "JP", label: "Japan", hue: 0xbc002d },
-  { code: "FR", label: "France", hue: 0x0055a4 },
-  { code: "BR", label: "Brazil", hue: 0x009c3b },
-];
-
-function drawAbstractWing(
-  ctx: Ctx, x: number, y: number, w: number, h: number, wing: Wing, seed: string, t: number,
-): void {
-  const rng = seededRng(`${seed}-${wing.code}`);
-  // Frame
-  ctx.fillStyle = "#3a2f24";
-  ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
-  ctx.strokeStyle = hexToRgba(0xd4af37, 0.55);
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(x - 4, y - 4, w + 8, h + 8);
-
-  // Stylized abstract "masterwork" — geometric, not a real painting
-  const bg = ctx.createLinearGradient(x, y, x + w, y + h);
-  bg.addColorStop(0, hexToRgba(wing.hue, 0.55));
-  bg.addColorStop(1, "#1a1410");
-  ctx.fillStyle = bg;
-  ctx.fillRect(x, y, w, h);
-
-  for (let i = 0; i < 6; i++) {
-    const a = rng.range(0.15, 0.7);
-    ctx.fillStyle = hexToRgba(0xfff3d0, a * (0.35 + 0.25 * Math.sin(t * Math.PI * 2 + i)));
-    const rx = x + rng.range(4, w - 20);
-    const ry = y + rng.range(4, h - 20);
-    const rw = rng.range(10, w * 0.45);
-    const rh = rng.range(8, h * 0.4);
-    ctx.beginPath();
-    if (rng.range(0, 1) > 0.5) {
-      ctx.ellipse(rx + rw / 2, ry + rh / 2, rw / 2, rh / 2, rng.range(0, 1), 0, Math.PI * 2);
-    } else {
-      ctx.rect(rx, ry, rw, rh);
-    }
-    ctx.fill();
+async function loadLocal(mod: CanvasMod, absPath: string): Promise<Img | null> {
+  try {
+    if (!existsSync(absPath)) return null;
+    const buf = await readFile(absPath);
+    return await mod.loadImage(buf);
+  } catch {
+    return null;
   }
-
-  // Plaque
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.fillRect(x, y + h - 18, w, 18);
-  ctx.fillStyle = "#f0e2c0";
-  ctx.font = "600 10px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(wing.label, x + w / 2, y + h - 5);
 }
 
-function drawContain(
-  ctx: Ctx,
-  img: { width: number; height: number },
-  x: number, y: number, w: number, h: number,
-): void {
-  const scale = Math.min(w / img.width, h / img.height);
+function drawCover(ctx: Ctx, img: Img, x: number, y: number, w: number, h: number): void {
+  const scale = Math.max(w / img.width, h / img.height);
   const dw = img.width * scale;
   const dh = img.height * scale;
-  ctx.fillStyle = "#120e0c";
-  ctx.fillRect(x, y, w, h);
   ctx.drawImage(
     img as Parameters<Ctx["drawImage"]>[0],
     x + (w - dw) / 2,
@@ -89,128 +44,337 @@ function drawContain(
   );
 }
 
+/** Letterbox — never crop the champion photo. */
+function drawContain(
+  ctx: Ctx, img: Img, x: number, y: number, w: number, h: number, mat = "#1a1510",
+): void {
+  ctx.fillStyle = mat;
+  ctx.fillRect(x, y, w, h);
+  const scale = Math.min(w / img.width, h / img.height);
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  ctx.drawImage(
+    img as Parameters<Ctx["drawImage"]>[0],
+    x + (w - dw) / 2,
+    y + (h - dh) / 2,
+    dw,
+    dh,
+  );
+}
+
+function drawOrnateFrame(
+  ctx: Ctx, x: number, y: number, w: number, h: number, opts?: { thick?: number; glow?: number },
+): void {
+  const thick = opts?.thick ?? 10;
+  const glow = opts?.glow ?? 0.45;
+  // Outer shadow
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(x - thick - 2, y - thick + 4, w + thick * 2 + 4, h + thick * 2 + 4);
+
+  // Dark wood
+  ctx.fillStyle = "#3a2a18";
+  ctx.fillRect(x - thick, y - thick, w + thick * 2, h + thick * 2);
+
+  // Antique gold lip
+  const gold = ctx.createLinearGradient(x - thick, y, x + w + thick, y + h);
+  gold.addColorStop(0, "#e8d48b");
+  gold.addColorStop(0.35, "#c5a059");
+  gold.addColorStop(0.7, "#f0e2b0");
+  gold.addColorStop(1, "#a67c2a");
+  ctx.strokeStyle = gold as unknown as string;
+  ctx.lineWidth = Math.max(3, thick * 0.55);
+  ctx.strokeRect(x - thick + 2, y - thick + 2, w + thick * 2 - 4, h + thick * 2 - 4);
+
+  // Inner gold hairline
+  ctx.strokeStyle = hexToRgba(0xffe6a0, glow);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x - 1, y - 1, w + 2, h + 2);
+}
+
+function drawPedestal(ctx: Ctx, cx: number, top: number, w: number, h: number): void {
+  // Column
+  const grad = ctx.createLinearGradient(cx - w / 2, top, cx + w / 2, top + h);
+  grad.addColorStop(0, "#e8e4dc");
+  grad.addColorStop(0.5, "#cfc8bc");
+  grad.addColorStop(1, "#a8a095");
+  ctx.fillStyle = grad;
+  roundRectPath(ctx, cx - w / 2, top, w, h, 4);
+  ctx.fill();
+  // Cap
+  ctx.fillStyle = "#f2efe8";
+  roundRectPath(ctx, cx - w / 2 - 8, top - 6, w + 16, 12, 3);
+  ctx.fill();
+  // Base
+  ctx.fillStyle = "#9a9288";
+  roundRectPath(ctx, cx - w / 2 - 10, top + h - 4, w + 20, 10, 3);
+  ctx.fill();
+}
+
+async function drawStatue(
+  ctx: Ctx, mod: CanvasMod, abs: string, cx: number, floorY: number, maxH: number, t: number,
+): Promise<void> {
+  const img = await loadLocal(mod, abs);
+  const pedH = 36;
+  const pedW = 52;
+  const artH = maxH - pedH - 8;
+  const artW = 70;
+  drawPedestal(ctx, cx, floorY - pedH, pedW, pedH);
+
+  // Soft glow behind statue
+  const pulse = 0.12 + 0.06 * Math.sin(t * Math.PI * 2);
+  const glow = ctx.createRadialGradient(cx, floorY - pedH - artH * 0.45, 4, cx, floorY - pedH - artH * 0.4, artW);
+  glow.addColorStop(0, `rgba(255,248,230,${pulse})`);
+  glow.addColorStop(1, "rgba(255,248,230,0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.ellipse(cx, floorY - pedH - artH * 0.4, artW * 0.7, artH * 0.55, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (img) {
+    const x = cx - artW / 2;
+    const y = floorY - pedH - artH;
+    // Marble-ish matte
+    ctx.fillStyle = "rgba(245,242,236,0.15)";
+    ctx.fillRect(x, y, artW, artH);
+    drawContain(ctx, img, x, y, artW, artH, "rgba(236,232,224,0.9)");
+  } else {
+    // Fallback silhouette
+    ctx.fillStyle = "#e8e4dc";
+    ctx.beginPath();
+    ctx.ellipse(cx, floorY - pedH - artH + 22, 16, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(cx - 14, floorY - pedH - artH + 40, 28, artH - 48);
+  }
+}
+
 export type MuseumRenderOpts = {
   championTitle: string;
   championArtist: string;
   championImageUrl: string;
   votes: number;
   weekLabel: string;
-  /** Past fame thumbnails (image urls) for side shelves — optional */
   pastUrls?: string[];
+  /** Override shuffle seed (defaults to week + title) */
+  seed?: string;
 };
 
 export async function renderMuseumGif(opts: MuseumRenderOpts): Promise<Buffer | null> {
   try {
+    const seed = opts.seed ?? `${opts.weekLabel}-${opts.championTitle}-${opts.votes}`;
+    const hallFile = pickHall(seed);
+    const wings = pickWingArt(seed);
+    const statues = pickStatues(seed);
+
     const result = await encodeAnimation({
       width: W,
       height: H,
       speed: "normal",
-      durationMs: 2400,
-      maxFrames: 16,
-      quality: 11,
+      durationMs: 2200,
+      maxFrames: 12,
+      quality: 12,
       render: async ({ ctx, t, mod }) => {
-        // Grand hall
-        const g = ctx.createLinearGradient(0, 0, W, H);
-        g.addColorStop(0, "#1a120e");
-        g.addColorStop(0.5, "#2a1f18");
-        g.addColorStop(1, "#0e0a08");
-        ctx.fillStyle = g;
+        // ── Stamped gallery hall background ──────────────────────────────
+        const hall = await loadLocal(mod, hallFile);
+        if (hall) {
+          drawCover(ctx, hall, 0, 0, W, H);
+        } else {
+          const g = ctx.createLinearGradient(0, 0, 0, H);
+          g.addColorStop(0, "#2B3D4F");
+          g.addColorStop(1, "#1a2430");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        // Soft Apple-clean wash — cool teal lift + vignette
+        const wash = ctx.createLinearGradient(0, 0, 0, H);
+        wash.addColorStop(0, "rgba(255,255,255,0.10)");
+        wash.addColorStop(0.45, "rgba(43,61,79,0.18)");
+        wash.addColorStop(1, "rgba(10,12,16,0.45)");
+        ctx.fillStyle = wash;
         ctx.fillRect(0, 0, W, H);
 
-        // Ceiling lights
-        for (let i = 0; i < 5; i++) {
-          const lx = 80 + i * 180;
-          const pulse = 0.2 + 0.15 * Math.sin(t * Math.PI * 2 + i);
-          const glow = ctx.createRadialGradient(lx, 30, 2, lx, 80, 90);
-          glow.addColorStop(0, `rgba(255,230,170,${pulse})`);
-          glow.addColorStop(1, "rgba(255,200,100,0)");
-          ctx.fillStyle = glow;
-          ctx.fillRect(lx - 100, 0, 200, 160);
-        }
+        const vig = ctx.createRadialGradient(W / 2, H * 0.4, H * 0.15, W / 2, H * 0.5, H * 0.75);
+        vig.addColorStop(0, "rgba(0,0,0,0)");
+        vig.addColorStop(1, "rgba(0,0,0,0.35)");
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, W, H);
 
-        ctx.fillStyle = "#f5e6c8";
-        ctx.font = `700 22px ${TITLE_FONT_FAMILY}, sans-serif`;
+        // Polished floor reflection band
+        const floorY = H * 0.82;
+        const floor = ctx.createLinearGradient(0, floorY, 0, H);
+        floor.addColorStop(0, "rgba(210,200,188,0.18)");
+        floor.addColorStop(1, "rgba(40,36,32,0.55)");
+        ctx.fillStyle = floor;
+        ctx.fillRect(0, floorY, W, H - floorY);
+
+        // Header glass pill
+        roundRectPath(ctx, W / 2 - 210, 14, 420, 44, 14);
+        ctx.fillStyle = "rgba(255,255,255,0.72)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(197,160,89,0.55)";
+        ctx.lineWidth = 1.5;
+        roundRectPath(ctx, W / 2 - 210, 14, 420, 44, 14);
+        ctx.stroke();
+
+        ctx.fillStyle = "#1a1a1e";
+        ctx.font = `700 18px ${TITLE_FONT_FAMILY}, sans-serif`;
         ctx.textAlign = "center";
-        ctx.fillText("HALL OF FAME  ·  WORLD MUSEUM", W / 2, 34);
-        ctx.fillStyle = "#a89478";
-        ctx.font = "13px sans-serif";
-        ctx.fillText(opts.weekLabel, W / 2, 54);
+        ctx.fillText("HALL OF FAME", W / 2, 34);
+        ctx.fillStyle = "#6b6560";
+        ctx.font = "600 11px sans-serif";
+        ctx.fillText(opts.weekLabel, W / 2, 50);
 
-        // Side wings
-        const wingW = 88;
-        const wingH = 110;
-        const leftX = 28;
-        const rightX = W - 28 - wingW;
+        // ── World wings — 3 left + 3 right (shuffled countries) ───────────
+        const leftWings = wings.slice(0, 3);
+        const rightWings = wings.slice(3, 6);
+        const frameW = 92;
+        const frameH = 112;
         const startY = 78;
-        for (let i = 0; i < 4; i++) {
-          drawAbstractWing(ctx, leftX, startY + i * (wingH + 14), wingW, wingH, WORLD_WINGS[i]!, "L", t);
-          drawAbstractWing(ctx, rightX, startY + i * (wingH + 14), wingW, wingH, WORLD_WINGS[i + 4]!, "R", t);
+        const gap = 14;
+
+        for (let i = 0; i < leftWings.length; i++) {
+          const item = leftWings[i]!;
+          const x = 28;
+          const y = startY + i * (frameH + gap);
+          const art = await loadLocal(mod, item.abs);
+          drawOrnateFrame(ctx, x, y, frameW, frameH, { thick: 8, glow: 0.35 });
+          if (art) drawCover(ctx, art, x, y, frameW, frameH);
+          else {
+            ctx.fillStyle = "#2B3D4F";
+            ctx.fillRect(x, y, frameW, frameH);
+          }
+          // Country plaque
+          ctx.fillStyle = "rgba(20,18,16,0.72)";
+          ctx.fillRect(x, y + frameH - 18, frameW, 18);
+          ctx.fillStyle = "#f5e6c8";
+          ctx.font = "600 10px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(item.wing.label, x + frameW / 2, y + frameH - 5);
         }
 
-        // Center stage pedestal + frame
-        const pop = easeOutBack(clamp01(t * 1.25));
-        const cw = 360;
+        for (let i = 0; i < rightWings.length; i++) {
+          const item = rightWings[i]!;
+          const x = W - 28 - frameW;
+          const y = startY + i * (frameH + gap);
+          const art = await loadLocal(mod, item.abs);
+          drawOrnateFrame(ctx, x, y, frameW, frameH, { thick: 8, glow: 0.35 });
+          if (art) drawCover(ctx, art, x, y, frameW, frameH);
+          else {
+            ctx.fillStyle = "#2B3D4F";
+            ctx.fillRect(x, y, frameW, frameH);
+          }
+          ctx.fillStyle = "rgba(20,18,16,0.72)";
+          ctx.fillRect(x, y + frameH - 18, frameW, 18);
+          ctx.fillStyle = "#f5e6c8";
+          ctx.font = "600 10px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(item.wing.label, x + frameW / 2, y + frameH - 5);
+        }
+
+        // Extra two wings tucked as smaller salon pieces above center (countries 7–8)
+        const extras = wings.slice(6, 8);
+        for (let i = 0; i < extras.length; i++) {
+          const item = extras[i]!;
+          const fw = 70;
+          const fh = 84;
+          const x = W / 2 + (i === 0 ? -200 : 130);
+          const y = 72;
+          const art = await loadLocal(mod, item.abs);
+          drawOrnateFrame(ctx, x, y, fw, fh, { thick: 6, glow: 0.3 });
+          if (art) drawCover(ctx, art, x, y, fw, fh);
+          ctx.fillStyle = "rgba(20,18,16,0.7)";
+          ctx.fillRect(x, y + fh - 16, fw, 16);
+          ctx.fillStyle = "#f5e6c8";
+          ctx.font = "600 9px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(item.wing.label, x + fw / 2, y + fh - 4);
+        }
+
+        // ── Classical statues flanking center stage ───────────────────────
+        await drawStatue(ctx, mod, statues.left, 168, floorY + 8, 168, t);
+        await drawStatue(ctx, mod, statues.right, W - 168, floorY + 8, 168, t);
+
+        // ── CENTER STAGE — champion big & bold ───────────────────────────
+        const pop = easeOutBack(clamp01(t * 1.35));
+        const cw = 340;
         const ch = 300;
         const cx = (W - cw) / 2;
-        const cy = 78 + (1 - pop) * 24;
+        const cy = 88 + (1 - pop) * 28;
 
         ctx.save();
-        ctx.globalAlpha = clamp01(0.5 + pop * 0.5);
+        ctx.globalAlpha = clamp01(0.55 + pop * 0.45);
 
-        // Spotlight
-        const spot = ctx.createRadialGradient(W / 2, 70, 10, W / 2, 220, 220);
-        spot.addColorStop(0, "rgba(255,236,190,0.28)");
-        spot.addColorStop(1, "rgba(255,200,120,0)");
+        // Museum spotlight cone
+        const spotPulse = 0.22 + 0.08 * Math.sin(t * Math.PI * 2);
+        const spot = ctx.createRadialGradient(W / 2, 64, 8, W / 2, cy + ch * 0.45, 260);
+        spot.addColorStop(0, `rgba(255,248,220,${spotPulse})`);
+        spot.addColorStop(0.55, `rgba(255,236,190,${spotPulse * 0.35})`);
+        spot.addColorStop(1, "rgba(255,220,160,0)");
         ctx.fillStyle = spot;
         ctx.beginPath();
-        ctx.moveTo(W / 2 - 30, 60);
-        ctx.lineTo(W / 2 + 30, 60);
-        ctx.lineTo(cx + cw + 40, cy + ch);
-        ctx.lineTo(cx - 40, cy + ch);
+        ctx.moveTo(W / 2 - 36, 58);
+        ctx.lineTo(W / 2 + 36, 58);
+        ctx.lineTo(cx + cw + 50, cy + ch + 20);
+        ctx.lineTo(cx - 50, cy + ch + 20);
         ctx.closePath();
         ctx.fill();
 
-        // Gold frame
-        ctx.fillStyle = "#5c4030";
-        roundRectPath(ctx, cx - 16, cy - 16, cw + 32, ch + 32, 8);
+        // Fixture
+        ctx.fillStyle = "#c5a059";
+        roundRectPath(ctx, W / 2 - 22, 52, 44, 12, 4);
         ctx.fill();
-        ctx.strokeStyle = "#e8c872";
-        ctx.lineWidth = 4;
-        roundRectPath(ctx, cx - 16, cy - 16, cw + 32, ch + 32, 8);
+
+        // Deep ornate gold frame (thicker = hero)
+        drawOrnateFrame(ctx, cx, cy, cw, ch, { thick: 16, glow: 0.7 });
+        // Extra outer glow ring
+        ctx.strokeStyle = hexToRgba(0xffe08a, 0.35 + 0.15 * Math.sin(t * Math.PI * 2));
+        ctx.lineWidth = 3;
+        roundRectPath(ctx, cx - 20, cy - 20, cw + 40, ch + 40, 6);
         ctx.stroke();
 
-        const img = await loadArt(mod, opts.championImageUrl);
-        if (img) drawContain(ctx, img, cx, cy, cw, ch);
+        const champ = await loadArt(mod, opts.championImageUrl);
+        if (champ) drawContain(ctx, champ, cx, cy, cw, ch, "#14110e");
         else {
-          ctx.fillStyle = "#1a1510";
+          ctx.fillStyle = "#14110e";
           ctx.fillRect(cx, cy, cw, ch);
         }
 
-        // Pedestal plaque
-        const ppY = cy + ch + 22;
-        roundRectPath(ctx, cx - 10, ppY, cw + 20, 58, 8);
-        ctx.fillStyle = "rgba(12,10,8,0.9)";
+        // Glass plaque under hero
+        const ppY = cy + ch + 18;
+        roundRectPath(ctx, cx - 8, ppY, cw + 16, 56, 12);
+        ctx.fillStyle = "rgba(255,255,255,0.88)";
         ctx.fill();
-        ctx.strokeStyle = "rgba(232,200,114,0.7)";
+        ctx.strokeStyle = "rgba(197,160,89,0.7)";
         ctx.lineWidth = 1.5;
-        roundRectPath(ctx, cx - 10, ppY, cw + 20, 58, 8);
+        roundRectPath(ctx, cx - 8, ppY, cw + 16, 56, 12);
         ctx.stroke();
 
-        ctx.fillStyle = "#ffe08a";
-        ctx.font = `700 16px ${TITLE_FONT_FAMILY}, sans-serif`;
+        ctx.fillStyle = "#1a1a1e";
+        ctx.font = `700 17px ${TITLE_FONT_FAMILY}, sans-serif`;
         ctx.textAlign = "center";
-        const title = opts.championTitle.length > 40
-          ? `${opts.championTitle.slice(0, 38)}…`
+        const title = opts.championTitle.length > 36
+          ? `${opts.championTitle.slice(0, 34)}…`
           : opts.championTitle;
         ctx.fillText(title, W / 2, ppY + 22);
-        ctx.fillStyle = "#d4c4a8";
-        ctx.font = "13px sans-serif";
+        ctx.fillStyle = "#6b6560";
+        ctx.font = "600 12px sans-serif";
         ctx.fillText(
           `${opts.championArtist}  ·  ▲ ${opts.votes}  ·  CENTER STAGE`,
           W / 2,
-          ppY + 44,
+          ppY + 42,
         );
+
         ctx.restore();
+
+        // Footer credit strip
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
+        ctx.font = "500 9px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(
+          "World wings · public-domain masterpieces  ·  statues · classical marble  ·  your piece owns the lights",
+          W / 2,
+          H - 10,
+        );
       },
     });
     return result?.buffer ?? null;
@@ -220,14 +384,7 @@ export async function renderMuseumGif(opts: MuseumRenderOpts): Promise<Buffer | 
   }
 }
 
-/** Static PNG fallback for museum. */
 export async function renderMuseumPng(opts: MuseumRenderOpts): Promise<Buffer | null> {
-  try {
-    const mod = await getCanvas();
-    if (!mod) return null;
-    const gif = await renderMuseumGif(opts);
-    return gif;
-  } catch {
-    return null;
-  }
+  // Single-frame still via GIF path (first encode) — good enough for attach fallback
+  return renderMuseumGif(opts);
 }

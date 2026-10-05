@@ -63,6 +63,14 @@ Many halls on the floor; **one** weekly Hall of Fame champion:
 
 After crowning, **Remove vote** locks for that week.
 
+## Museum look
+
+The Hall of Fame canvas stamps a real gallery hall photo, hangs shuffled
+**public-domain masterpieces** in gold frames by country (Russia · UK · USA ·
+Spain · China · Japan · France · Brazil), places classical marble statues on
+pedestals, and puts the community champion **center stage** under a spotlight —
+letterboxed, never cropped. Assets + credits: `assets/artshow/ATTRIBUTION.md`.
+
 ## Emblems
 
 See badge catalogue (`artshow` trigger): Exhibitor → … → Hall Champion → Museum Legend.  

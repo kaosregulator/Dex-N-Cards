@@ -112,23 +112,32 @@ function drawSpotlight(
   ctx.fill();
 }
 
-function drawFrame(ctx: Ctx, x: number, y: number, w: number, h: number, accent: string): void {
-  // Outer ornate frame
-  ctx.fillStyle = "#5c4030";
+function drawFrame(ctx: Ctx, x: number, y: number, w: number, h: number, _accent: string): void {
+  // Soft drop shadow (Apple-clean depth)
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  roundRectPath(ctx, x - 12, y - 10, w + 28, h + 30, 8);
+  ctx.fill();
+
+  // Dark wood + antique gold lip
+  ctx.fillStyle = "#3a2a18";
   roundRectPath(ctx, x - 14, y - 14, w + 28, h + 28, 6);
   ctx.fill();
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 3;
-  roundRectPath(ctx, x - 14, y - 14, w + 28, h + 28, 6);
+
+  const gold = ctx.createLinearGradient(x - 14, y, x + w + 14, y + h);
+  gold.addColorStop(0, "#e8d48b");
+  gold.addColorStop(0.4, "#c5a059");
+  gold.addColorStop(1, "#f0e2b0");
+  ctx.strokeStyle = gold as unknown as string;
+  ctx.lineWidth = 4;
+  roundRectPath(ctx, x - 12, y - 12, w + 26, h + 26, 5);
   ctx.stroke();
 
-  ctx.fillStyle = "#2a1f16";
-  roundRectPath(ctx, x - 6, y - 6, w + 12, h + 12, 3);
+  ctx.fillStyle = "#1c1612";
+  roundRectPath(ctx, x - 5, y - 5, w + 12, h + 12, 3);
   ctx.fill();
 
-  // Inner gold lip
-  ctx.strokeStyle = "#d4af37";
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(255,230,160,0.55)";
+  ctx.lineWidth = 1.5;
   ctx.strokeRect(x - 1, y - 1, w + 2, h + 2);
 }
 

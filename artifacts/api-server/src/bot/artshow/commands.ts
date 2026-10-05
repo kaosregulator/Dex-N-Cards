@@ -580,7 +580,8 @@ async function replyMuseum(
         ? `**Center stage (the one winner):** ${champ.title} — <@${champ.authorId}>`
         : `**Interim lead** (staff can \`/artshow crown\`): ${champ.title} — <@${champ.authorId}>`,
       "",
-      "Browse other halls on the floor — only **one** piece owns the museum lights each week.",
+      "World wings shuffle famous **public-domain** masterpieces; marble statues flank the floor.",
+      "Only **one** community piece owns center stage each week.",
       past.length
         ? `\n**Past crowns:** ${past.slice(0, 5).map(p => `${p.title} (${p.weekKey})`).join(" · ")}`
         : "",
