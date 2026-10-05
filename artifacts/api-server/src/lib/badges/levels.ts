@@ -81,6 +81,7 @@ export function normalizeEarnedList(list: unknown): BadgeEarned[] {
 export const XP_BY_TRIGGER: Record<BadgeTrigger, number> = {
   manual: 40,
   trivia: 55,
+  artshow: 45,
   messages: 4,
   attachments: 8,
   reactions: 12,

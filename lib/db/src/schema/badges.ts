@@ -15,7 +15,8 @@ export type BadgeTrigger =
   | "reactions"
   | "streak"
   | "collection"
-  | "trivia";
+  | "trivia"
+  | "artshow";
 
 export type BadgeRule = {
   id: string;
@@ -28,6 +29,11 @@ export type BadgeRule = {
   channel?: string | null;
   /** For trivia trigger: flash | trivia | qotd | prompt | any */
   triviaMode?: string | null;
+  /**
+   * For artshow trigger:
+   * submit | votes_cast | votes_received | crown | any
+   */
+  artshowMode?: string | null;
 };
 
 export type BadgeEarned = {

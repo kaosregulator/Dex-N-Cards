@@ -27,3 +27,4 @@ export * from "./trivia";
 export * from "./memberdate";
 export * from "./lottery";
 export * from "./badges";
+export * from "./artshow";

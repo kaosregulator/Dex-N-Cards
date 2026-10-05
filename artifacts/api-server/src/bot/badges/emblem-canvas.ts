@@ -37,9 +37,9 @@ function sigilFor(name: string, emoji: string): SigilKind {
   if (/flash|bolt|⚡|zap|spark/.test(key)) return "bolt";
   if (/qotd|sun|☀️|day/.test(key)) return "sun";
   if (/friend|helper|🤝|orbit|chat|💬/.test(key)) return "orbit";
-  if (/fire|streak|🔥|flame|creative|🎨/.test(key)) return "flame";
-  if (/star|⭐|leader|👑/.test(key)) return "crest";
-  if (/trivia|wise|owl|mind|brain|🍪|cookie/.test(key)) return "mind";
+  if (/fire|streak|🔥|flame|creative|🎨|artist|gallery|exhibitor|🖼️|🏛️/.test(key)) return "flame";
+  if (/star|⭐|leader|👑|champion|legend|museum|🏆|💫/.test(key)) return "crest";
+  if (/trivia|wise|owl|mind|brain|🍪|cookie|patron|critic|🎟️|🔎/.test(key)) return "mind";
   return "crest";
 }
 

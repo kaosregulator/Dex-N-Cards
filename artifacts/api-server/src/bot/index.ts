@@ -427,6 +427,22 @@ export async function startBot() {
         await handleMemberDateComponent(interaction);
         return;
       }
+      // ── Community Art Show (artshow:*) ─────────────────────────────────────
+      if (interaction.isButton() && interaction.customId.startsWith("artshow:")) {
+        const { handleArtShowButton } = await import("./artshow/commands.js");
+        await handleArtShowButton(interaction);
+        return;
+      }
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith("artshow:")) {
+        const { handleArtShowSelect } = await import("./artshow/commands.js");
+        await handleArtShowSelect(interaction);
+        return;
+      }
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("artshow:")) {
+        const { handleArtShowModal } = await import("./artshow/commands.js");
+        await handleArtShowModal(interaction);
+        return;
+      }
       // ── UB Lottery store + admin (lottery: / lottoadmin:) ───────────────────
       if (
         (interaction.isButton() || interaction.isStringSelectMenu()) &&
@@ -1189,6 +1205,9 @@ export async function startBot() {
       } else if (cmd === "badge") {
         const { handleBadgeCommand } = await import("./badges/commands.js");
         await handleBadgeCommand(interaction);
+      } else if (cmd === "artshow") {
+        const { handleArtShowCommand } = await import("./artshow/commands.js");
+        await handleArtShowCommand(interaction);
       } else if (cmd === "lottery") {
         const { handleLotteryCommand } = await import("./unbelievaboat/lottery/store.js");
         await handleLotteryCommand(interaction);
@@ -1246,7 +1265,7 @@ export async function startBot() {
     "quote",
     "collection_hub", "hq", "hqadmin", "hqbuild",
     "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu", "trivia", "memberdate",
-    "badges", "badge",
+    "badges", "badge", "artshow",
     "lottery", "lotteryadmin",
     "casino", "vaultvalue", "cardadmin", "secret",
     "daily_ub", "collect_ub", "bal_ub", "deposit_ub", "withdraw_ub",
@@ -1278,6 +1297,14 @@ export async function startBot() {
       if (await tryConsumeIconCaptureMessage(msg)) return;
     } catch (err) {
       logger.debug({ err }, "UB icon capture hook error");
+    }
+
+    // Art Show: finish modal submit when the artist attaches their photo.
+    try {
+      const { handleArtShowMessage } = await import("./artshow/commands.js");
+      if (await handleArtShowMessage(msg)) return;
+    } catch (err) {
+      logger.debug({ err }, "Art Show capture hook error");
     }
 
     // AFK Secretary: clear the author's "on return" AFK (past grace) and post

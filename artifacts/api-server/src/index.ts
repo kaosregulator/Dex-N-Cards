@@ -1279,6 +1279,92 @@ async function runBootMigrations() {
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS member_badges_guild_user_uidx ON member_badges (guild_id, user_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS member_badges_guild_idx ON member_badges (guild_id)`);
 
+  // ── Community Art Show — gallery, votes, wallets, hall of fame ─────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS artshow_settings (
+      id                      SERIAL PRIMARY KEY,
+      guild_id                TEXT NOT NULL UNIQUE,
+      enabled                 BOOLEAN NOT NULL DEFAULT TRUE,
+      channel_id              TEXT,
+      station_message_id      TEXT,
+      sticky_message_id       TEXT,
+      staff_role_id           TEXT,
+      votes_per_day           INTEGER NOT NULL DEFAULT 5,
+      bonus_votes_on_submit   INTEGER NOT NULL DEFAULT 2,
+      vote_refresh_hours      INTEGER NOT NULL DEFAULT 6,
+      bump_cost_votes         INTEGER NOT NULL DEFAULT 3,
+      crown_threshold         INTEGER NOT NULL DEFAULT 25,
+      created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS sticky_message_id TEXT`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS artshow_pieces (
+      id                      SERIAL PRIMARY KEY,
+      guild_id                TEXT NOT NULL,
+      user_id                 TEXT NOT NULL,
+      title                   TEXT NOT NULL,
+      description             TEXT NOT NULL DEFAULT '',
+      image_url               TEXT NOT NULL,
+      orientation             TEXT NOT NULL DEFAULT 'landscape',
+      channel_id              TEXT NOT NULL,
+      message_id              TEXT,
+      votes                   INTEGER NOT NULL DEFAULT 0,
+      week_key                TEXT NOT NULL,
+      bumped_at               TIMESTAMP,
+      featured_until          TIMESTAMP,
+      created_at              TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_pieces_guild_idx ON artshow_pieces (guild_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_pieces_guild_week_idx ON artshow_pieces (guild_id, week_key)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_pieces_author_idx ON artshow_pieces (guild_id, user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_pieces_votes_idx ON artshow_pieces (guild_id, votes)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS artshow_votes (
+      id                      SERIAL PRIMARY KEY,
+      guild_id                TEXT NOT NULL,
+      piece_id                INTEGER NOT NULL,
+      voter_id                TEXT NOT NULL,
+      created_at              TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS artshow_votes_piece_voter_uidx ON artshow_votes (piece_id, voter_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_votes_guild_voter_idx ON artshow_votes (guild_id, voter_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_votes_piece_idx ON artshow_votes (piece_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS artshow_wallets (
+      id                      SERIAL PRIMARY KEY,
+      guild_id                TEXT NOT NULL,
+      user_id                 TEXT NOT NULL,
+      day_key                 TEXT NOT NULL,
+      remaining               INTEGER NOT NULL DEFAULT 5,
+      earned_bonus            INTEGER NOT NULL DEFAULT 0,
+      free_bumps              INTEGER NOT NULL DEFAULT 0,
+      last_refresh_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at              TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS artshow_wallets_guild_user_uidx ON artshow_wallets (guild_id, user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_wallets_guild_idx ON artshow_wallets (guild_id)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS artshow_fame (
+      id                      SERIAL PRIMARY KEY,
+      guild_id                TEXT NOT NULL,
+      piece_id                INTEGER NOT NULL,
+      author_id               TEXT NOT NULL,
+      week_key                TEXT NOT NULL,
+      votes_at_crown          INTEGER NOT NULL DEFAULT 0,
+      title                   TEXT NOT NULL,
+      image_url               TEXT NOT NULL,
+      crowned_at              TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS artshow_fame_guild_week_uidx ON artshow_fame (guild_id, week_key)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS artshow_fame_guild_idx ON artshow_fame (guild_id)`);
+
   // ── /memberdate role-grant tracking — additive IF NOT EXISTS ───────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS member_role_grants (

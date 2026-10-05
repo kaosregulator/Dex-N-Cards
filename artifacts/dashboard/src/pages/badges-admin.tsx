@@ -20,6 +20,7 @@ type BadgeRule = {
   threshold: number;
   channel?: string | null;
   triviaMode?: string | null;
+  artshowMode?: string | null;
 };
 
 type BadgeStatus = {
@@ -44,6 +45,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   streak: "Consecutive active days",
   collection: "Earn every other badge",
   trivia: "Trivia win",
+  artshow: "Art Show activity",
 };
 
 const EMPTY_RULE: BadgeRule = {
@@ -55,6 +57,7 @@ const EMPTY_RULE: BadgeRule = {
   threshold: 0,
   channel: null,
   triviaMode: null,
+  artshowMode: null,
 };
 
 export default function BadgesAdmin() {
@@ -292,6 +295,22 @@ export default function BadgesAdmin() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {["any", "trivia", "qotd", "flash", "prompt", "brainiac"].map(m => (
+                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {rule.trigger === "artshow" && (
+                  <div className="space-y-1">
+                    <Label>Art Show mode</Label>
+                    <Select
+                      value={rule.artshowMode ?? "any"}
+                      onValueChange={v => updateRule(index, { artshowMode: v === "any" ? "any" : v })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {["any", "submit", "votes_cast", "votes_received", "crown"].map(m => (
                           <SelectItem key={m} value={m}>{m}</SelectItem>
                         ))}
                       </SelectContent>

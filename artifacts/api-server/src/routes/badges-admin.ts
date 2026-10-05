@@ -32,7 +32,7 @@ function parse<T extends z.ZodTypeAny>(schema: T, value: unknown, res: Response)
 }
 
 const TRIGGER_ENUM = [
-  "manual", "messages", "attachments", "reactions", "streak", "collection", "trivia",
+  "manual", "messages", "attachments", "reactions", "streak", "collection", "trivia", "artshow",
 ] as const;
 
 const badgeRuleSchema = z.object({
@@ -44,6 +44,7 @@ const badgeRuleSchema = z.object({
   threshold: z.number().int().min(0).max(1_000_000),
   channel: z.string().nullable().optional(),
   triviaMode: z.string().nullable().optional(),
+  artshowMode: z.string().nullable().optional(),
 });
 
 router.get("/badges/status", async (_req, res) => {
