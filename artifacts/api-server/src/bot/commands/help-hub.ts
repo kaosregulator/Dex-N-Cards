@@ -216,10 +216,10 @@ const PAGES: Record<HelpSection, PageFn> = {
         { name: "🎁 Gifting", value:
           "`/trade` → **Gift shards** — send shards to a friend." },
         { name: "💵 Casino (UnbelievaBoat)", value:
-          "`/casino` — floor: wallet · slots · blackjack (shuffle → deal → Hit/Stand/Double) · roulette · UNO · collect · store · top\n" +
+          "`/casino` — button floor: wallet · slots · blackjack · roulette · UNO · collect · store · top\n" +
           "Shortcuts: `/daily_ub` `/blackjack_ub` `/slots_ub` `/collect_ub` … (all `*_ub`)\n" +
-          "Prefix (default `.`): `.bj 50` · `.slots 100` · `.dep` / `.with` · `.col` · `.daily` · `.rr @user 50` · `.help`\n" +
-          "`/vaultvalue` — Vault Values · `/unbelievaboat` — (admin) economy · `/tatsu` — (staff) Tatsu tools" },
+          "Prefix (default `.`): `.bj 50` · `.slots` · `.dep`/`.with` · `.col` · `.work`/`.crime` · `.rr @user 50` · `.rr ai @user 50` · `.help`\n" +
+          "`/unbelievaboat` — (admin) roles/icons/collect · `/vaultvalue` · `/tatsu`" },
       );
   },
 

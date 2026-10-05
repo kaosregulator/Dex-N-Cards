@@ -133,8 +133,9 @@ async function playBjBeat(
   });
 
   const waitMs = Math.max(700, Math.floor((opts.gif?.durationMs ?? 1400) * (opts.waitScale ?? 0.88)));
-  // Encode the still in parallel with the playthrough wait
-  const pngPromise = opts.stillPng !== undefined
+  // Encode the still in parallel with the playthrough wait.
+  // Only reuse a pre-rendered buffer when it's non-null — null means encode failed.
+  const pngPromise = opts.stillPng
     ? Promise.resolve(opts.stillPng)
     : renderBlackjackTablePng(opts.stillOpts);
   const [, png] = await Promise.all([sleep(waitMs), pngPromise]);
@@ -309,15 +310,18 @@ async function finishBlackjack(
   const key = bjKey(session.guildId, session.userId);
   bjSessions.delete(key);
 
-  // Dealer draws to 17
-  while (handTotal(session.dealer).total < 17) {
-    session.dealer.push(draw(session.deck));
+  const p = handTotal(session.player).total;
+  // Bust — don't burn time drawing the dealer; hole card still reveals.
+  const busted = p > 21;
+  if (!busted) {
+    while (handTotal(session.dealer).total < 17) {
+      session.dealer.push(draw(session.deck));
+    }
   }
 
-  const p = handTotal(session.player).total;
   const d = handTotal(session.dealer).total;
   let outcome: "win" | "lose" | "push" = "lose";
-  if (p > 21) outcome = "lose";
+  if (busted) outcome = "lose";
   else if (d > 21 || p > d) outcome = "win";
   else if (p === d) outcome = "push";
 
@@ -331,8 +335,8 @@ async function finishBlackjack(
     hideDealer: false,
     revealHole: true,
     animatePlayerFrom: session.player.length,
-    animateDealerFrom: 2,
-    banner: outcome.toUpperCase(),
+    animateDealerFrom: busted ? session.dealer.length : 2,
+    banner: busted ? "BUST" : outcome.toUpperCase(),
   };
   const embed = brandEmbed(
     "Blackjack — 21",
@@ -437,17 +441,19 @@ export async function handleCashGamesHub(interaction: ChatInputCommandInteractio
 export async function handleBlackjack(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.guildId) { await interaction.reply({ content: "Server only.", ...EPHEMERAL }); return; }
   await interaction.deferReply({ ephemeral: true });
+  let stakeToRefund: number | null = null;
+  const key = bjKey(interaction.guildId, interaction.user.id);
   try {
     await assertGamesOn(interaction.guildId);
     await assertGameCooldown(interaction.guildId, interaction.user.id);
     const bet = interaction.options.getInteger("bet", true);
-    const key = bjKey(interaction.guildId, interaction.user.id);
     if (bjSessions.has(key)) {
       await interaction.editReply("You already have a hand open — finish Hit/Stand first.");
       return;
     }
 
     const spent = await spendFunds(interaction.guildId, interaction.user.id, bet, "Blackjack bet");
+    stakeToRefund = bet;
     await markGameCooldown(interaction.guildId, interaction.user.id);
 
     const deck = freshDeck();
@@ -476,8 +482,8 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
 
     if (!floor) {
       await interaction.editReply("Couldn't open the blackjack table — try again.");
-      // Refund stake if we never opened a table
       await earnCash(interaction.guildId, interaction.user.id, bet, "Blackjack refund (no table)").catch(() => null);
+      stakeToRefund = null;
       return;
     }
 
@@ -493,24 +499,25 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
     let nextComponents: ActionRowBuilder<ButtonBuilder>[] = [];
     let payoutBal = spent.balance;
 
+    // Natural payout is deferred until the floor settle succeeds (avoids stack on retry).
+    let naturalOutcome: "win" | "lose" | "push" | null = null;
+    let naturalPayout = 0;
+
     if (natural) {
       const p = handTotal(player).total;
       const d = handTotal(dealer).total;
-      let outcome: "win" | "lose" | "push" = "lose";
-      if (isNaturalBlackjack(player) && isNaturalBlackjack(dealer)) outcome = "push";
-      else if (isNaturalBlackjack(player)) outcome = "win";
-      const payout = outcome === "win" ? bet * 2 : outcome === "push" ? bet : 0;
-      if (payout > 0) {
-        payoutBal = await earnCash(interaction.guildId, interaction.user.id, payout, `Blackjack ${outcome}`);
-      }
+      if (isNaturalBlackjack(player) && isNaturalBlackjack(dealer)) naturalOutcome = "push";
+      else if (isNaturalBlackjack(player)) naturalOutcome = "win";
+      else naturalOutcome = "lose";
+      naturalPayout = naturalOutcome === "win" ? bet * 2 : naturalOutcome === "push" ? bet : 0;
       nextOpts = { player, dealer, hideDealer: false, revealHole: true, banner: "BLACKJACK" };
       nextEmbed = brandEmbed("Blackjack — 21", [
         `${interaction.user}`,
         `You ${formatHand(player)} (**${p}**)`,
         `Dealer ${formatHand(dealer)} (**${d}**)`,
-        outcome === "win"
-          ? `🎉 Blackjack! **+${fmtCash(payout)}** ${payoutBal.symbol}`
-          : outcome === "push"
+        naturalOutcome === "win"
+          ? `🎉 Blackjack! **+${fmtCash(naturalPayout)}** ${payoutBal.symbol}`
+          : naturalOutcome === "push"
             ? `🤝 Double blackjack — push`
             : `💀 Dealer blackjack — lost **${fmtCash(bet)}**`,
         formatSpendNote(spent.fromCash, spent.fromBank, payoutBal.symbol),
@@ -519,13 +526,6 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
       nextGifName = "bj-natural.gif";
       nextStillName = "bj-natural.png";
     } else {
-      const session: BjSession = {
-        guildId: interaction.guildId, userId: interaction.user.id, bet,
-        fromCash: spent.fromCash, fromBank: spent.fromBank,
-        deck, player, dealer, doubled: false, expires: Date.now() + 3 * 60_000,
-      };
-      bjSessions.set(key, session);
-
       const p = handTotal(player);
       nextOpts = {
         player, dealer, hideDealer: true,
@@ -577,6 +577,15 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
       renderBlackjackTablePng(nextOpts),
     ]);
 
+    // Register the interactive session only once deal assets are ready.
+    if (!natural) {
+      bjSessions.set(key, {
+        guildId: interaction.guildId, userId: interaction.user.id, bet,
+        fromCash: spent.fromCash, fromBank: spent.fromBank,
+        deck, player, dealer, doubled: false, expires: Date.now() + 3 * 60_000,
+      });
+    }
+
     // 2) Deal / natural reveal — one poker flip, then freeze + buttons
     await playBjBeat(floor, {
       content: nextContent,
@@ -588,7 +597,20 @@ export async function handleBlackjack(interaction: ChatInputCommandInteraction):
       stillPng: dealPng,
       components: nextComponents,
     });
+    // Hand is live (or natural resolved) — stake is no longer refundable.
+    stakeToRefund = null;
+    if (natural && naturalPayout > 0 && naturalOutcome) {
+      await earnCash(
+        interaction.guildId, interaction.user.id, naturalPayout, `Blackjack ${naturalOutcome}`,
+      );
+    }
   } catch (err) {
+    bjSessions.delete(key);
+    if (stakeToRefund != null && interaction.guildId) {
+      await earnCash(
+        interaction.guildId, interaction.user.id, stakeToRefund, "Blackjack refund (failed hand)",
+      ).catch(() => null);
+    }
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);
   }
 }
@@ -706,19 +728,17 @@ export async function handleCashCrime(interaction: ChatInputCommandInteraction):
     const { getGuildPayouts, rollChance, rollCrimeFine, rollRange } = await import("./payouts.js");
     const pay = await getGuildPayouts(interaction.guildId);
     const fail = rollChance(pay.crimeFailChancePct);
-    await markIncomeCooldown(interaction.guildId, interaction.user.id, "crime");
     const avatarUrl = interaction.user.displayAvatarURL({ size: 256, extension: "png" });
+    const displayName = interaction.member && "displayName" in interaction.member
+      ? String(interaction.member.displayName)
+      : interaction.user.username;
     if (fail) {
       const bal0 = await getCashBalance(interaction.guildId, interaction.user.id);
       const fine = rollCrimeFine((bal0.cash ?? 0) + (bal0.bank ?? 0), pay);
       const spent = await spendFunds(interaction.guildId, interaction.user.id, Math.min(fine, bal0.cash + bal0.bank), "Crime fine");
-      const gif = await renderCrimeGif({
-        success: false,
-        avatarUrl,
-        displayName: interaction.member && "displayName" in interaction.member
-          ? String(interaction.member.displayName)
-          : interaction.user.username,
-      });
+      // Mark CD only after the money move succeeds.
+      await markIncomeCooldown(interaction.guildId, interaction.user.id, "crime");
+      const gif = await renderCrimeGif({ success: false, avatarUrl, displayName });
       const { files, imageName } = await attachGif(gif, "crime.gif");
       const embed = brandEmbed("Crime — Busted", [
         `${interaction.user} got pinched and dragged to jail.`,
@@ -731,14 +751,8 @@ export async function handleCashCrime(interaction: ChatInputCommandInteraction):
     }
     const payout = rollRange(pay.crimeWinMin, pay.crimeWinMax);
     const bal = await earnCash(interaction.guildId, interaction.user.id, payout, "Crime payout");
-    const gif = await renderCrimeGif({
-      success: true,
-      avatarUrl,
-      displayName: interaction.member && "displayName" in interaction.member
-        ? String(interaction.member.displayName)
-        : interaction.user.username,
-      payout,
-    });
+    await markIncomeCooldown(interaction.guildId, interaction.user.id, "crime");
+    const gif = await renderCrimeGif({ success: true, avatarUrl, displayName, payout });
     const { files, imageName } = await attachGif(gif, "crime.gif");
     const embed = brandEmbed("Crime — Clean Getaway", [
       `${interaction.user} pulled it off · **+${fmtCash(payout)}** ${bal.symbol}`,
@@ -785,7 +799,6 @@ export async function handleRob(interaction: ChatInputCommandInteraction): Promi
     const { getGuildPayouts, rollChance, rollRobSteal, rollRange } = await import("./payouts.js");
     const pay = await getGuildPayouts(interaction.guildId);
     const success = rollChance(pay.robSuccessChancePct);
-    await markIncomeCooldown(interaction.guildId, interaction.user.id, "rob");
     const { logGameEvent } = await import("../logging/channel-log.js");
     const thiefUrl = interaction.user.displayAvatarURL({ size: 256, extension: "png" });
     const victimUrl = target.displayAvatarURL({ size: 256, extension: "png" });
@@ -793,6 +806,7 @@ export async function handleRob(interaction: ChatInputCommandInteraction): Promi
       const amount = rollRobSteal(their.cash ?? 0, pay);
       await spendFunds(interaction.guildId, target.id, amount, `Robbed by ${interaction.user.id}`);
       const bal = await earnCash(interaction.guildId, interaction.user.id, amount, `Robbed ${target.id}`);
+      await markIncomeCooldown(interaction.guildId, interaction.user.id, "rob");
       const gif = await renderRobGif({
         success: true,
         thiefAvatarUrl: thiefUrl,
@@ -813,6 +827,7 @@ export async function handleRob(interaction: ChatInputCommandInteraction): Promi
     } else {
       const fine = rollRange(pay.robFailFineMin, pay.robFailFineMax);
       const spent = await spendFunds(interaction.guildId, interaction.user.id, fine, `Failed rob`);
+      await markIncomeCooldown(interaction.guildId, interaction.user.id, "rob");
       const gif = await renderRobGif({
         success: false,
         thiefAvatarUrl: thiefUrl,

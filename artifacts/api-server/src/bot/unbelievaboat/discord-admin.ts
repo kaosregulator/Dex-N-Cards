@@ -391,10 +391,12 @@ async function applyCapturedIconToLink(
   const meta: Record<string, unknown> = { ...(row.meta as Record<string, unknown>) };
   if (icon.imageUrl) {
     meta.imageUrl = icon.imageUrl;
+    meta.animated = Boolean(icon.animated);
     delete meta.iconGif;
   } else {
     delete meta.imageUrl;
     delete meta.iconGif;
+    delete meta.animated;
   }
   // Icon never mutates the role display name.
   await updateRoleLink(guildId, linkId, { emoji: icon.emoji.slice(0, 64), meta });
@@ -1989,6 +1991,7 @@ export async function handleUbAdminComponent(
     const meta: Record<string, unknown> = {
       ...(row.meta as Record<string, unknown>),
       imageUrl,
+      animated: Boolean(guildEmoji.animated),
     };
     delete meta.iconGif;
     await updateRoleLink(guildId, linkId, { emoji, meta });

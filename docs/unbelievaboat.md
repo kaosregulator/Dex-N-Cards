@@ -1,18 +1,18 @@
 # UnbelievaBoat addon
 
-Addon for DN Cards — does **not** replace shards, packs, or the existing bot. Public results post **as UnbelievaBoat** (channel webhook).
+Addon for DN Cards — does **not** replace shards, packs, or the existing bot. Public results post **as UnbelievaBoat** (channel webhook). Role pills on the floor use **no role pings** (`allowedMentions` strips roles).
 
 ## Money
 
 Bets and store purchases spend **cash first, then bank** via the UnbelievaBoat API. Wins credit **cash**.
 
-Casino vault:
+Casino vault (slash shortcuts — `/casino` itself is a **button hub**, not nested subcommands):
 
 | Command | Effect |
 | --- | --- |
-| `/casino deposit amount:` | Cash → bank |
-| `/casino withdraw amount:` | Bank → cash |
-| `/casino balance` | Wallet view |
+| `/deposit_ub` · `.dep` / `.dep all` | Cash → bank |
+| `/withdraw_ub` · `.with` / `.wd` | Bank → cash |
+| `/bal_ub` · `.bal` | Wallet view |
 
 ## Cooldowns + payouts (Casino station)
 
@@ -21,7 +21,7 @@ UnbelievaBoat’s Discord `set-cooldown` / `set-game-cooldown` settings are **no
 | Command | Default CD | Default payout |
 | --- | --- | --- |
 | Cash Check-In (`/daily_ub`) | 20h | 100–250 |
-| Role collect | 24h | perk `income_amount` |
+| Role collect | 24h (per-role override) | perk `income_amount` |
 | Work | 4h | 20–250 |
 | Crime | 4h | win 250–700 · 55% fail · fine ≥10 (1–2% wallet) |
 | Beg | 4h | 55% pity · 15–104 |
@@ -34,18 +34,20 @@ Pick a command in the dropdown → edit cooldown + payout fields. Cooldown accep
 ### Prefix games (per guild)
 
 Default games prefix is `.` (separate from the admin/card prefix `!`).
-Short aliases match UnbelievaBoat habits:
+Short aliases match UnbelievaBoat habits (also: `.help` for the in-chat cheat-sheet):
 
 ```text
 .bj 50                 # also .blackjack / .21
-.slots 100
+.slots 100 · .uno 50 · .roulette 50 red
 .dep / .dep all        # deposit cash → bank
 .with / .wd            # withdraw
-.col / .daily / .bal
+.col / .daily / .bal / .paycheck
+.work · .crime · .beg
 .hl 50 · .rb 50 red
-.rr @user 50           # russian roulette
+.rr @user 50           # challenge
+.rr ai @user 50        # avatar / AI duel (bots OK)
 .rob @user
-.help                  # prefix cheat-sheet
+.top · .store
 .setgamesprefix .      # via admin prefix: !setgamesprefix .
 !setprefix !           # admin/card commands
 ```
@@ -54,38 +56,40 @@ Change either prefix per guild; they must not be identical.
 
 ## Discord dashboard — `/unbelievaboat`
 
-Leaderboard · adjust/set cash · toggles · add perk (with **collect income**) · **Casino station** (cooldowns + payouts) · **log channel** · **rob immunity roles** · pets tools.
+Leaderboard · adjust/set cash · toggles · **Roles & economy** (per-role collect CD / income, **Pick in chat** Discord emoji/GIF icons, Sync UB / Seed collect) · **Casino station** (cooldowns + payouts) · **log channel** · **rob immunity roles** · pets tools.
+
+Store icons: unicode, guild emoji, Discord attachment, or Tenor/Giphy paste — animated images play on the store board (meta `animated` + host sniff).
 
 ## Player hub — `/casino`
 
-All player economy/casino actions live under **`/casino`** (full floor dashboard).
-**Also:** 18 short aliases ending in **`_ub`** (`/daily_ub`, `/slots_ub`, …) — Discord
+All player economy/casino actions live under **`/casino`** (full floor **button** dashboard).
+**Also:** 18 short aliases ending in **`_ub`** (`/daily_ub`, `/slots_ub`, `/blackjack_ub`, `/collect_ub`, …) — Discord
 forces lowercase, so the suffix avoids colliding with DN `/daily` (shards).
 
-| Subcommand | Notes |
+| Floor action | Notes |
 | --- | --- |
-| `daily` | Animated Cash Check-In — coins reverse-collect into wallet |
-| `collect` | Role income from owned perk roles (animated) |
-| `deposit` / `withdraw` | Casino vault |
-| `blackjack` | Interactive 21 — shuffle intro → one-shot deal → Hit / Stand / Double (GIF settles to PNG so cards never re-flip) |
-| `higherlower` · `redblack` | Card guesses |
-| `roulette` · `slots` | Table games |
-| `uno` | Mini UNO vs house — buttons, 2× pot |
-| `russian` · `rob` · `beg` | Challenge / stick-up (honors immunity) / PG beg |
-| `work` · `crime` | Income |
-| `store` | Role perk store |
-| `top` | Dex N Cards × UnbelievaBoat animated leaderboard |
-| `games` | Menu |
+| Daily | Animated Cash Check-In — coins reverse-collect into wallet |
+| Collect | Role income from owned perk roles (animated; role pills, no pings) |
+| Deposit / Withdraw | Casino vault |
+| Blackjack | Interactive 21 — shuffle → one-shot deal → Hit / Stand / Double (GIF settles to PNG) |
+| Higher/Lower · Red/Black | Card guesses |
+| Roulette · Slots | Table games |
+| UNO | Mini UNO vs house — buttons, 2× pot |
+| Russian · Rob · Beg | Challenge or AI avatar duel / stick-up (honors immunity) / PG beg |
+| Work · Crime | Income |
+| Store | Role perk store |
+| Top | Dex N Cards × UnbelievaBoat animated leaderboard |
 
 Floor webhooks append `_▶️ Run \`/…_ub\` · all tables: \`/casino\`` so bystanders see the slash.
 
 ## Logs
 
 `/unbelievaboat` → **Log channel** — universal economy/casino logs (avatar, timestamp, action). Categories: economy · games · trades · quiet · admin · bot.
+Log embeds may show role pills but **do not ping** roles.
 
 ## Rob immunity
 
-`/unbelievaboat` → **Rob immunity** — pick Discord roles that `/casino rob` cannot target.
+`/unbelievaboat` → **Rob immunity** — pick Discord roles that rob cannot target.
 
 ## Schema
 
@@ -98,7 +102,7 @@ on every redeploy when drizzle push is skipped — no manual push needed. See `d
 ## Slash command budget
 
 `/casino` hub + 18 `*_ub` shortcuts ≈ **78** chat-input (under Discord’s 100). Prefer new
-games as `/casino` subcommands (max 25 per command) instead of more top-level names.
+games as `/casino` panel buttons (or reuse an existing `*_ub`) instead of more top-level names.
 Slash registration runs automatically on bot login — redeploy is enough.
 
 ## Secrets

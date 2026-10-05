@@ -119,9 +119,19 @@ export function isAnimatedStoreImage(url: string | null | undefined): boolean {
     if (u.hostname.includes("discord") && u.pathname.includes("/emojis/") && u.pathname.endsWith(".gif")) {
       return true;
     }
+    // Tenor / Giphy share links rarely end in .gif — treat hosts as animated.
+    const host = u.hostname.toLowerCase();
+    if (
+      host.includes("tenor.com")
+      || host.includes("giphy.com")
+      || host.includes("media.tenor")
+      || host.includes("media.giphy")
+    ) {
+      return true;
+    }
     return false;
   } catch {
-    return /\.gif(\?|$)/i.test(url);
+    return /\.gif(\?|$)/i.test(url) || /tenor|giphy/i.test(url);
   }
 }
 

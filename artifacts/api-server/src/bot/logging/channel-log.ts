@@ -84,7 +84,12 @@ export async function postChannelLog(client: Client, opts: ChannelLogOpts): Prom
       : [];
     if (opts.image) embed.setImage(`attachment://${opts.image.name}`);
 
-    await (channel as TextChannel).send({ embeds: [embed], files }).catch(() => {});
+    // Never ping roles from log embeds (collect fields use <@&role> pills).
+    await (channel as TextChannel).send({
+      embeds: [embed],
+      files,
+      allowedMentions: { parse: [], users: opts.user ? [opts.user.id] : [] },
+    }).catch(() => {});
   } catch (err) {
     logger.debug({ err, guildId: opts.guildId }, "channel log post failed (non-fatal)");
   }
