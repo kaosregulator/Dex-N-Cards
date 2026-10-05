@@ -219,7 +219,7 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/casino` — button floor: wallet · slots · blackjack · roulette · UNO · collect · store · top\n" +
           "Shortcuts: `/daily_ub` `/blackjack_ub` `/slots_ub` `/collect_ub` … (all `*_ub`)\n" +
           "Prefix (default `.`): `.bj 50` · `.slots` · `.dep`/`.with` · `.col` · `.work`/`.crime` · `.rr @user 50` · `.rr ai @user 50` · `.help`\n" +
-          "`/unbelievaboat` — (admin) roles/icons/collect · `/vaultvalue` · `/tatsu`" },
+          "`/unbelievaboat` — (admin) **Roles & economy** = per-role collect CDs · Casino station for daily/work/… · `/tatsu`" },
       );
   },
 

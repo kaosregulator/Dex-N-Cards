@@ -151,6 +151,30 @@ function parseNonNeg(raw: string, label: string): number {
   return Math.floor(n);
 }
 
+/** Summarize per-role collect CDs for the casino station (never show as one global CD). */
+async function collectRoleCdSummary(guildId: string, guildCollectSec: number): Promise<string> {
+  const roles = await listRoleLinks(guildId);
+  const incomeRoles = roles.filter(r => (r.incomeAmount ?? 0) !== 0);
+  if (!incomeRoles.length) {
+    return `**Collect** · **per-role** · no income roles yet · open **Roles & economy**`;
+  }
+  const secs = [...new Set(
+    incomeRoles.map(r => roleCollectCooldownSec(r, guildCollectSec)),
+  )].sort((a, b) => a - b);
+  const sample = secs.slice(0, 4).map(formatCdShort).join(" · ");
+  const more = secs.length > 4 ? ` · +${secs.length - 4} more` : "";
+  const customCount = incomeRoles.filter(r => {
+    const m = (r.meta ?? {}) as Record<string, unknown>;
+    return typeof m.collectCooldownSec === "number" || (typeof m.collectCooldownSec === "string" && /^\d+$/.test(m.collectCooldownSec));
+  }).length;
+  return [
+    `**Collect** · **per-role** timers (**${incomeRoles.length}** income roles)`,
+    `Active CDs: **${sample}${more}**`,
+    `Custom on **${customCount}/${incomeRoles.length}** · fallback default **${formatCdShort(guildCollectSec || 86_400)}** (new/unset roles only)`,
+    `_Edit timers on each role → **Roles & economy** (not a single collect cooldown)._`,
+  ].join("\n");
+}
+
 async function buildCasinoStation(guildId: string, notice?: string): Promise<{
   embeds: EmbedBuilder[];
   components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[];
@@ -160,6 +184,7 @@ async function buildCasinoStation(guildId: string, notice?: string): Promise<{
   const s = await getOrCreateUbSettings(guildId);
   const cds = readCooldowns(s);
   const pay = readPayouts(s);
+  const collectLine = await collectRoleCdSummary(guildId, cds.collectSec);
   const embed = new EmbedBuilder()
     .setColor(0xe91e8c)
     .setAuthor({ name: "UnbelievaBoat casino station", iconURL: UB_ICON })
@@ -171,23 +196,25 @@ async function buildCasinoStation(guildId: string, notice?: string): Promise<{
         "_Cooldown input: `30m`, `4h`, `daily`, `90s`, or a bare number of **minutes**._",
         "",
         `**Daily** · CD ${cdText(cds.dailySec * 1000)} · payout **${fmt(pay.dailyMin)}–${fmt(pay.dailyMax)}**`,
-        `**Collect** · CD ${cdText(cds.collectSec * 1000)} · payout = perk incomes`,
+        collectLine,
         `**Work** · CD ${cdText(cds.workSec * 1000)} · **${fmt(pay.workMin)}–${fmt(pay.workMax)}**`,
         `**Crime** · CD ${cdText(cds.crimeSec * 1000)} · win **${fmt(pay.crimeWinMin)}–${fmt(pay.crimeWinMax)}** · fail ${pay.crimeFailChancePct}% · fine ≥${fmt(pay.crimeFineMin)} (${pay.crimeFineWalletPctMin}–${pay.crimeFineWalletPctMax}% wallet)`,
         `**Beg** · CD ${cdText(cds.begSec * 1000)} · pity ${pay.begChancePct}% · **${fmt(pay.begMin)}–${fmt(pay.begMax)}**`,
         `**Rob** · CD ${cdText(cds.robSec * 1000)} · success ${pay.robSuccessChancePct}% · steal **${fmt(pay.robStealMin)}–${fmt(pay.robStealCap)}** (${pay.robStealCashPct}% cash) · fail fine **${fmt(pay.robFailFineMin)}–${fmt(pay.robFailFineMax)}**`,
         `**Games** · **${cds.gameUses}** plays / ${cdText(cds.gameWindowSec * 1000)} · gap ${cds.gameGapSec}s`,
         "",
-        `Defaults: daily ${DEFAULT_PAYOUTS.dailyMin}–${DEFAULT_PAYOUTS.dailyMax} · work/crime/beg ${cdText(DEFAULT_COOLDOWNS.workSec * 1000)} · rob/collect ${cdText(DEFAULT_COOLDOWNS.robSec * 1000)}`,
+        `Factory defaults: daily ${DEFAULT_PAYOUTS.dailyMin}–${DEFAULT_PAYOUTS.dailyMax} · work/crime/beg ${cdText(DEFAULT_COOLDOWNS.workSec * 1000)} · rob ${cdText(DEFAULT_COOLDOWNS.robSec * 1000)} · collect fallback ${cdText(DEFAULT_COOLDOWNS.collectSec * 1000)}`,
       ].filter(Boolean).join("\n"),
-    );
+    )
+    .setFooter({ text: "Collect = per-role timers · Roles & economy edits each role" });
 
   const pick = new StringSelectMenuBuilder()
     .setCustomId("ubadmin:station_pick")
     .setPlaceholder("Edit a command…")
     .addOptions(
       { label: "Daily (check-in)", value: "daily", description: "Cooldown + payout range", emoji: "📅" },
-      { label: "Collect (role income)", value: "collect", description: "Cooldown only", emoji: "🏦" },
+      { label: "Collect → Roles & economy", value: "collect", description: "Per-role income + CD (not one global timer)", emoji: "🏦" },
+      { label: "Collect fallback default", value: "collect_default", description: "Only for roles with no custom CD yet", emoji: "⏱️" },
       { label: "Work", value: "work", description: "Cooldown + payout range", emoji: "🛠️" },
       { label: "Crime", value: "crime", description: "Cooldown + win/fail payouts", emoji: "🕵️" },
       { label: "Beg", value: "beg", description: "Cooldown + pity chance/payout", emoji: "🙏" },
@@ -197,8 +224,9 @@ async function buildCasinoStation(guildId: string, notice?: string): Promise<{
 
   // Discord allows max 5 action rows. hubRows() is 4 rows — bundling it here
   // made Casino station exceed the limit so the edit failed and cooldowns
-  // appeared to "not open". Keep station lean + a single Back button.
+  // appeared to "not open". Keep station lean + Back + Roles shortcut.
   const actions = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("ubadmin:roles_economy").setLabel("Roles & collect").setEmoji("🏛️").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("ubadmin:station_reset").setLabel("Reset all defaults").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("ubadmin:overview").setLabel("← Back to hub").setStyle(ButtonStyle.Secondary),
   );
@@ -1628,8 +1656,8 @@ export async function handleUbAdminComponent(
     const s = await getOrCreateUbSettings(guildId);
     const cds = readCooldowns(s);
     const pay = readPayouts(s);
-    const cdField = (sec: number) =>
-      textField("cd", "Cooldown (30m / 4h / daily / or minutes)", formatCooldownInput(sec));
+    const cdField = (sec: number, label = "Cooldown (30m / 4h / daily / or minutes)") =>
+      textField("cd", label, formatCooldownInput(sec));
 
     if (kind === "daily") {
       const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:daily").setTitle("Daily — CD + payout");
@@ -1642,8 +1670,22 @@ export async function handleUbAdminComponent(
       return;
     }
     if (kind === "collect") {
-      const modal = new ModalBuilder().setCustomId("ubadmin:station_modal:collect").setTitle("Collect — cooldown");
-      modal.addComponents(cdField(cds.collectSec));
+      // Collect is per-role — never edit a fake global command CD here.
+      await interaction.deferUpdate();
+      await renderRolesEconomy(
+        interaction,
+        guildId,
+        "Collect timers are **per role**. Open a role → **Price / income** to set its CD. Use **Daily / defaults** for the fallback only.",
+      );
+      return;
+    }
+    if (kind === "collect_default") {
+      const modal = new ModalBuilder()
+        .setCustomId("ubadmin:station_modal:collect")
+        .setTitle("Collect fallback default");
+      modal.addComponents(
+        cdField(cds.collectSec, "Fallback CD (no custom role timer)"),
+      );
       await interaction.showModal(modal);
       return;
     }
@@ -2164,7 +2206,8 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
         pay.dailyMin = parseNonNeg(field("min"), "Min");
         pay.dailyMax = Math.max(pay.dailyMin, parseNonNeg(field("max"), "Max"));
       } else if (kind === "collect") {
-        cds.collectSec = parseCooldownInput(field("cd"), "Cooldown");
+        // Guild collectSec is ONLY the fallback for roles without meta.collectCooldownSec.
+        cds.collectSec = parseCooldownInput(field("cd"), "Fallback collect CD");
       } else if (kind === "work") {
         cds.workSec = parseCooldownInput(field("cd"), "Cooldown");
         pay.workMin = parseNonNeg(field("min"), "Min");
@@ -2202,7 +2245,12 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
         dailyMax: pay.dailyMax,
       });
       await writeUbAudit(guildId, interaction.user.id, `discord_station_${kind}`, { cds, pay });
-      await interaction.editReply(`✅ Updated **${kind}**. Open **Casino station** again to review all values.`);
+      const collectNote = kind === "collect"
+        ? "\n_This is the **fallback** for roles with no custom timer — open **Roles & economy** to edit each role’s CD._"
+        : "";
+      await interaction.editReply(
+        `✅ Updated **${kind === "collect" ? "collect fallback default" : kind}**. Open **Casino station** again to review all values.${collectNote}`,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed.";
       if (interaction.deferred || interaction.replied) await interaction.editReply(`❌ ${msg}`);

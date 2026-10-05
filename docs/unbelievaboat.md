@@ -21,7 +21,7 @@ UnbelievaBoat’s Discord `set-cooldown` / `set-game-cooldown` settings are **no
 | Command | Default CD | Default payout |
 | --- | --- | --- |
 | Cash Check-In (`/daily_ub`) | 20h | 100–250 |
-| Role collect | 24h (per-role override) | perk `income_amount` |
+| Role collect | **Per-role** (`meta.collectCooldownSec`); guild value is fallback for unset roles only | perk `income_amount` |
 | Work | 4h | 20–250 |
 | Crime | 4h | win 250–700 · 55% fail · fine ≥10 (1–2% wallet) |
 | Beg | 4h | 55% pity · 15–104 |
