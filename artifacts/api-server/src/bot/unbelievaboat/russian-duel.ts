@@ -20,7 +20,7 @@ import {
 } from "./cash.js";
 import { assertGameCooldown, markGameCooldown } from "./cooldowns.js";
 import { getOrCreateUbSettings, writeUbAudit } from "../../lib/unbelievaboat/db.js";
-import { replyThenPostAsUnbelievaBoat, openTableAsUnbelievaBoat } from "./webhook.js";
+import { replyThenPostAsUnbelievaBoat, openTableAsUnbelievaBoat, editUnbelievaBoatMessage } from "./webhook.js";
 import { renderRussianScene, type RussianScene } from "./render-russian-duel.js";
 import { RESPONSIBLE_PLAY } from "./live-slots.js";
 
@@ -87,6 +87,15 @@ async function updateTable(
     components?: ActionRowBuilder<ButtonBuilder>[];
   },
 ) {
+  if (interaction.message.webhookId) {
+    await editUnbelievaBoatMessage(interaction.message, {
+      content: payload.content ?? undefined,
+      embeds: payload.embeds,
+      files: payload.files,
+      components: payload.components,
+    });
+    return;
+  }
   try {
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(payload);
@@ -94,7 +103,12 @@ async function updateTable(
     }
     await interaction.update(payload);
   } catch {
-    await interaction.message.edit(payload).catch(() => {});
+    await editUnbelievaBoatMessage(interaction.message, {
+      content: payload.content ?? undefined,
+      embeds: payload.embeds,
+      files: payload.files,
+      components: payload.components,
+    });
   }
 }
 

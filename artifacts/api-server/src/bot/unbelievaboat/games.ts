@@ -104,17 +104,10 @@ function sleep(ms: number) {
  * freeze to a static PNG so Discord’s GIF loop never re-flips the cards.
  * Pre-renders the still during the wait so settle is instant (no gap where
  * Discord can restart the GIF loop).
+ *
+ * Edits go through editUnbelievaBoatMessage (webhook token + retries) — the
+ * floor must advance; we do not throw/refund on a missed beat.
  */
-async function mustEditFloor(
-  floor: Message,
-  payload: Parameters<typeof editUnbelievaBoatMessage>[1],
-): Promise<void> {
-  const edited = await editUnbelievaBoatMessage(floor, payload);
-  if (!edited) {
-    throw new Error("Couldn't update the blackjack table message — try again.");
-  }
-}
-
 async function playBjBeat(
   floor: Message,
   opts: {
@@ -137,7 +130,7 @@ async function playBjBeat(
 
   // Prefer GIF; if encode failed, jump straight to the still so we never stall.
   if (files.length) {
-    await mustEditFloor(floor, {
+    await editUnbelievaBoatMessage(floor, {
       content: opts.content ?? undefined,
       embeds: [emb],
       files,
@@ -151,7 +144,7 @@ async function playBjBeat(
     const still = attachPng(png, opts.stillName);
     const settled = EmbedBuilder.from(opts.embed);
     if (still.imageName) settled.setImage(`attachment://${still.imageName}`);
-    await mustEditFloor(floor, {
+    await editUnbelievaBoatMessage(floor, {
       content: opts.content ?? undefined,
       embeds: [settled],
       files: still.files,
@@ -164,7 +157,7 @@ async function playBjBeat(
   const still = attachPng(png, opts.stillName);
   const settled = EmbedBuilder.from(opts.embed);
   if (still.imageName) settled.setImage(`attachment://${still.imageName}`);
-  await mustEditFloor(floor, {
+  await editUnbelievaBoatMessage(floor, {
     content: opts.content ?? undefined,
     embeds: [settled],
     files: still.files,
@@ -200,6 +193,17 @@ async function updateGameMessage(
     components?: ActionRowBuilder<ButtonBuilder>[];
   },
 ) {
+  // Webhook floors: always edit via the owning webhook token. Interaction
+  // editReply/update can work for components, but Message#edit never can.
+  if (interaction.message.webhookId) {
+    await editUnbelievaBoatMessage(interaction.message, {
+      content: payload.content ?? undefined,
+      embeds: payload.embeds,
+      files: payload.files,
+      components: payload.components,
+    });
+    return;
+  }
   try {
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(payload);
@@ -207,7 +211,12 @@ async function updateGameMessage(
     }
     await interaction.update(payload);
   } catch {
-    await interaction.message.edit(payload).catch(() => {});
+    await editUnbelievaBoatMessage(interaction.message, {
+      content: payload.content ?? undefined,
+      embeds: payload.embeds,
+      files: payload.files,
+      components: payload.components,
+    });
   }
 }
 

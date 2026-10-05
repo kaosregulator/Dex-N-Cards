@@ -1,6 +1,10 @@
 // Post public UnbelievaBoat economy messages as a channel webhook that looks
 // like UnbelievaBoat (name + avatar). Ephemeral admin replies stay as DN bot.
 // Pattern mirrors AFK speak-as-user — Manage Webhooks required; falls back.
+//
+// Interactive floors (BJ, lottery reveals, …) MUST edit through the same
+// webhook token that posted the message. Message#edit uses the channel API and
+// cannot update webhook-authored posts.
 
 import {
   ChannelType, PermissionFlagsBits,
@@ -18,6 +22,10 @@ import {
 
 const WEBHOOK_NAME = "UnbelievaBoat Economy";
 const webhookCache = new Map<string, Webhook | null>();
+
+/** messageId → webhook that authored the floor post (keeps token for edits). */
+type FloorBinding = { hook: Webhook; threadId?: string };
+const floorBindings = new Map<string, FloorBinding>();
 
 /**
  * Show `<@&role>` pills in embeds/content, but never notify role holders.
@@ -53,6 +61,14 @@ function webhookHost(channel: Interaction["channel"] | Message["channel"]): {
   return { host: null };
 }
 
+function bindFloor(message: Message, hook: Webhook, threadId?: string) {
+  if (!hook.token) return;
+  floorBindings.set(message.id, {
+    hook,
+    threadId: threadId ?? (message.channel.isThread() ? message.channel.id : undefined),
+  });
+}
+
 async function resolveWebhook(client: Client, host: WebhookCapableChannel): Promise<Webhook | null> {
   const cached = webhookCache.get(host.id);
   if (cached !== undefined) return cached;
@@ -79,6 +95,72 @@ async function resolveWebhook(client: Client, host: WebhookCapableChannel): Prom
   }
   webhookCache.set(host.id, hook);
   return hook;
+}
+
+/** Resolve the webhook (with token) that owns this floor message. */
+async function resolveHookForMessage(message: Message): Promise<FloorBinding | null> {
+  const bound = floorBindings.get(message.id);
+  if (bound?.hook?.token) return bound;
+
+  if (!message.webhookId) return null;
+
+  const { host, threadId } = webhookHost(message.channel);
+  if (!host) return null;
+
+  // Prefer a fresh fetch so we always have a token for bot-owned webhooks.
+  webhookCache.delete(host.id);
+  const hook = await resolveWebhook(message.client, host);
+  if (hook?.token && hook.id === message.webhookId) {
+    const binding: FloorBinding = {
+      hook,
+      threadId: message.channel.isThread() ? message.channel.id : threadId,
+    };
+    floorBindings.set(message.id, binding);
+    return binding;
+  }
+
+  // Last resort: scan channel webhooks for this id (token included when we own it).
+  try {
+    const all = await host.fetchWebhooks();
+    const owned = all.get(message.webhookId) ?? all.find(w => w.id === message.webhookId);
+    if (owned?.token) {
+      webhookCache.set(host.id, owned);
+      const binding: FloorBinding = {
+        hook: owned,
+        threadId: message.channel.isThread() ? message.channel.id : threadId,
+      };
+      floorBindings.set(message.id, binding);
+      return binding;
+    }
+  } catch (err) {
+    logger.debug({ err, messageId: message.id }, "UnbelievaBoat webhook re-fetch failed");
+  }
+  return null;
+}
+
+function sleep(ms: number) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function discordErrCode(err: unknown): number | string | undefined {
+  return (err as { code?: number | string })?.code;
+}
+
+function isRetryableDiscordErr(err: unknown): boolean {
+  const code = discordErrCode(err);
+  const status = (err as { status?: number })?.status;
+  // 429 rate limit, 5xx, Discord gateway blips
+  if (status === 429 || (typeof status === "number" && status >= 500)) return true;
+  if (code === 429 || code === 500 || code === 502 || code === 503 || code === 504) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /ECONNRESET|ETIMEDOUT|socket hang up|rate limit/i.test(msg);
+}
+
+/** Stale cache / rotated webhook — drop binding and re-resolve on next attempt. */
+function isStaleWebhookErr(err: unknown): boolean {
+  const code = discordErrCode(err);
+  // 10015 Unknown Webhook, 50027 Invalid Webhook Token
+  return code === 10015 || code === 50027;
 }
 
 export type PostAsUnbelievaBoatOpts = {
@@ -117,6 +199,7 @@ export async function sendChannelAsUnbelievaBoat(
         withComponents: true,
         allowedMentions: UB_NO_ROLE_PINGS,
       });
+      bindFloor(sent, hook);
       return sent;
     } catch (err) {
       webhookCache.delete(channel.id);
@@ -139,8 +222,8 @@ export async function sendChannelAsUnbelievaBoat(
 
 /**
  * Edit a prior webhook/bot message in-place (live reveals, BJ beats).
- * Prefer the owning webhook’s editMessage — Message#edit often fails on
- * webhook-authored floor posts, which left blackjack stuck on shuffle.
+ * Webhook floors are always edited via the owning webhook token — never
+ * Message#edit (channel API), which cannot update webhook-authored posts.
  */
 export async function editUnbelievaBoatMessage(
   message: Message,
@@ -151,34 +234,102 @@ export async function editUnbelievaBoatMessage(
     embeds: opts.embeds,
     files: opts.files,
     components: opts.components,
-    // Drop prior GIF attachment so the settle PNG (or next beat) is the only image.
-    attachments: [],
+    // Drop prior GIF so the next beat / PNG is the only image.
+    attachments: [] as [],
     allowedMentions: UB_NO_ROLE_PINGS,
+    withComponents: true as const,
   };
 
-  // Webhook-authored messages: edit via the webhook token.
-  // Message#edit uses the channel endpoint and 403s on webhook posts — that left
-  // blackjack stuck on the shuffle GIF forever after #191.
   if (message.webhookId) {
-    try {
-      const { host } = webhookHost(message.channel);
-      const hook = host ? await resolveWebhook(message.client, host) : null;
-      if (hook?.token && hook.id === message.webhookId) {
-        return await hook.editMessage(message.id, {
-          ...payload,
-          // Required for interactive components on application webhooks.
-          withComponents: true,
-          threadId: message.channel.isThread() ? message.channel.id : undefined,
-        });
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const binding = await resolveHookForMessage(message);
+      if (!binding?.hook.token) {
+        logger.warn(
+          { messageId: message.id, webhookId: message.webhookId, attempt },
+          "UnbelievaBoat floor edit: no webhook token — cannot update webhook message",
+        );
+        // One more resolve pass after a short wait (webhook create race).
+        if (attempt < 3) {
+          await sleep(150 * 2 ** attempt);
+          continue;
+        }
+        return null;
       }
-    } catch (err) {
-      logger.debug({ err, messageId: message.id }, "UnbelievaBoat webhook editMessage failed");
+
+      try {
+        const edited = await binding.hook.editMessage(message.id, {
+          content: payload.content,
+          embeds: payload.embeds,
+          files: payload.files,
+          components: payload.components,
+          attachments: payload.attachments,
+          allowedMentions: payload.allowedMentions,
+          withComponents: true,
+          threadId: binding.threadId,
+        });
+        // Keep binding alive across edits.
+        bindFloor(edited, binding.hook, binding.threadId);
+        return edited;
+      } catch (err) {
+        lastErr = err;
+        if (isStaleWebhookErr(err)) {
+          floorBindings.delete(message.id);
+          const { host } = webhookHost(message.channel);
+          if (host) webhookCache.delete(host.id);
+          if (attempt < 3) {
+            await sleep(100 * 2 ** attempt);
+            continue;
+          }
+          break;
+        }
+        if (attempt < 3 && isRetryableDiscordErr(err)) {
+          // Honour Retry-After when present.
+          const retryAfter = Number((err as { retryAfter?: number })?.retryAfter);
+          await sleep(
+            Number.isFinite(retryAfter) && retryAfter > 0
+              ? Math.ceil(retryAfter * 1000) + 50
+              : 200 * 2 ** attempt,
+          );
+          continue;
+        }
+        break;
+      }
     }
+    logger.warn(
+      { err: lastErr, messageId: message.id, webhookId: message.webhookId },
+      "UnbelievaBoat webhook editMessage failed after retries",
+    );
+    return null;
   }
 
+  // Bot-authored fallback floor (no webhook).
   try {
-    return await message.edit(payload);
+    return await message.edit({
+      content: payload.content,
+      embeds: payload.embeds,
+      files: payload.files,
+      components: payload.components,
+      attachments: [],
+      allowedMentions: payload.allowedMentions,
+    });
   } catch (err) {
+    if (isRetryableDiscordErr(err)) {
+      await sleep(300);
+      try {
+        return await message.edit({
+          content: payload.content,
+          embeds: payload.embeds,
+          files: payload.files,
+          components: payload.components,
+          attachments: [],
+          allowedMentions: payload.allowedMentions,
+        });
+      } catch (err2) {
+        logger.debug({ err: err2, messageId: message.id }, "UnbelievaBoat bot message edit failed");
+        return null;
+      }
+    }
     logger.debug({ err, messageId: message.id }, "UnbelievaBoat message edit failed");
     return null;
   }
@@ -230,6 +381,7 @@ export async function postAsUnbelievaBoat(
       logger.debug({ channelId: host.id }, "UnbelievaBoat webhook dropped components — falling back");
       return null;
     }
+    bindFloor(sent, hook, threadId);
     return sent;
   } catch (err) {
     webhookCache.delete(host.id);
