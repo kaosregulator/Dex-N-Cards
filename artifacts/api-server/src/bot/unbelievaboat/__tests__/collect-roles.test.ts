@@ -101,7 +101,7 @@ describe("planRoleCollect", () => {
     expect(planned.cooling).toHaveLength(0);
   });
 
-  it("honors per-role cooldown and legacy global lastCollectAt", () => {
+  it("honors per-role cooldown; new link after prior collect is ready", () => {
     const now = Date.now();
     const links = [
       link({
@@ -114,6 +114,29 @@ describe("planRoleCollect", () => {
       link({
         id: 2,
         discordRoleId: "b",
+        name: "NewRole",
+        incomeAmount: 500,
+        meta: { collectCooldownSec: 86_400 },
+      }),
+    ];
+    // Per-role map already exists — missing link id must NOT inherit lastCollectAt.
+    const planned = planRoleCollect({
+      links,
+      member: memberWithRoles("a", "b"),
+      guildCollectSec: 86_400,
+      lastByLinkId: { "1": now - 30_000 }, // Fast still cooling (60s CD)
+      fallbackLastCollectAt: now - 3_600_000,
+    });
+    expect(planned.cooling.map(r => r.link.name)).toEqual(["Fast"]);
+    expect(planned.ready.map(r => r.link.name)).toEqual(["NewRole"]);
+  });
+
+  it("uses legacy global lastCollectAt only when roleCollectAt is empty", () => {
+    const now = Date.now();
+    const links = [
+      link({
+        id: 1,
+        discordRoleId: "a",
         name: "Daily",
         incomeAmount: 500,
         meta: { collectCooldownSec: 86_400 },
@@ -121,12 +144,12 @@ describe("planRoleCollect", () => {
     ];
     const planned = planRoleCollect({
       links,
-      member: memberWithRoles("a", "b"),
+      member: memberWithRoles("a"),
       guildCollectSec: 86_400,
-      lastByLinkId: { "1": now - 120_000 },
-      fallbackLastCollectAt: now - 3_600_000, // 1h ago — Daily still cooling
+      lastByLinkId: {},
+      fallbackLastCollectAt: now - 3_600_000, // 1h ago — still cooling on 24h CD
     });
-    expect(planned.ready.map(r => r.link.name)).toEqual(["Fast"]);
+    expect(planned.ready).toHaveLength(0);
     expect(planned.cooling.map(r => r.link.name)).toEqual(["Daily"]);
     expect(planned.cooling[0]!.readyInMs).toBeGreaterThan(0);
   });

@@ -656,7 +656,7 @@ async function renderRoleDetail(
         flash ? `${flash}\n` : null,
         row.discordRoleId ? `Discord role: <@&${row.discordRoleId}>` : "_No Discord role_",
         row.ubItemId ? `UB item: \`${row.ubItemId}\`` : "_Local-only (not in UB store)_",
-        `Price **${fmt(row.price)}** · Collect **${fmt(row.incomeAmount ?? 0)}** / **${Math.round(roleCollectCooldownSec(row, readCooldowns(settings).collectSec) / 60)}m** · ${row.enabled ? "✅ listed" : "⏸ hidden"}`,
+        `Price **${fmt(row.price)}** · Collect **${fmt(row.incomeAmount ?? 0)}** / **${formatCdShort(roleCollectCooldownSec(row, readCooldowns(settings).collectSec))}** · ${row.enabled ? "✅ listed" : "⏸ hidden"}`,
       ].filter(Boolean).join("\n"),
     )
     .addFields(
@@ -1036,8 +1036,6 @@ export async function handleUbAdminComponent(
 
   if (id === "ubadmin:re_seed_collect" && interaction.isButton()) {
     await interaction.deferUpdate();
-    const settings = await getOrCreateUbSettings(guildId);
-    const cds = readCooldowns(settings);
     const roles = await listRoleLinks(guildId);
     let seeded = 0;
     for (const row of roles) {
@@ -1045,9 +1043,7 @@ export async function handleUbAdminComponent(
       if (meta.collectIncomeSet === true) continue;
       if ((row.incomeAmount ?? 0) !== 0) continue;
       const income = suggestedCollectIncome(row.price);
-      if (typeof meta.collectCooldownSec !== "number") {
-        meta.collectCooldownSec = cds.collectSec;
-      }
+      // Do not bake collectCooldownSec — guild fallback applies until a role is customized.
       meta.collectIncomeSeeded = true;
       await updateRoleLink(guildId, row.id, {
         incomeAmount: income,
@@ -1060,7 +1056,7 @@ export async function handleUbAdminComponent(
       interaction,
       guildId,
       seeded
-        ? `Seeded collect on **${seeded}** role(s) (~1% of shop price, default CD). Tune each role to match UB Role Income.`
+        ? `Seeded collect on **${seeded}** role(s) (~1% of shop price). CD uses guild fallback until you set a per-role timer.`
         : "Every unset role already has collect income (or was locked by an admin).",
     );
     return;
@@ -1644,7 +1640,10 @@ export async function handleUbAdminComponent(
       dailyMax: DEFAULT_PAYOUTS.dailyMax,
     });
     await writeUbAudit(guildId, interaction.user.id, "discord_station_reset", {});
-    const { embeds, components } = await buildCasinoStation(guildId, "✅ Reset all cooldowns + payouts to factory defaults.");
+    const { embeds, components } = await buildCasinoStation(
+      guildId,
+      "✅ Reset station cooldowns + payouts to factory defaults.\n_Per-role collect timers in **Roles & economy** were not changed._",
+    );
     await interaction.editReply({ embeds, components });
     return;
   }
@@ -2207,7 +2206,7 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
         pay.dailyMax = Math.max(pay.dailyMin, parseNonNeg(field("max"), "Max"));
       } else if (kind === "collect") {
         // Guild collectSec is ONLY the fallback for roles without meta.collectCooldownSec.
-        cds.collectSec = parseCooldownInput(field("cd"), "Fallback collect CD");
+        cds.collectSec = Math.max(60, parseCooldownInput(field("cd"), "Fallback collect CD"));
       } else if (kind === "work") {
         cds.workSec = parseCooldownInput(field("cd"), "Cooldown");
         pay.workMin = parseNonNeg(field("min"), "Min");
@@ -2281,9 +2280,9 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       robSec: Math.floor(rob),
       gameUses: Math.max(1, Math.floor(gameUses)),
       gameWindowSec: Math.max(30, Math.floor(gameWindow)),
-      dailySec: prev.dailySec || DEFAULT_COOLDOWNS.dailySec,
-      collectSec: prev.collectSec || DEFAULT_COOLDOWNS.collectSec,
-      begSec: prev.begSec || DEFAULT_COOLDOWNS.begSec,
+      dailySec: prev.dailySec ?? DEFAULT_COOLDOWNS.dailySec,
+      collectSec: prev.collectSec ?? DEFAULT_COOLDOWNS.collectSec,
+      begSec: prev.begSec ?? DEFAULT_COOLDOWNS.begSec,
       gameGapSec: prev.gameGapSec ?? DEFAULT_COOLDOWNS.gameGapSec,
     };
     await updateUbSettings(guildId, { cooldowns: next });
@@ -2428,8 +2427,8 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
     } catch {
       emojiRaw = "✨";
     }
-    if (!name || !Number.isFinite(income) || income === 0) {
-      await interaction.reply({ content: "Need a name and a non-zero collect income.", ...EPHEMERAL });
+    if (!name || !Number.isFinite(income) || income <= 0) {
+      await interaction.reply({ content: "Need a name and a positive collect income.", ...EPHEMERAL });
       return;
     }
     if (!Number.isFinite(cooldownMin) || cooldownMin < 0) {

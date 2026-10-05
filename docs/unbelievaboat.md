@@ -28,8 +28,11 @@ UnbelievaBoat’s Discord `set-cooldown` / `set-game-cooldown` settings are **no
 | Rob | 24h | 40% success · steal 25–500 · fail fine 50–199 |
 | Games (BJ/slots/…) | 4 plays / 5 min | bet multipliers (unchanged) |
 
-Pick a command in the dropdown → edit cooldown + payout fields. Cooldown accepts human times:
-`30m`, `4h`, `daily`, `90s`, or a bare number of **minutes** (not seconds). **Reset all defaults** restores factory values.
+Pick a command in the dropdown → edit cooldown + payout fields. **Collect** opens
+**Roles & economy** (per-role timers); use **Collect fallback default** only for roles
+with no custom CD. Cooldown input: `30m`, `4h`, `daily`, `90s`, or a bare number of
+**minutes**. **Reset all defaults** restores station factory values (does **not** wipe
+per-role collect timers).
 
 ### Prefix games (per guild)
 

@@ -8,11 +8,9 @@ import type { Guild } from "discord.js";
 import type { UbRoleLink } from "@workspace/db";
 import {
   createRoleLink,
-  getOrCreateUbSettings,
   listRoleLinks,
   updateRoleLink,
 } from "../../lib/unbelievaboat/db.js";
-import { readCooldowns } from "./cooldowns.js";
 import { suggestedCollectIncome } from "./collect-roles.js";
 import {
   fetchAllUbStoreItems,
@@ -78,8 +76,6 @@ export async function syncUbStoreRoleLinks(
     }
   }
 
-  const settings = await getOrCreateUbSettings(guildId);
-  const guildCollectSec = readCooldowns(settings).collectSec;
   const rawItems = await fetchAllUbStoreItems(ubGuildId);
   const links = await listRoleLinks(guildId);
   const byUb = new Map(links.filter(l => l.ubItemId).map(l => [l.ubItemId!, l]));
@@ -115,9 +111,10 @@ export async function syncUbStoreRoleLinks(
         enabled: norm.listed,
         incomeAmount: income,
       });
+      // Do NOT bake collectCooldownSec — leave unset so guild fallback applies
+      // until an admin sets a custom per-role timer in Roles & economy.
       await updateRoleLink(guildId, link.id, {
         meta: {
-          collectCooldownSec: guildCollectSec,
           collectIncomeSeeded: true,
           collectIncomeSet: false,
         },
@@ -150,18 +147,11 @@ export async function syncUbStoreRoleLinks(
     if (link.enabled !== norm.listed) patch.enabled = norm.listed;
 
     // Seed collect income when still 0 and admin hasn't locked it off/on.
+    // Leave collectCooldownSec unset so the guild fallback stays live.
     let seeded = false;
     if ((link.incomeAmount ?? 0) === 0 && !adminLockedCollect(meta)) {
       patch.incomeAmount = suggestedCollectIncome(norm.price);
       seeded = true;
-    }
-
-    // Ensure per-role CD meta exists (UB Role Income style — per role, not global).
-    if (typeof meta.collectCooldownSec !== "number") {
-      meta.collectCooldownSec = guildCollectSec;
-      if (seeded) meta.collectIncomeSeeded = true;
-      patch.meta = meta;
-    } else if (seeded) {
       meta.collectIncomeSeeded = true;
       patch.meta = meta;
     }

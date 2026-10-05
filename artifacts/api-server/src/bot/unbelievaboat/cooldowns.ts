@@ -130,15 +130,16 @@ export function parseCooldownInput(raw: string, label = "Cooldown"): number {
   );
 }
 
-type IncomeKey = "daily" | "work" | "crime" | "beg" | "rob" | "collect";
+// Note: role collect does NOT use this API — it uses per-role timers via
+// planRoleCollect / markRolesCollected. Keep "collect" out of IncomeKey.
+type IncomeKey = "daily" | "work" | "crime" | "beg" | "rob";
 
-const INCOME_FIELD: Record<IncomeKey, "lastDailyAt" | "lastRobAt" | "lastBegAt" | "lastWorkAt" | "lastCrimeAt" | "lastCollectAt"> = {
+const INCOME_FIELD: Record<IncomeKey, "lastDailyAt" | "lastRobAt" | "lastBegAt" | "lastWorkAt" | "lastCrimeAt"> = {
   daily: "lastDailyAt",
   work: "lastWorkAt",
   crime: "lastCrimeAt",
   beg: "lastBegAt",
   rob: "lastRobAt",
-  collect: "lastCollectAt",
 };
 
 const INCOME_SEC: Record<IncomeKey, keyof CooldownConfig> = {
@@ -147,7 +148,6 @@ const INCOME_SEC: Record<IncomeKey, keyof CooldownConfig> = {
   crime: "crimeSec",
   beg: "begSec",
   rob: "robSec",
-  collect: "collectSec",
 };
 
 export async function assertIncomeCooldown(guildId: string, userId: string, kind: IncomeKey): Promise<void> {
