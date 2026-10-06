@@ -1,100 +1,45 @@
 # Community Art Show
 
-Two channels:
+Simple loop:
 
-1. **Submission board** — slim station + members drop photos like a normal Discord upload  
-2. **Gallery** — hung pieces with ▲ vote buttons (read-only for everyone except staff)
+1. Staff runs **`/artshow setup`** → bot creates **two channels** and posts a Submit station  
+2. Members tap **Submit** → popup (title, description, photo from their device)  
+3. Piece posts to the **gallery** with the **original photo** + ▲ / Remove vote / Bump me  
+4. Staff runs **`/artshow crown`** → weekly winner is announced on the **board** with emblem  
+5. New week → more submits → repeat  
 
-## Quick start (staff)
-
-```
-/artshow post
-  create_board:art-show
-  create_gallery:art-hall
-  staff_role:@Mods          ← optional; can still post in the gallery
-
-  # OR pick existing channels:
-  board:#art-show
-  gallery:#art-hall
-
-  votes_per_day:5
-  bonus_on_submit:2
-  refresh_hours:6
-  bump_cost:3
-  crown_at:25
-```
-
-This:
-- Posts a **slim station** on the board (How to submit / Browse / Hall of Fame / My votes)
-- Pins the station
-- Makes the **gallery read-only** for `@everyone` (bot + optional `staff_role` can still send)
-- Lets members **Send + Attach** on the board so they can drop photos
-
-### Thresholds & reset
-
-- Tune anytime: `/artshow setup votes_per_day:…` etc.
-- **Reset to defaults:** `/artshow setup reset_defaults:True`
-
-Defaults: 5 votes/day · +2 on submit · +1 every 6h · bump costs 3 · auto-crown at 25 ▲
-
-## Member submit flow
-
-1. Tap **Submit art** on the station → Discord’s **file picker** (title + photo from your device)
-2. Or `/artshow submit` with an image attachment + title
-3. Or drop a photo on the board channel (backup)
-
-The piece hangs in the **gallery** with ▲ vote buttons.
-
-No 2-minute timers. No Create/Cancel draft. No sticky board spam.
-
-### Staff: force / re-post
-
-If a submit failed (red ❌) but a DB row exists, or the gallery never got the message:
+## Staff
 
 ```
-/artshow repost                  ← all missing messages this week
-/artshow repost piece_id:12      ← force one piece
+/artshow setup
+  # optional overrides:
+  board_name:art-show
+  gallery_name:art-gallery
+  # or pick existing: board:#… gallery:#…
 ```
 
-### Staff: badge sync / reset unlocks
-
-Guilds that saved badge rules before Art Show shipped were missing Exhibitor etc.
-Run once after deploy (or anytime people submitted without seeing emblems):
-
 ```
-/artshow sync_badges
+/artshow crown              # crown this week's leader, announce on the board
+/artshow fix                # repair: sync emblems + force-post missing gallery pieces
 ```
 
-This merges Art Show emblems into the guild catalogue and backfills unlocks from
-real submit / vote / crown counts, then announces new emblems.
+That’s the whole slash surface. Members never need a command.
 
-## Live piece buttons (gallery)
+## Member flow
 
-| Button | Action |
-|--------|--------|
-| ▲ Upvote | Spend 1 vote (wallet). Blocked on own piece / already voted / no votes left |
-| Remove vote | Undo your vote **until the week is crowned** — refunds 1 vote |
-| Bump | Re-post your piece near the top (costs votes or Rising Artist free bump) |
-| Browse halls | Pick another piece’s hall canvas to view |
+1. Open the **board** channel  
+2. Tap **Submit**  
+3. Fill title + optional description + pick a photo  
+4. Vote in the **gallery** with ▲ (daily vote wallet)  
 
-## One winner
+## Channels
 
-Many halls on the floor; **one** weekly Hall of Fame champion:
-- Auto-crown: first piece to hit `crown_at` ▲ that week, **or**
-- Staff: `/artshow crown`
+| Channel | Purpose |
+|---------|---------|
+| Board | Submit station; weekly champion announcement + emblems |
+| Gallery | Hung pieces (original photo), vote buttons; read-only for members |
 
-After crowning, **Remove vote** locks for that week.
+## Emblems
 
-## Museum look
-
-The Hall of Fame canvas stamps a real gallery hall photo, hangs shuffled
-**public-domain masterpieces** in gold frames, places classical marble statues on
-pedestals, and puts the community champion **center stage**.  
-Assets + credits: `assets/artshow/ATTRIBUTION.md`.
-
-Emblem GIFs live under `/artshow badges` and `/badges` — not on the station board.
-
-## Data
-
-Tables: `artshow_settings` (`board_channel_id`, `gallery_channel_id`, …),
-`artshow_pieces`, `artshow_votes`, `artshow_wallets`, `artshow_fame`.
+First submit unlocks **Exhibitor** (and later studio / vote / crown emblems).  
+Shown on the board + in the Submit reply. Confirm anytime with `/badges`.

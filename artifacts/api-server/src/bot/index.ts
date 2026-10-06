@@ -1299,12 +1299,12 @@ export async function startBot() {
       logger.debug({ err }, "UB icon capture hook error");
     }
 
-    // Art Show: finish modal submit when the artist attaches their photo.
+    // Art Show: reserved (Submit is modal-only; hook stays for back-compat).
     try {
       const { handleArtShowMessage } = await import("./artshow/commands.js");
       if (await handleArtShowMessage(msg)) return;
     } catch (err) {
-      logger.debug({ err }, "Art Show capture hook error");
+      logger.debug({ err }, "Art Show message hook error");
     }
 
     // AFK Secretary: clear the author's "on return" AFK (past grace) and post
