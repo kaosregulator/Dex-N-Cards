@@ -683,7 +683,7 @@ async function updatePieceEmbedVotes(message: Message, piece: ArtshowPiece): Pro
         `by <@${piece.authorId}>`,
         piece.description ? `*${piece.description}*` : null,
         "",
-        `**⬆️ ${piece.votes}** votes${photoNote}`,
+        `**🔺 ${piece.votes}** votes${photoNote}`,
       ].filter(Boolean).join("\n"));
     await message.edit({ embeds: [embed], components: pieceButtons(piece.id, n) });
   } catch { /* ignore */ }
