@@ -144,6 +144,54 @@ export async function countAuthorSubmits(guildId: string, authorId: string): Pro
   return Number(row?.n ?? 0);
 }
 
+/** Per-author submit counts — used for badge backfill. */
+export async function listAuthorSubmitCounts(guildId: string): Promise<Array<{ authorId: string; count: number }>> {
+  const rows = await db.select({
+    authorId: artshowPiecesTable.authorId,
+    count: sql<number>`count(*)::int`,
+  })
+    .from(artshowPiecesTable)
+    .where(eq(artshowPiecesTable.guildId, guildId))
+    .groupBy(artshowPiecesTable.authorId);
+  return rows.map(r => ({ authorId: r.authorId, count: Number(r.count) }));
+}
+
+/** Per-voter cast counts — used for badge backfill. */
+export async function listVoterCastCounts(guildId: string): Promise<Array<{ voterId: string; count: number }>> {
+  const rows = await db.select({
+    voterId: artshowVotesTable.voterId,
+    count: sql<number>`count(*)::int`,
+  })
+    .from(artshowVotesTable)
+    .where(eq(artshowVotesTable.guildId, guildId))
+    .groupBy(artshowVotesTable.voterId);
+  return rows.map(r => ({ voterId: r.voterId, count: Number(r.count) }));
+}
+
+/** Peak votes on any one piece per author — Rising Artist / Crowd Favorite thresholds. */
+export async function listAuthorPeakVotes(guildId: string): Promise<Array<{ authorId: string; peak: number }>> {
+  const rows = await db.select({
+    authorId: artshowPiecesTable.authorId,
+    peak: sql<number>`max(${artshowPiecesTable.votes})::int`,
+  })
+    .from(artshowPiecesTable)
+    .where(eq(artshowPiecesTable.guildId, guildId))
+    .groupBy(artshowPiecesTable.authorId);
+  return rows.map(r => ({ authorId: r.authorId, peak: Number(r.peak) }));
+}
+
+/** Crown counts per author — Hall Champion / Museum Legend. */
+export async function listAuthorCrownCounts(guildId: string): Promise<Array<{ authorId: string; count: number }>> {
+  const rows = await db.select({
+    authorId: artshowFameTable.authorId,
+    count: sql<number>`count(*)::int`,
+  })
+    .from(artshowFameTable)
+    .where(eq(artshowFameTable.guildId, guildId))
+    .groupBy(artshowFameTable.authorId);
+  return rows.map(r => ({ authorId: r.authorId, count: Number(r.count) }));
+}
+
 export async function countVotesCast(guildId: string, voterId: string): Promise<number> {
   const [row] = await db.select({ n: sql<number>`count(*)::int` })
     .from(artshowVotesTable)

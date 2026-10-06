@@ -66,6 +66,9 @@ export function buildArtShowCommandJson() {
         .setDescription("Only pieces that never got a gallery message (default true)")
         .setRequired(false)))
     .addSubcommand(sc => sc
+      .setName("sync_badges")
+      .setDescription("Staff: merge Art Show emblems into the badge catalogue and backfill unlocks"))
+    .addSubcommand(sc => sc
       .setName("museum")
       .setDescription("Open the Hall of Fame museum"))
     .addSubcommand(sc => sc

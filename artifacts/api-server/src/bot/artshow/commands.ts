@@ -25,8 +25,10 @@ import {
   insertPiece, setPieceMessage, getPiece, topPieces, listUnpostedPieces,
   getOrRefreshWallet, grantSubmitBonus, spendVote, removeVote, spendBump, grantFreeBump,
   countAuthorSubmits, countVotesCast, countAuthorCrowns,
+  listAuthorSubmitCounts, listVoterCastCounts, listAuthorPeakVotes, listAuthorCrownCounts,
   crownPiece, getFame, listFame, utcWeekKey,
 } from "../../lib/artshow/db.js";
+import { mergeMissingDefaultBadgeRules } from "../../lib/badges/db.js";
 import { ARTSHOW_DEFAULTS } from "../../lib/artshow/defaults.js";
 import type { ArtshowPiece, ArtshowSettings } from "@workspace/db";
 import { awardArtShowBadges } from "../badges/engine.js";
@@ -335,12 +337,14 @@ async function buildStationEmbed(guildId: string): Promise<{
 }
 
 async function maybeAnnounceBadges(
-  channel: { send: (o: object) => Promise<unknown> },
+  channel: { send: (o: object) => Promise<unknown> } | null | undefined,
   guildId: string,
   userId: string,
   badgeResult: Awaited<ReturnType<typeof awardArtShowBadges>>,
+  alsoChannel?: { send: (o: object) => Promise<unknown> } | null,
 ): Promise<void> {
-  for (const result of badgeResult.results.filter(r => r.unlocked || r.leveled || r.tierChanged)) {
+  const flashy = badgeResult.results.filter(r => r.unlocked || r.leveled || r.tierChanged);
+  for (const result of flashy) {
     const rule = badgeResult.rules.find(r => r.id === result.badge.id);
     if (!rule) continue;
     try {
@@ -350,12 +354,22 @@ async function maybeAnnounceBadges(
         mention: `<@${userId}>`,
         forceEmblem: result.unlocked || result.tierChanged,
       });
-      const msg = await channel.send({
+      const payload = {
         content: showcase.content,
         embeds: showcase.embeds,
         files: showcase.files,
-      }) as Message;
-      setTimeout(() => { msg.delete().catch(() => {}); }, 55_000);
+      };
+      const targets = [channel, alsoChannel].filter(Boolean) as Array<{ send: (o: object) => Promise<unknown> }>;
+      for (const ch of targets) {
+        try {
+          const msg = await ch.send(payload) as Message;
+          // Keep unlock notices longer so people actually see the emblem.
+          const ttl = result.unlocked ? 120_000 : 55_000;
+          setTimeout(() => { msg.delete().catch(() => {}); }, ttl);
+        } catch (err) {
+          logger.debug({ err }, "artshow badge announce channel send failed");
+        }
+      }
     } catch (err) {
       logger.debug({ err }, "artshow badge announce failed");
     }
@@ -364,6 +378,39 @@ async function maybeAnnounceBadges(
     const settings = await getOrCreateArtshowSettings(guildId);
     await grantFreeBump(guildId, userId, settings).catch(() => {});
   }
+}
+
+function badgeUnlockLine(badgeResult: Awaited<ReturnType<typeof awardArtShowBadges>>): string {
+  const unlocked = badgeResult.results.filter(r => r.unlocked);
+  if (!unlocked.length) return "";
+  const labels = unlocked.map(r => {
+    const rule = badgeResult.rules.find(x => x.id === r.badge.id);
+    return rule ? `${rule.emoji} **${rule.name}**` : r.badge.id;
+  });
+  return `\n✨ Emblem unlocked: ${labels.join(", ")} — check \`/badges\``;
+}
+
+async function followUpBadgeEmblem(
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction | ButtonInteraction,
+  badgeResult: Awaited<ReturnType<typeof awardArtShowBadges>>,
+): Promise<void> {
+  const unlocked = badgeResult.results.filter(r => r.unlocked);
+  if (!unlocked.length) return;
+  const primary = unlocked[0]!;
+  const rule = badgeResult.rules.find(r => r.id === primary.badge.id);
+  if (!rule) return;
+  const showcase = await buildBadgeShowcase({
+    result: primary,
+    rule,
+    mention: `<@${interaction.user.id}>`,
+    forceEmblem: true,
+  });
+  await interaction.followUp({
+    content: showcase.content,
+    embeds: showcase.embeds,
+    files: showcase.files,
+    ...EPHEMERAL,
+  });
 }
 
 /**
@@ -558,7 +605,11 @@ async function publishPiece(opts: {
   sourceHttpUrl: string;
   originalBytes?: { buf: Buffer; ext: string } | null;
   orientation?: "landscape" | "portrait" | "square";
-}): Promise<ArtshowPiece> {
+  client?: { channels: { fetch: (id: string) => Promise<unknown> } };
+}): Promise<{
+  piece: ArtshowPiece;
+  badgeResult: Awaited<ReturnType<typeof awardArtShowBadges>>;
+}> {
   const orientation = opts.orientation
     ?? await detectOrientation(opts.sourceHttpUrl || opts.storedUrl);
   const piece = await insertPiece({
@@ -589,8 +640,13 @@ async function publishPiece(opts: {
     mode: "submit",
     count: submits,
   });
-  await maybeAnnounceBadges(opts.channel, opts.guildId, opts.authorId, badgeResult);
-  return piece;
+  let board: TextChannel | NewsChannel | null = null;
+  if (opts.client) {
+    const { boardId } = channelIds(settings);
+    board = await fetchTextChannel(opts.client, boardId);
+  }
+  await maybeAnnounceBadges(opts.channel, opts.guildId, opts.authorId, badgeResult, board);
+  return { piece, badgeResult };
 }
 
 async function refreshPieceMessage(
@@ -973,7 +1029,7 @@ export async function handleArtShowCommand(interaction: ChatInputCommandInteract
       }
       const channel = await resolveGalleryOrThrow(interaction.client, interaction.guildId);
       const ingested = await ingestUpload(image);
-      const piece = await publishPiece({
+      const { piece, badgeResult } = await publishPiece({
         guildId: interaction.guildId,
         channel,
         authorId: interaction.user.id,
@@ -984,14 +1040,121 @@ export async function handleArtShowCommand(interaction: ChatInputCommandInteract
         sourceHttpUrl: ingested.sourceHttpUrl,
         originalBytes: ingested.bytes,
         orientation: ingested.orientation,
+        client: interaction.client,
       });
       await interaction.editReply(
-        `✅ Hung **${piece.title}** in <#${channel.id}> — piece \`#${piece.id}\`. Tap **▲ Upvote** there.`,
+        `✅ Hung **${piece.title}** in <#${channel.id}> — piece \`#${piece.id}\`. Tap **▲ Upvote** there.`
+        + badgeUnlockLine(badgeResult),
       );
+      await followUpBadgeEmblem(interaction, badgeResult).catch(() => {});
     } catch (err) {
       logger.warn({ err }, "artshow slash submit failed");
       await interaction.editReply(
         `❌ Couldn't hang that photo: ${err instanceof Error ? err.message : "unknown error"}. Try the **Submit art** button (Discord file picker).`,
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  if (sub === "sync_badges") {
+    if (!isStaff(interaction)) {
+      await interaction.reply({ content: "Staff only.", ...EPHEMERAL });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const { added } = await mergeMissingDefaultBadgeRules(interaction.guildId);
+      const settings = await getOrCreateArtshowSettings(interaction.guildId);
+      const { galleryId, boardId } = channelIds(settings);
+      const gallery = await fetchTextChannel(interaction.client, galleryId);
+      const board = await fetchTextChannel(interaction.client, boardId);
+
+      let unlocks = 0;
+      const lines: string[] = [];
+
+      for (const row of await listAuthorSubmitCounts(interaction.guildId)) {
+        const badgeResult = await awardArtShowBadges({
+          guildId: interaction.guildId,
+          userId: row.authorId,
+          mode: "submit",
+          count: row.count,
+        });
+        const fresh = badgeResult.results.filter(r => r.unlocked);
+        if (fresh.length) {
+          unlocks += fresh.length;
+          await maybeAnnounceBadges(gallery, interaction.guildId, row.authorId, badgeResult, board);
+          lines.push(
+            `<@${row.authorId}> submit×${row.count} → ${fresh.map(r => r.badge.id).join(", ")}`,
+          );
+        }
+      }
+
+      for (const row of await listVoterCastCounts(interaction.guildId)) {
+        const badgeResult = await awardArtShowBadges({
+          guildId: interaction.guildId,
+          userId: row.voterId,
+          mode: "votes_cast",
+          count: row.count,
+        });
+        const fresh = badgeResult.results.filter(r => r.unlocked);
+        if (fresh.length) {
+          unlocks += fresh.length;
+          await maybeAnnounceBadges(gallery, interaction.guildId, row.voterId, badgeResult, board);
+          lines.push(
+            `<@${row.voterId}> votes×${row.count} → ${fresh.map(r => r.badge.id).join(", ")}`,
+          );
+        }
+      }
+
+      for (const row of await listAuthorPeakVotes(interaction.guildId)) {
+        if (row.peak < 1) continue;
+        const badgeResult = await awardArtShowBadges({
+          guildId: interaction.guildId,
+          userId: row.authorId,
+          mode: "votes_received",
+          count: row.peak,
+        });
+        const fresh = badgeResult.results.filter(r => r.unlocked);
+        if (fresh.length) {
+          unlocks += fresh.length;
+          await maybeAnnounceBadges(gallery, interaction.guildId, row.authorId, badgeResult, board);
+          lines.push(
+            `<@${row.authorId}> peak▲${row.peak} → ${fresh.map(r => r.badge.id).join(", ")}`,
+          );
+        }
+      }
+
+      for (const row of await listAuthorCrownCounts(interaction.guildId)) {
+        const badgeResult = await awardArtShowBadges({
+          guildId: interaction.guildId,
+          userId: row.authorId,
+          mode: "crown",
+          count: row.count,
+        });
+        const fresh = badgeResult.results.filter(r => r.unlocked);
+        if (fresh.length) {
+          unlocks += fresh.length;
+          await maybeAnnounceBadges(gallery, interaction.guildId, row.authorId, badgeResult, board);
+          lines.push(
+            `<@${row.authorId}> crowns×${row.count} → ${fresh.map(r => r.badge.id).join(", ")}`,
+          );
+        }
+      }
+
+      await interaction.editReply([
+        "**Art Show badge sync**",
+        added.length
+          ? `Catalogue merged: added \`${added.join("`, `")}\``
+          : "Catalogue already had Art Show emblems.",
+        `New unlocks: **${unlocks}**`,
+        lines.length ? lines.slice(0, 20).join("\n") : "_No new unlocks — everyone already had what they earned._",
+        "",
+        "Members can confirm with `/badges`.",
+      ].join("\n"));
+    } catch (err) {
+      logger.warn({ err }, "artshow sync_badges failed");
+      await interaction.editReply(
+        `❌ Sync failed: ${err instanceof Error ? err.message : "unknown error"}`,
       ).catch(() => {});
     }
     return;
@@ -1400,7 +1563,7 @@ export async function handleArtShowModal(interaction: ModalSubmitInteraction): P
   try {
     const channel = await resolveGalleryOrThrow(interaction.client, interaction.guildId);
     const ingested = await ingestUpload(attachment);
-    const piece = await publishPiece({
+    const { piece, badgeResult } = await publishPiece({
       guildId: interaction.guildId,
       channel,
       authorId: interaction.user.id,
@@ -1411,10 +1574,13 @@ export async function handleArtShowModal(interaction: ModalSubmitInteraction): P
       sourceHttpUrl: ingested.sourceHttpUrl,
       originalBytes: ingested.bytes,
       orientation: ingested.orientation,
+      client: interaction.client,
     });
     await interaction.editReply(
-      `✅ Hung **${piece.title}** in <#${channel.id}> — piece \`#${piece.id}\`. Tap **▲ Upvote** there.`,
+      `✅ Hung **${piece.title}** in <#${channel.id}> — piece \`#${piece.id}\`. Tap **▲ Upvote** there.`
+      + badgeUnlockLine(badgeResult),
     );
+    await followUpBadgeEmblem(interaction, badgeResult).catch(() => {});
   } catch (err) {
     logger.warn({ err }, "artshow modal submit failed");
     await interaction.editReply(
@@ -1459,7 +1625,7 @@ export async function handleArtShowMessage(msg: Message): Promise<boolean> {
       ? msg.content.trim().split("\n").slice(1).join("\n").trim().slice(0, 400)
       : "";
 
-    const piece = await publishPiece({
+    const { piece, badgeResult } = await publishPiece({
       guildId: msg.guildId,
       channel: gallery,
       authorId: msg.author.id,
@@ -1470,15 +1636,17 @@ export async function handleArtShowMessage(msg: Message): Promise<boolean> {
       sourceHttpUrl: ingested.sourceHttpUrl,
       originalBytes: ingested.bytes,
       orientation: ingested.orientation,
+      client: msg.client,
     });
 
     await msg.delete().catch(() => {});
+    const badgeBit = badgeUnlockLine(badgeResult).replace(/^\n/, " · ");
     const ack = await msg.channel.isTextBased() && !msg.channel.isDMBased()
       ? await (msg.channel as TextChannel).send({
-        content: `✅ <@${msg.author.id}> hung **${piece.title}** in <#${gallery.id}>`,
+        content: `✅ <@${msg.author.id}> hung **${piece.title}** in <#${gallery.id}>${badgeBit}`,
       }).catch(() => null)
       : null;
-    if (ack) setTimeout(() => { ack.delete().catch(() => {}); }, 10_000);
+    if (ack) setTimeout(() => { ack.delete().catch(() => {}); }, 12_000);
   } catch (err) {
     logger.warn({ err }, "artshow board drop failed");
     await msg.react("❌").catch(() => {});

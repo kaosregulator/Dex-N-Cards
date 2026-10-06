@@ -56,6 +56,18 @@ If a submit failed (red ❌) but a DB row exists, or the gallery never got the m
 /artshow repost piece_id:12      ← force one piece
 ```
 
+### Staff: badge sync / reset unlocks
+
+Guilds that saved badge rules before Art Show shipped were missing Exhibitor etc.
+Run once after deploy (or anytime people submitted without seeing emblems):
+
+```
+/artshow sync_badges
+```
+
+This merges Art Show emblems into the guild catalogue and backfills unlocks from
+real submit / vote / crown counts, then announces new emblems.
+
 ## Live piece buttons (gallery)
 
 | Button | Action |
