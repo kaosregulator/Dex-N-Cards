@@ -19,9 +19,14 @@ Simple loop:
 ```
 
 ```
-/artshow crown              # crown this week's leader, announce on the board
+/artshow setup champion_role:@YourWinnerRole   # optional — your existing champ role
+/artshow crown              # end the week on the board
 /artshow fix                # repair: sync emblems + force-post missing gallery pieces
 ```
+
+**`/artshow crown` at week end**
+- New winner → champion embed + their photo + gives them `champion_role` (removes it from the old holder)
+- Same person wins again, **or** nobody new this week → still posts on the board as **Still Undefeated** with the same original winner photo (keeps the role) so the channel stays alive
 
 That’s the whole slash surface. Members never need a command.
 

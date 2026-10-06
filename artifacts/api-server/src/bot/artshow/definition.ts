@@ -39,10 +39,14 @@ export function buildArtShowCommandJson() {
       .addRoleOption(o => o
         .setName("staff_role")
         .setDescription("Optional role that can still post in the read-only gallery")
+        .setRequired(false))
+      .addRoleOption(o => o
+        .setName("champion_role")
+        .setDescription("Discord role given to each week's champion (your existing winner role)")
         .setRequired(false)))
     .addSubcommand(sc => sc
       .setName("crown")
-      .setDescription("Staff: crown this week's winner and announce it on the board")
+      .setDescription("Staff: end the week — new champ, or still undefeated with their photo")
       .addIntegerOption(o => o
         .setName("piece_id")
         .setDescription("Piece id (defaults to this week's leader)")
@@ -66,7 +70,8 @@ export function buildArtShowCommandJson() {
         .setDescription("Existing gallery")
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(false))
-      .addRoleOption(o => o.setName("staff_role").setDescription("Staff role for gallery").setRequired(false)))
+      .addRoleOption(o => o.setName("staff_role").setDescription("Staff role for gallery").setRequired(false))
+      .addRoleOption(o => o.setName("champion_role").setDescription("Weekly champion role").setRequired(false)))
     .toJSON();
 }
 

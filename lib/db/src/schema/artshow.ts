@@ -26,6 +26,8 @@ export const artshowSettingsTable = pgTable("artshow_settings", {
   /** @deprecated Sticky board removed — column retained for existing DBs */
   stickyMessageId: text("sticky_message_id"),
   staffRoleId: text("staff_role_id"),
+  /** Discord role given to the weekly champion (transferred each crown) */
+  championRoleId: text("champion_role_id"),
   /** Base votes granted each UTC day */
   votesPerDay: integer("votes_per_day").notNull().default(5),
   /** Extra votes earned when a member submits a piece */

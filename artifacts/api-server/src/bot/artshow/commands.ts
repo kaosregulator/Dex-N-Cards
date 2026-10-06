@@ -27,7 +27,7 @@ import {
   getOrRefreshWallet, grantSubmitBonus, spendVote, removeVote, spendBump, grantFreeBump,
   countAuthorSubmits, countVotesCast, countAuthorCrowns,
   listAuthorSubmitCounts, listVoterCastCounts, listAuthorPeakVotes, listAuthorCrownCounts,
-  crownPiece, getFame, utcWeekKey,
+  crownPiece, getFame, listFame, utcWeekKey,
 } from "../../lib/artshow/db.js";
 import { mergeMissingDefaultBadgeRules } from "../../lib/badges/db.js";
 import type { ArtshowPiece, ArtshowSettings } from "@workspace/db";
@@ -501,14 +501,54 @@ async function updatePieceEmbedVotes(message: Message, piece: ArtshowPiece): Pro
   } catch { /* ignore */ }
 }
 
+/** Give the existing Discord champion role to the winner; strip it from others. */
+async function assignChampionRole(
+  guild: Guild | null | undefined,
+  roleId: string | null | undefined,
+  winnerId: string,
+): Promise<void> {
+  if (!guild || !roleId) return;
+  const role = await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) {
+    logger.warn({ roleId, guildId: guild.id }, "artshow champion role missing");
+    return;
+  }
+  try {
+    await guild.members.fetch();
+  } catch { /* cache may be partial — still try */ }
+
+  for (const member of role.members.values()) {
+    if (member.id === winnerId) continue;
+    await member.roles.remove(role, "Art Show champion transferred").catch(() => {});
+  }
+
+  const winner = await guild.members.fetch(winnerId).catch(() => null);
+  if (!winner) return;
+  if (!winner.roles.cache.has(role.id)) {
+    await winner.roles.add(role, "Art Show weekly champion").catch(err => {
+      logger.warn({ err, winnerId, roleId }, "artshow champion role add failed — check role hierarchy");
+    });
+  }
+}
+
 async function announceChampion(opts: {
   guildId: string;
   piece: ArtshowPiece;
   board: TextChannel | NewsChannel;
   gallery?: TextChannel | NewsChannel | null;
+  guild?: Guild | null;
+  championRoleId?: string | null;
   reason: string;
+  /** Same person as last week (or no new challenger) — post “still undefeated”. */
+  undefeated?: boolean;
+  weekKey?: string;
 }): Promise<void> {
-  const fame = await crownPiece({ guildId: opts.guildId, piece: opts.piece });
+  const weekKey = opts.weekKey ?? utcWeekKey();
+  const fame = await crownPiece({
+    guildId: opts.guildId,
+    piece: opts.piece,
+    weekKey,
+  });
   const crowns = await countAuthorCrowns(opts.guildId, opts.piece.authorId);
   const badgeResult = await awardArtShowBadges({
     guildId: opts.guildId,
@@ -517,40 +557,56 @@ async function announceChampion(opts: {
     count: crowns,
   });
 
-  const museum = await renderMuseumGif({
-    championTitle: fame.title,
-    championArtist: fame.authorId,
-    championImageUrl: publicImageUrl(fame.imageUrl) ?? fame.imageUrl,
-    votes: fame.votesAtCrown,
-    weekLabel: `Week ${fame.weekKey}`,
-  }).catch(() => null);
+  await assignChampionRole(opts.guild, opts.championRoleId, fame.authorId);
 
+  const undefeated = Boolean(opts.undefeated);
   const files: AttachmentBuilder[] = [];
   const embed = new EmbedBuilder()
     .setColor(0xffe66d)
-    .setTitle("🏆 Weekly Art Show Champion")
-    .setDescription([
-      `**<@${fame.authorId}>** wins the week with **${fame.title}**`,
-      `**▲ ${fame.votesAtCrown}** votes · ${opts.reason}`,
-      "",
-      "Voting for this week is locked. New week — keep submitting!",
-    ].join("\n"));
+    .setTitle(undefeated ? "👑 Still Undefeated" : "🏆 Weekly Art Show Champion")
+    .setDescription(
+      undefeated
+        ? [
+          `**<@${fame.authorId}>** is **still undefeated**`,
+          `Holding the crown with **${fame.title}**`,
+          `**▲ ${fame.votesAtCrown}** · ${opts.reason}`,
+          "",
+          "Think you can take the title? Tap **Submit** and earn ▲ votes.",
+        ].join("\n")
+        : [
+          `**<@${fame.authorId}>** wins the week with **${fame.title}**`,
+          `**▲ ${fame.votesAtCrown}** votes · ${opts.reason}`,
+          "",
+          "Voting for this week is locked. New week — keep submitting!",
+        ].join("\n"),
+    );
 
-  // Prefer original photo for the announcement; museum canvas is a bonus.
+  // Always prefer the original winner photo so the board stays alive and clear.
   const photo = await fetchImageBytes(publicImageUrl(fame.imageUrl) ?? fame.imageUrl);
   if (photo) {
     files.push(new AttachmentBuilder(photo.buf, { name: `champion.${photo.ext}` }));
     embed.setImage(`attachment://champion.${photo.ext}`);
-  } else if (museum) {
-    files.push(new AttachmentBuilder(museum, { name: "museum.gif" }));
-    embed.setImage("attachment://museum.gif");
   } else {
-    const abs = publicImageUrl(fame.imageUrl);
-    if (abs) embed.setImage(abs);
+    const museum = await renderMuseumGif({
+      championTitle: fame.title,
+      championArtist: fame.authorId,
+      championImageUrl: publicImageUrl(fame.imageUrl) ?? fame.imageUrl,
+      votes: fame.votesAtCrown,
+      weekLabel: `Week ${fame.weekKey}`,
+    }).catch(() => null);
+    if (museum) {
+      files.push(new AttachmentBuilder(museum, { name: "museum.gif" }));
+      embed.setImage("attachment://museum.gif");
+    } else {
+      const abs = publicImageUrl(fame.imageUrl);
+      if (abs) embed.setImage(abs);
+    }
   }
 
   await opts.board.send({
-    content: `🏆 <@${fame.authorId}> is this week's Art Show champion!`,
+    content: undefeated
+      ? `👑 <@${fame.authorId}> is **still undefeated** — who will challenge them?`
+      : `🏆 <@${fame.authorId}> is this week's Art Show champion!`,
     embeds: [embed],
     files,
   });
@@ -558,7 +614,9 @@ async function announceChampion(opts: {
 
   if (opts.gallery && opts.gallery.id !== opts.board.id) {
     await opts.gallery.send({
-      content: `🏆 Champion crowned on the board — **${fame.title}** by <@${fame.authorId}> (**▲ ${fame.votesAtCrown}**)`,
+      content: undefeated
+        ? `👑 Still undefeated — **${fame.title}** by <@${fame.authorId}>`
+        : `🏆 Champion crowned on the board — **${fame.title}** by <@${fame.authorId}> (**▲ ${fame.votesAtCrown}**)`,
     }).catch(() => {});
   }
 }
@@ -578,12 +636,18 @@ async function tryAutoCrown(
   const board = await fetchTextChannel(client, boardId);
   if (!board) return;
   const gallery = await fetchTextChannel(client, galleryId);
+  const lastFame = (await listFame(guildId, 1))[0] ?? null;
+  const undefeated = Boolean(lastFame && lastFame.authorId === piece.authorId);
+  const guild = board.guild as Guild;
   await announceChampion({
     guildId,
     piece,
     board,
     gallery,
+    guild,
+    championRoleId: settings.championRoleId,
     reason: `first to **${settings.crownThreshold} ▲**`,
+    undefeated,
   });
 }
 
@@ -631,8 +695,10 @@ async function runSetup(interaction: ChatInputCommandInteraction): Promise<void>
   await interaction.deferReply({ ephemeral: true });
 
   const staffRole = interaction.options.getRole("staff_role");
+  const championRole = interaction.options.getRole("champion_role");
   const prior = await getOrCreateArtshowSettings(interaction.guildId!);
   const staffRoleId = staffRole?.id ?? prior.staffRoleId ?? null;
+  const championRoleId = championRole?.id ?? prior.championRoleId ?? null;
 
   const boardOpt = interaction.options.getChannel("board");
   const galleryOpt = interaction.options.getChannel("gallery");
@@ -666,6 +732,7 @@ async function runSetup(interaction: ChatInputCommandInteraction): Promise<void>
     channelId: gallery.id,
     stickyMessageId: null,
     staffRoleId,
+    championRoleId,
     enabled: true,
   });
 
@@ -681,8 +748,11 @@ async function runSetup(interaction: ChatInputCommandInteraction): Promise<void>
     "✅ Art Show is ready.",
     `· **Board** <#${board.id}> — people tap **Submit** here`,
     `· **Gallery** <#${gallery.id}> — photos + ▲ votes (read-only)`,
+    championRoleId
+      ? `· **Champion role** <@&${championRoleId}> — given on \`/artshow crown\` (kept if still undefeated)`
+      : "· **Champion role** — not set (pass `champion_role` on setup to use your existing winner role)",
     "",
-    "Members never need a slash command. Staff: `/artshow crown` ends the week.",
+    "Members just tap **Submit**. Staff: `/artshow crown` ends the week.",
   ].join("\n"));
 }
 
@@ -770,17 +840,6 @@ async function runCrown(interaction: ChatInputCommandInteraction): Promise<void>
     return;
   }
 
-  const pieceId = interaction.options.getInteger("piece_id");
-  let piece = pieceId != null ? await getPiece(pieceId) : null;
-  if (!piece) {
-    const top = await topPieces(guildId, { weekKey: week, limit: 1 });
-    piece = top[0] ?? null;
-  }
-  if (!piece || piece.guildId !== guildId) {
-    await interaction.editReply("No piece to crown this week.");
-    return;
-  }
-
   const settings = await getOrCreateArtshowSettings(guildId);
   const { boardId, galleryId } = channelIds(settings);
   const board = await fetchTextChannel(interaction.client, boardId);
@@ -789,15 +848,67 @@ async function runCrown(interaction: ChatInputCommandInteraction): Promise<void>
     return;
   }
   const gallery = await fetchTextChannel(interaction.client, galleryId);
+  const lastFame = (await listFame(guildId, 1))[0] ?? null;
+
+  const pieceId = interaction.options.getInteger("piece_id");
+  let piece = pieceId != null ? await getPiece(pieceId) : null;
+  if (!piece) {
+    const top = await topPieces(guildId, { weekKey: week, limit: 1 });
+    piece = top[0] ?? null;
+  }
+
+  let undefeated = false;
+  let reason = "staff crown";
+
+  if (!piece || piece.guildId !== guildId) {
+    // No new winner this week — keep the last champion alive on the board.
+    if (!lastFame) {
+      await interaction.editReply("No piece to crown and no previous champion to keep undefeated.");
+      return;
+    }
+    piece = await getPiece(lastFame.pieceId);
+    if (!piece) {
+      // Piece row gone — rebuild a minimal record from fame for the announce/crown.
+      piece = {
+        id: lastFame.pieceId,
+        guildId,
+        authorId: lastFame.authorId,
+        title: lastFame.title,
+        description: "",
+        imageUrl: lastFame.imageUrl,
+        orientation: "landscape",
+        channelId: galleryId ?? boardId ?? "",
+        messageId: null,
+        votes: lastFame.votesAtCrown,
+        weekKey: week,
+        bumpedAt: null,
+        featuredUntil: null,
+        createdAt: lastFame.crownedAt,
+        updatedAt: lastFame.crownedAt,
+      };
+    }
+    undefeated = true;
+    reason = "no new challenger this week";
+  } else if (lastFame && lastFame.authorId === piece.authorId) {
+    undefeated = true;
+    reason = "defended the crown";
+  }
+
   await announceChampion({
     guildId,
     piece,
     board,
     gallery,
-    reason: "staff crown",
+    guild: interaction.guild,
+    championRoleId: settings.championRoleId,
+    reason,
+    undefeated,
+    weekKey: week,
   });
   await interaction.editReply(
-    `🏆 Crowned **${piece.title}** by <@${piece.authorId}> — announced in <#${board.id}>.`,
+    undefeated
+      ? `👑 **Still undefeated** — <@${piece.authorId}> · **${piece.title}** posted in <#${board.id}>.`
+      : `🏆 Crowned **${piece.title}** by <@${piece.authorId}> — announced in <#${board.id}>.`,
   );
 }
 
