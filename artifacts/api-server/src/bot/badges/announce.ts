@@ -46,7 +46,7 @@ export async function buildBadgeShowcase(opts: {
           : `\`${bar}\` ${result.badge.xp}/${need}`,
       ].join("\n"),
     )
-    .setFooter({ text: "This emblem notice cleans up shortly" });
+    .setFooter({ text: "This emblem notice cleans up in about 40 seconds" });
 
   const files: AttachmentBuilder[] = [];
   if (showGif) {
