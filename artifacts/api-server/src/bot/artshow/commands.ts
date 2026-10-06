@@ -10,7 +10,7 @@
 
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder,
-  AttachmentBuilder, PermissionFlagsBits,
+  AttachmentBuilder, PermissionFlagsBits, MessageFlags,
   ModalBuilder, LabelBuilder, FileUploadBuilder,
   TextInputBuilder, TextInputStyle,
   type ChatInputCommandInteraction, type ButtonInteraction,
@@ -27,7 +27,7 @@ import {
   getOrRefreshWallet, grantSubmitBonus, spendVote, removeVote, spendBump, grantFreeBump,
   countAuthorSubmits, countVotesCast, countAuthorCrowns,
   listAuthorSubmitCounts, listVoterCastCounts, listAuthorPeakVotes, listAuthorCrownCounts,
-  crownPiece, getFame, listFame, utcWeekKey,
+  crownPiece, getFame, listFame, utcWeekKey, piecePhotos,
 } from "../../lib/artshow/db.js";
 import { mergeMissingDefaultBadgeRules } from "../../lib/badges/db.js";
 import type { ArtshowPiece, ArtshowSettings } from "@workspace/db";
@@ -35,10 +35,13 @@ import { awardArtShowBadges } from "../badges/engine.js";
 import { buildBadgeShowcase } from "../badges/announce.js";
 import { detectOrientation } from "./render-hall.js";
 import { renderMuseumGif } from "./render-museum.js";
+import { renderPieceCardPng } from "./render-piece-card.js";
 import { ARTSHOW_STAFF_PERMS } from "./definition.js";
 
 const EPHEMERAL = { ephemeral: true } as const;
 const BRAND = 0xc4a574;
+/** Discord file-upload + practical attach limit */
+const MAX_PHOTOS = 10;
 
 function isStaff(interaction: { memberPermissions?: { has: (p: bigint) => boolean } | null }): boolean {
   return Boolean(interaction.memberPermissions?.has(ARTSHOW_STAFF_PERMS)
@@ -55,25 +58,33 @@ function channelIds(settings: ArtshowSettings): {
   };
 }
 
-function pieceButtons(pieceId: number) {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
+function pieceButtons(pieceId: number, photoCount = 1) {
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`artshow:vote:${pieceId}`)
+      .setLabel("Upvote")
+      .setEmoji("▲")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`artshow:unvote:${pieceId}`)
+      .setLabel("Remove vote")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`artshow:bump:${pieceId}`)
+      .setLabel("Bump me")
+      .setEmoji("📌")
+      .setStyle(ButtonStyle.Secondary),
+  );
+  if (photoCount > 1) {
+    row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`artshow:vote:${pieceId}`)
-        .setLabel("Upvote")
-        .setEmoji("▲")
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`artshow:unvote:${pieceId}`)
-        .setLabel("Remove vote")
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`artshow:bump:${pieceId}`)
-        .setLabel("Bump me")
-        .setEmoji("📌")
-        .setStyle(ButtonStyle.Secondary),
-    ),
-  ];
+        .setCustomId(`artshow:photos:${pieceId}:0`)
+        .setLabel("View photos")
+        .setEmoji("🖼️")
+        .setStyle(ButtonStyle.Primary),
+    );
+  }
+  return [row];
 }
 
 function stationButtons() {
@@ -124,14 +135,14 @@ function buildSubmitModal(): ModalBuilder {
             .setPlaceholder("Optional — materials, story, anything…"),
         ),
       new LabelBuilder()
-        .setLabel("Photo")
-        .setDescription("Pick a photo from your device")
+        .setLabel("Photos")
+        .setDescription(`Pick 1–${MAX_PHOTOS} photos — still one post`)
         .setFileUploadComponent(
           new FileUploadBuilder()
             .setCustomId("image")
             .setRequired(true)
             .setMinValues(1)
-            .setMaxValues(1),
+            .setMaxValues(MAX_PHOTOS),
         ),
     );
 }
@@ -386,45 +397,93 @@ async function ingestUpload(att: Attachment): Promise<{
   };
 }
 
-/** Gallery post = original photo + title + vote buttons. No hall canvas clutter. */
+async function ingestUploads(atts: Attachment[]): Promise<{
+  storedUrls: string[];
+  sourceHttpUrls: string[];
+  bytesList: Array<{ buf: Buffer; ext: string }>;
+  orientation: "landscape" | "portrait" | "square";
+}> {
+  const storedUrls: string[] = [];
+  const sourceHttpUrls: string[] = [];
+  const bytesList: Array<{ buf: Buffer; ext: string }> = [];
+  for (const att of atts.slice(0, MAX_PHOTOS)) {
+    if (!isImageAttachment(att)) continue;
+    const one = await ingestUpload(att);
+    storedUrls.push(one.storedUrl);
+    sourceHttpUrls.push(one.sourceHttpUrl);
+    if (one.bytes) bytesList.push(one.bytes);
+  }
+  if (!storedUrls.length) throw new Error("No image files found in the upload.");
+  const orientation = await detectOrientation(
+    publicImageUrl(storedUrls[0]!) ?? sourceHttpUrls[0]!,
+  );
+  return { storedUrls, sourceHttpUrls, bytesList, orientation };
+}
+
+function loadablePhotoUrls(piece: ArtshowPiece, extras?: string[]): string[] {
+  const raw = extras?.length ? extras : piecePhotos(piece);
+  return raw
+    .map(u => publicImageUrl(u) ?? (/^https?:\/\//i.test(u) ? u : null))
+    .filter((u): u is string => Boolean(u));
+}
+
+/** Clean gold-card canvas (letterboxed photos) + vote buttons. */
 async function sendPieceMessage(opts: {
   piece: ArtshowPiece;
   channel: TextChannel | NewsChannel;
+  artistName?: string;
   content: string;
-  sourceHttpUrl?: string | null;
-  originalBytes?: { buf: Buffer; ext: string } | null;
+  sourceHttpUrls?: string[];
+  originalBytesList?: Array<{ buf: Buffer; ext: string }>;
 }): Promise<Message> {
+  const photos = piecePhotos(opts.piece);
+  const loadUrls = loadablePhotoUrls(opts.piece, opts.sourceHttpUrls);
+  const artistName = opts.artistName ?? opts.piece.authorId;
+
   const files: AttachmentBuilder[] = [];
   let imageName: string | null = null;
 
-  if (opts.originalBytes?.buf?.length) {
-    imageName = `art.${opts.originalBytes.ext || "jpg"}`;
-    files.push(new AttachmentBuilder(opts.originalBytes.buf, { name: imageName }));
-  } else {
-    const http = publicImageUrl(opts.piece.imageUrl) ?? opts.sourceHttpUrl;
-    if (http) {
-      const downloaded = await fetchImageBytes(http);
-      if (downloaded) {
-        imageName = `art.${downloaded.ext}`;
-        files.push(new AttachmentBuilder(downloaded.buf, { name: imageName }));
-      }
+  const card = await renderPieceCardPng({
+    title: opts.piece.title,
+    artistName,
+    description: opts.piece.description,
+    imageUrls: loadUrls.length ? loadUrls : photos,
+    votes: opts.piece.votes,
+  });
+
+  if (card && card.length < 7_500_000) {
+    imageName = "piece-card.png";
+    files.push(new AttachmentBuilder(card, { name: imageName }));
+  } else if (opts.originalBytesList?.[0]?.buf?.length) {
+    const b = opts.originalBytesList[0];
+    imageName = `art.${b.ext || "jpg"}`;
+    files.push(new AttachmentBuilder(b.buf, { name: imageName }));
+  } else if (loadUrls[0]) {
+    const downloaded = await fetchImageBytes(loadUrls[0]);
+    if (downloaded) {
+      imageName = `art.${downloaded.ext}`;
+      files.push(new AttachmentBuilder(downloaded.buf, { name: imageName }));
     }
   }
 
+  const photoNote = photos.length > 1
+    ? ` · **${photos.length} photos** — tap **View photos**`
+    : "";
+
   const embed = new EmbedBuilder()
-    .setColor(BRAND)
+    .setColor(0xe8c87a)
     .setTitle(opts.piece.title)
     .setDescription([
       `by <@${opts.piece.authorId}>`,
       opts.piece.description ? `*${opts.piece.description}*` : null,
       "",
-      `**▲ ${opts.piece.votes}** votes`,
+      `**▲ ${opts.piece.votes}** votes${photoNote}`,
     ].filter(Boolean).join("\n"))
     .setFooter({ text: `Piece #${opts.piece.id} · ${opts.piece.weekKey}` });
 
   if (imageName) embed.setImage(`attachment://${imageName}`);
   else {
-    const abs = publicImageUrl(opts.piece.imageUrl) ?? opts.sourceHttpUrl;
+    const abs = loadUrls[0] ?? publicImageUrl(opts.piece.imageUrl);
     if (abs) embed.setImage(abs);
   }
 
@@ -432,7 +491,7 @@ async function sendPieceMessage(opts: {
     content: opts.content,
     embeds: [embed],
     files,
-    components: pieceButtons(opts.piece.id),
+    components: pieceButtons(opts.piece.id, photos.length),
   });
   await setPieceMessage(opts.piece.id, sent.id);
   return sent;
@@ -446,22 +505,24 @@ async function publishPiece(opts: {
   authorName: string;
   title: string;
   description: string;
-  storedUrl: string;
-  sourceHttpUrl: string;
-  originalBytes?: { buf: Buffer; ext: string } | null;
+  storedUrls: string[];
+  sourceHttpUrls: string[];
+  originalBytesList?: Array<{ buf: Buffer; ext: string }>;
   orientation?: "landscape" | "portrait" | "square";
 }): Promise<{
   piece: ArtshowPiece;
   badgeResult: Awaited<ReturnType<typeof awardArtShowBadges>>;
 }> {
+  const urls = opts.storedUrls.slice(0, MAX_PHOTOS);
   const orientation = opts.orientation
-    ?? await detectOrientation(opts.sourceHttpUrl || opts.storedUrl);
+    ?? await detectOrientation(opts.sourceHttpUrls[0] || urls[0]!);
   const piece = await insertPiece({
     guildId: opts.guildId,
     authorId: opts.authorId,
     title: opts.title,
     description: opts.description,
-    imageUrl: opts.storedUrl,
+    imageUrl: urls[0]!,
+    imageUrls: urls,
     orientation,
     channelId: opts.gallery.id,
   });
@@ -469,9 +530,10 @@ async function publishPiece(opts: {
   await sendPieceMessage({
     piece,
     channel: opts.gallery,
+    artistName: opts.authorName,
     content: `✨ <@${opts.authorId}> submitted **${piece.title}**`,
-    sourceHttpUrl: opts.sourceHttpUrl,
-    originalBytes: opts.originalBytes,
+    sourceHttpUrls: opts.sourceHttpUrls,
+    originalBytesList: opts.originalBytesList,
   });
 
   const settings = await getOrCreateArtshowSettings(opts.guildId);
@@ -483,22 +545,71 @@ async function publishPiece(opts: {
     mode: "submit",
     count: submits,
   });
-  // Emblems announce on the board (where people submit), not buried in gallery.
   await maybeAnnounceBadges(opts.board ?? opts.gallery, opts.guildId, opts.authorId, badgeResult);
   return { piece, badgeResult };
 }
 
 async function updatePieceEmbedVotes(message: Message, piece: ArtshowPiece): Promise<void> {
   try {
+    const n = piecePhotos(piece).length;
+    const photoNote = n > 1 ? ` · **${n} photos** — tap **View photos**` : "";
     const embed = EmbedBuilder.from(message.embeds[0] ?? new EmbedBuilder())
       .setDescription([
         `by <@${piece.authorId}>`,
         piece.description ? `*${piece.description}*` : null,
         "",
-        `**▲ ${piece.votes}** votes`,
+        `**▲ ${piece.votes}** votes${photoNote}`,
       ].filter(Boolean).join("\n"));
-    await message.edit({ embeds: [embed], components: pieceButtons(piece.id) });
+    await message.edit({ embeds: [embed], components: pieceButtons(piece.id, n) });
   } catch { /* ignore */ }
+}
+
+async function replyPhotoViewer(
+  interaction: ButtonInteraction,
+  piece: ArtshowPiece,
+  page: number,
+): Promise<void> {
+  const photos = loadablePhotoUrls(piece);
+  if (!photos.length) {
+    const msg = "No photos stored for this piece.";
+    if (interaction.deferred || interaction.replied) await interaction.editReply(msg);
+    else await interaction.reply({ content: msg, ...EPHEMERAL });
+    return;
+  }
+  const safe = ((page % photos.length) + photos.length) % photos.length;
+  const url = photos[safe]!;
+  const downloaded = await fetchImageBytes(url);
+  const files: AttachmentBuilder[] = [];
+  let name = "photo.jpg";
+  if (downloaded) {
+    name = `photo-${safe + 1}.${downloaded.ext}`;
+    files.push(new AttachmentBuilder(downloaded.buf, { name }));
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xe8c87a)
+    .setTitle(piece.title)
+    .setDescription(`Photo **${safe + 1}** of **${photos.length}** · by <@${piece.authorId}>`)
+    .setFooter({ text: "Only you can see this" });
+  if (files.length) embed.setImage(`attachment://${name}`);
+  else embed.setImage(url);
+
+  const nav = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`artshow:photos:${piece.id}:${safe - 1}`)
+      .setLabel("Prev")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(photos.length <= 1),
+    new ButtonBuilder()
+      .setCustomId(`artshow:photos:${piece.id}:${safe + 1}`)
+      .setLabel("Next")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(photos.length <= 1),
+  );
+
+  const payload = { embeds: [embed], files, components: [nav] };
+  if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
+  else await interaction.reply({ ...payload, ...EPHEMERAL });
 }
 
 /** Give the existing Discord champion role to the winner; strip it from others. */
@@ -812,7 +923,7 @@ async function runFix(interaction: ChatInputCommandInteraction): Promise<void> {
         piece,
         channel: gallery,
         content: `🔁 <@${piece.authorId}> · **${piece.title}**`,
-        sourceHttpUrl: publicImageUrl(piece.imageUrl),
+        sourceHttpUrls: loadablePhotoUrls(piece),
       });
       reposted++;
     }
@@ -876,6 +987,7 @@ async function runCrown(interaction: ChatInputCommandInteraction): Promise<void>
         title: lastFame.title,
         description: "",
         imageUrl: lastFame.imageUrl,
+        imageUrls: [lastFame.imageUrl],
         orientation: "landscape",
         channelId: galleryId ?? boardId ?? "",
         messageId: null,
@@ -894,9 +1006,10 @@ async function runCrown(interaction: ChatInputCommandInteraction): Promise<void>
     reason = "defended the crown";
   }
 
+  const crowned = piece!;
   await announceChampion({
     guildId,
-    piece,
+    piece: crowned,
     board,
     gallery,
     guild: interaction.guild,
@@ -907,8 +1020,8 @@ async function runCrown(interaction: ChatInputCommandInteraction): Promise<void>
   });
   await interaction.editReply(
     undefeated
-      ? `👑 **Still undefeated** — <@${piece.authorId}> · **${piece.title}** posted in <#${board.id}>.`
-      : `🏆 Crowned **${piece.title}** by <@${piece.authorId}> — announced in <#${board.id}>.`,
+      ? `👑 **Still undefeated** — <@${crowned.authorId}> · **${crowned.title}** posted in <#${board.id}>.`
+      : `🏆 Crowned **${crowned.title}** by <@${crowned.authorId}> — announced in <#${board.id}>.`,
   );
 }
 
@@ -1043,6 +1156,23 @@ export async function handleArtShowButton(interaction: ButtonInteraction): Promi
     return;
   }
 
+  if (id.startsWith("artshow:photos:")) {
+    const parts = id.split(":");
+    const pieceId = Number(parts[2]);
+    const page = Number(parts[3] ?? 0);
+    const piece = await getPiece(pieceId);
+    if (!piece || piece.guildId !== interaction.guildId) {
+      await interaction.reply({ content: "Piece not found.", ...EPHEMERAL });
+      return;
+    }
+    // Gallery button → new ephemeral; Prev/Next on that ephemeral → update in place.
+    const onEphemeral = interaction.message.flags.has(MessageFlags.Ephemeral);
+    if (onEphemeral) await interaction.deferUpdate();
+    else await interaction.deferReply({ ephemeral: true });
+    await replyPhotoViewer(interaction, piece, page);
+    return;
+  }
+
   if (id.startsWith("artshow:bump:")) {
     const pieceId = Number(id.split(":")[2]);
     await interaction.deferReply({ ephemeral: true });
@@ -1060,11 +1190,17 @@ export async function handleArtShowButton(interaction: ButtonInteraction): Promi
     if (result.piece.messageId) {
       await channel.messages.delete(result.piece.messageId).catch(() => {});
     }
+    let artistName = result.piece.authorId;
+    try {
+      const u = await interaction.client.users.fetch(result.piece.authorId);
+      artistName = u.username;
+    } catch { /* keep */ }
     await sendPieceMessage({
       piece: result.piece,
       channel: channel as TextChannel,
+      artistName,
       content: `📌 **Bumped** — <@${result.piece.authorId}>'s **${result.piece.title}**`,
-      sourceHttpUrl: publicImageUrl(result.piece.imageUrl),
+      sourceHttpUrls: loadablePhotoUrls(result.piece),
     });
     await interaction.editReply(
       result.usedFree
@@ -1103,18 +1239,11 @@ export async function handleArtShowModal(interaction: ModalSubmitInteraction): P
     return;
   }
 
-  const files = interaction.fields.getUploadedFiles("image", false);
-  const attachment = files?.first();
-  if (!attachment) {
+  const uploaded = interaction.fields.getUploadedFiles("image", false);
+  const attachments = uploaded ? [...uploaded.values()].filter(isImageAttachment) : [];
+  if (!attachments.length) {
     await interaction.reply({
-      content: "No photo attached — tap **Submit** again and pick a photo.",
-      ...EPHEMERAL,
-    });
-    return;
-  }
-  if (!isImageAttachment(attachment)) {
-    await interaction.reply({
-      content: "That file isn’t an image. Upload a PNG, JPG, GIF, or WebP.",
+      content: `No photos attached — tap **Submit** again and pick 1–${MAX_PHOTOS} images.`,
       ...EPHEMERAL,
     });
     return;
@@ -1134,7 +1263,7 @@ export async function handleArtShowModal(interaction: ModalSubmitInteraction): P
       return;
     }
     const board = await fetchTextChannel(interaction.client, boardId);
-    const ingested = await ingestUpload(attachment);
+    const ingested = await ingestUploads(attachments);
     const { piece, badgeResult } = await publishPiece({
       guildId: interaction.guildId,
       gallery,
@@ -1143,13 +1272,14 @@ export async function handleArtShowModal(interaction: ModalSubmitInteraction): P
       authorName: interaction.user.username,
       title,
       description,
-      storedUrl: ingested.storedUrl,
-      sourceHttpUrl: ingested.sourceHttpUrl,
-      originalBytes: ingested.bytes,
+      storedUrls: ingested.storedUrls,
+      sourceHttpUrls: ingested.sourceHttpUrls,
+      originalBytesList: ingested.bytesList,
       orientation: ingested.orientation,
     });
+    const n = ingested.storedUrls.length;
     await interaction.editReply(
-      `✅ Posted **${piece.title}** in <#${gallery.id}> — people can ▲ vote there.`
+      `✅ Posted **${piece.title}**${n > 1 ? ` (${n} photos)` : ""} in <#${gallery.id}> — people can ▲ vote there.`
       + badgeUnlockLine(badgeResult),
     );
     await followUpBadgeEmblem(interaction, badgeResult).catch(() => {});

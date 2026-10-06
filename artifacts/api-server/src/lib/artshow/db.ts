@@ -58,21 +58,33 @@ export async function insertPiece(opts: {
   title: string;
   description: string;
   imageUrl: string;
+  imageUrls?: string[] | null;
   orientation: string;
   channelId: string;
   weekKey?: string;
 }): Promise<ArtshowPiece> {
+  const urls = (opts.imageUrls?.filter(Boolean) ?? [opts.imageUrl]).slice(0, 10);
   const [row] = await db.insert(artshowPiecesTable).values({
     guildId: opts.guildId,
     authorId: opts.authorId,
     title: opts.title.slice(0, 80),
     description: opts.description.slice(0, 400),
-    imageUrl: opts.imageUrl,
+    imageUrl: urls[0] ?? opts.imageUrl,
+    imageUrls: urls,
     orientation: opts.orientation,
     channelId: opts.channelId,
     weekKey: opts.weekKey ?? utcWeekKey(),
   }).returning();
   return row!;
+}
+
+/** All photos on a piece (legacy rows fall back to single imageUrl). */
+export function piecePhotos(piece: Pick<ArtshowPiece, "imageUrl" | "imageUrls">): string[] {
+  const list = Array.isArray(piece.imageUrls)
+    ? piece.imageUrls.filter((u): u is string => typeof u === "string" && u.length > 0)
+    : [];
+  if (list.length) return list.slice(0, 10);
+  return piece.imageUrl ? [piece.imageUrl] : [];
 }
 
 export async function setPieceMessage(pieceId: number, messageId: string): Promise<void> {

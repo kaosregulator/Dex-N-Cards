@@ -1305,6 +1305,7 @@ async function runBootMigrations() {
   await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS board_channel_id TEXT`);
   await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS gallery_channel_id TEXT`);
   await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS champion_role_id TEXT`);
+  await pool.query(`ALTER TABLE artshow_pieces ADD COLUMN IF NOT EXISTS image_urls JSONB`);
   // Migrate legacy single-channel setups into board + gallery when possible.
   await pool.query(`
     UPDATE artshow_settings

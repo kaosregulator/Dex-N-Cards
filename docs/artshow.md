@@ -34,8 +34,13 @@ That’s the whole slash surface. Members never need a command.
 
 1. Open the **board** channel  
 2. Tap **Submit**  
-3. Fill title + optional description + pick a photo  
-4. Vote in the **gallery** with ▲ (daily vote wallet)  
+3. Fill title + optional description + pick **1–10 photos** (still one post)  
+4. Gallery shows a clean gold card (photos letterboxed, never cropped) + ▲ votes  
+5. **View photos** (if more than one) opens an ephemeral pager — only you see it  
+
+Also update CREATE TABLE for artshow_pieces if needed - image_urls via ALTER is enough.
+
+Typecheck.
 
 ## Channels
 
