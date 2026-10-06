@@ -102,3 +102,22 @@ export async function saveMemberBadges(
 export function rulesForGuild(settings: BadgeSettings): BadgeRule[] {
   return getBadgeRules(settings.badgeRules);
 }
+
+/**
+ * Append any DEFAULT_BADGE_RULES ids the guild is missing.
+ * Existing guilds that saved rules before Art Show (etc.) shipped never
+ * picked up the new catalogue entries otherwise — awards silently no-op'd.
+ */
+export async function mergeMissingDefaultBadgeRules(guildId: string): Promise<{
+  added: string[];
+  settings: BadgeSettings;
+}> {
+  const settings = await getOrCreateBadgeSettings(guildId);
+  const current = getBadgeRules(settings.badgeRules);
+  const have = new Set(current.map(r => r.id));
+  const missing = DEFAULT_BADGE_RULES.filter(r => !have.has(r.id));
+  if (!missing.length) return { added: [], settings };
+  const next = getBadgeRules([...current, ...missing]);
+  const updated = await updateBadgeSettings(guildId, { badgeRules: next });
+  return { added: missing.map(r => r.id), settings: updated };
+}

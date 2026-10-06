@@ -1,5 +1,5 @@
 import {
-  pgTable, text, serial, integer, boolean, timestamp, index, uniqueIndex,
+  pgTable, text, serial, integer, boolean, timestamp, index, uniqueIndex, jsonb,
 } from "drizzle-orm/pg-core";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,6 +26,8 @@ export const artshowSettingsTable = pgTable("artshow_settings", {
   /** @deprecated Sticky board removed — column retained for existing DBs */
   stickyMessageId: text("sticky_message_id"),
   staffRoleId: text("staff_role_id"),
+  /** Discord role given to the weekly champion (transferred each crown) */
+  championRoleId: text("champion_role_id"),
   /** Base votes granted each UTC day */
   votesPerDay: integer("votes_per_day").notNull().default(5),
   /** Extra votes earned when a member submits a piece */
@@ -48,7 +50,10 @@ export const artshowPiecesTable = pgTable("artshow_pieces", {
   authorId: text("user_id").notNull(),
   title: text("title").notNull(),
   description: text("description").notNull().default(""),
+  /** Primary / cover image (first photo) */
   imageUrl: text("image_url").notNull(),
+  /** All photos for this one post (1–10). Null = legacy single imageUrl only. */
+  imageUrls: jsonb("image_urls").$type<string[] | null>(),
   orientation: text("orientation").notNull().default("landscape"),
   channelId: text("channel_id").notNull(),
   messageId: text("message_id"),

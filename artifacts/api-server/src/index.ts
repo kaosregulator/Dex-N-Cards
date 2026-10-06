@@ -1291,6 +1291,7 @@ async function runBootMigrations() {
       station_message_id      TEXT,
       sticky_message_id       TEXT,
       staff_role_id           TEXT,
+      champion_role_id        TEXT,
       votes_per_day           INTEGER NOT NULL DEFAULT 5,
       bonus_votes_on_submit   INTEGER NOT NULL DEFAULT 2,
       vote_refresh_hours      INTEGER NOT NULL DEFAULT 6,
@@ -1303,6 +1304,8 @@ async function runBootMigrations() {
   await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS sticky_message_id TEXT`);
   await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS board_channel_id TEXT`);
   await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS gallery_channel_id TEXT`);
+  await pool.query(`ALTER TABLE artshow_settings ADD COLUMN IF NOT EXISTS champion_role_id TEXT`);
+  await pool.query(`ALTER TABLE artshow_pieces ADD COLUMN IF NOT EXISTS image_urls JSONB`);
   // Migrate legacy single-channel setups into board + gallery when possible.
   await pool.query(`
     UPDATE artshow_settings

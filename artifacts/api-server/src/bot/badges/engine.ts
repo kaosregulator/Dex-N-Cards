@@ -13,6 +13,7 @@ import {
   getOrCreateMemberBadges,
   saveMemberBadges,
   rulesForGuild,
+  mergeMissingDefaultBadgeRules,
 } from "../../lib/badges/db.js";
 import {
   applyBadgeXp,
@@ -178,7 +179,9 @@ export async function awardArtShowBadges(opts: {
   mode: "submit" | "votes_cast" | "votes_received" | "crown";
   count: number;
 }): Promise<{ awarded: string[]; labels: string; results: LevelGainResult[]; rules: BadgeRule[] }> {
-  const settings = await getOrCreateBadgeSettings(opts.guildId);
+  // Pull in catalogue entries added after this guild first saved badgeRules
+  // (e.g. Art Show emblems) so unlocks are not silently skipped.
+  const { settings } = await mergeMissingDefaultBadgeRules(opts.guildId);
   if (!settings.enabled) return { awarded: [], labels: "", results: [], rules: [] };
   const rules = rulesForGuild(settings);
   const results: LevelGainResult[] = [];

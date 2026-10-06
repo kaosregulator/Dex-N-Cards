@@ -1,101 +1,77 @@
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from "discord.js";
 
+/**
+ * Keep the slash surface tiny:
+ *   /artshow setup  — create the 2 channels + station
+ *   /artshow crown  — end the week, announce winner on the board
+ *   /artshow fix    — staff repair (badges + missing gallery posts)
+ *
+ * Members never need a slash command — they tap Submit on the board.
+ */
 export function buildArtShowCommandJson() {
   return new SlashCommandBuilder()
     .setName("artshow")
-    .setDescription("Community Art Show — submit, vote, earn emblems, visit the museum")
+    .setDescription("Community Art Show — setup, crown the week, or repair")
     .setDMPermission(false)
     .addSubcommand(sc => sc
-      .setName("post")
-      .setDescription("Staff: set submission board + gallery channels, post the station")
+      .setName("setup")
+      .setDescription("Staff: create board + gallery channels and post the Submit station")
+      .addStringOption(o => o
+        .setName("board_name")
+        .setDescription("Name for the submission board (default: art-show)")
+        .setRequired(false)
+        .setMaxLength(90))
+      .addStringOption(o => o
+        .setName("gallery_name")
+        .setDescription("Name for the voting gallery (default: art-gallery)")
+        .setRequired(false)
+        .setMaxLength(90))
       .addChannelOption(o => o
         .setName("board")
-        .setDescription("Existing submission-board channel (station + photo drops)")
+        .setDescription("Use an existing board channel instead of creating one")
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(false))
       .addChannelOption(o => o
         .setName("gallery")
-        .setDescription("Existing gallery channel where hung pieces appear")
+        .setDescription("Use an existing gallery channel instead of creating one")
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(false))
-      .addStringOption(o => o
-        .setName("create_board")
-        .setDescription("Create a new submission-board channel with this name")
-        .setRequired(false)
-        .setMaxLength(90))
-      .addStringOption(o => o
-        .setName("create_gallery")
-        .setDescription("Create a new read-only gallery channel with this name")
-        .setRequired(false)
-        .setMaxLength(90))
       .addRoleOption(o => o
         .setName("staff_role")
-        .setDescription("Role that can still post in the read-only gallery (optional)")
+        .setDescription("Optional role that can still post in the read-only gallery")
         .setRequired(false))
-      .addIntegerOption(o => o.setName("votes_per_day").setDescription("Daily vote allowance").setMinValue(1).setMaxValue(50))
-      .addIntegerOption(o => o.setName("bonus_on_submit").setDescription("Bonus votes when you submit").setMinValue(0).setMaxValue(20))
-      .addIntegerOption(o => o.setName("refresh_hours").setDescription("Hours between +1 vote refresh").setMinValue(1).setMaxValue(24))
-      .addIntegerOption(o => o.setName("bump_cost").setDescription("Votes to bump your piece").setMinValue(1).setMaxValue(20))
-      .addIntegerOption(o => o.setName("crown_at").setDescription("Auto-crown at this many votes (0=off)").setMinValue(0).setMaxValue(500)))
-    .addSubcommand(sc => sc
-      .setName("submit")
-      .setDescription("Submit a piece with a Discord photo upload")
-      .addAttachmentOption(o => o
-        .setName("image")
-        .setDescription("Your artwork photo")
-        .setRequired(true))
-      .addStringOption(o => o
-        .setName("title")
-        .setDescription("Title for the piece")
-        .setRequired(true)
-        .setMaxLength(80))
-      .addStringOption(o => o
-        .setName("description")
-        .setDescription("Optional description")
-        .setRequired(false)
-        .setMaxLength(400)))
-    .addSubcommand(sc => sc
-      .setName("museum")
-      .setDescription("Open the Hall of Fame museum"))
-    .addSubcommand(sc => sc
-      .setName("badges")
-      .setDescription("See how Art Show emblems evolve"))
-    .addSubcommand(sc => sc
-      .setName("browse")
-      .setDescription("Browse other art halls this week"))
-    .addSubcommand(sc => sc
-      .setName("leaderboard")
-      .setDescription("This week's top pieces")
-      .addBooleanOption(o => o
-        .setName("all_time")
-        .setDescription("Show all-time instead of this week")
+      .addRoleOption(o => o
+        .setName("champion_role")
+        .setDescription("Discord role given to each week's champion (your existing winner role)")
         .setRequired(false)))
-    .addSubcommand(sc => sc
-      .setName("votes")
-      .setDescription("Check your vote wallet"))
     .addSubcommand(sc => sc
       .setName("crown")
-      .setDescription("Staff: crown this week's leading piece into the museum")
+      .setDescription("Staff: end the week — new champ, or still undefeated with their photo")
       .addIntegerOption(o => o
         .setName("piece_id")
-        .setDescription("Optional piece id (defaults to weekly leader)")
+        .setDescription("Piece id (defaults to this week's leader)")
         .setRequired(false)))
     .addSubcommand(sc => sc
-      .setName("setup")
-      .setDescription("Staff: configure votes / bump / crown — or reset to defaults")
-      .addBooleanOption(o => o
-        .setName("reset_defaults")
-        .setDescription("Reset all thresholds/cooldowns to defaults")
+      .setName("fix")
+      .setDescription("Staff: sync missing emblems + force-post any hung pieces that never appeared"))
+    // Back-compat alias — same as setup
+    .addSubcommand(sc => sc
+      .setName("post")
+      .setDescription("Staff: same as /artshow setup")
+      .addStringOption(o => o.setName("board_name").setDescription("Board channel name").setRequired(false).setMaxLength(90))
+      .addStringOption(o => o.setName("gallery_name").setDescription("Gallery channel name").setRequired(false).setMaxLength(90))
+      .addChannelOption(o => o
+        .setName("board")
+        .setDescription("Existing board")
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(false))
-      .addRoleOption(o => o
-        .setName("staff_role")
-        .setDescription("Role allowed to post in the read-only gallery")
+      .addChannelOption(o => o
+        .setName("gallery")
+        .setDescription("Existing gallery")
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(false))
-      .addIntegerOption(o => o.setName("votes_per_day").setDescription("Daily vote allowance").setMinValue(1).setMaxValue(50))
-      .addIntegerOption(o => o.setName("bonus_on_submit").setDescription("Bonus votes when you submit").setMinValue(0).setMaxValue(20))
-      .addIntegerOption(o => o.setName("refresh_hours").setDescription("Hours between +1 vote refresh").setMinValue(1).setMaxValue(24))
-      .addIntegerOption(o => o.setName("bump_cost").setDescription("Votes to bump your piece").setMinValue(1).setMaxValue(20))
-      .addIntegerOption(o => o.setName("crown_at").setDescription("Auto-crown at this many votes (0=off)").setMinValue(0).setMaxValue(500)))
+      .addRoleOption(o => o.setName("staff_role").setDescription("Staff role for gallery").setRequired(false))
+      .addRoleOption(o => o.setName("champion_role").setDescription("Weekly champion role").setRequired(false)))
     .toJSON();
 }
 

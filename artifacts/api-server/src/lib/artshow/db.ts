@@ -58,21 +58,33 @@ export async function insertPiece(opts: {
   title: string;
   description: string;
   imageUrl: string;
+  imageUrls?: string[] | null;
   orientation: string;
   channelId: string;
   weekKey?: string;
 }): Promise<ArtshowPiece> {
+  const urls = (opts.imageUrls?.filter(Boolean) ?? [opts.imageUrl]).slice(0, 10);
   const [row] = await db.insert(artshowPiecesTable).values({
     guildId: opts.guildId,
     authorId: opts.authorId,
     title: opts.title.slice(0, 80),
     description: opts.description.slice(0, 400),
-    imageUrl: opts.imageUrl,
+    imageUrl: urls[0] ?? opts.imageUrl,
+    imageUrls: urls,
     orientation: opts.orientation,
     channelId: opts.channelId,
     weekKey: opts.weekKey ?? utcWeekKey(),
   }).returning();
   return row!;
+}
+
+/** All photos on a piece (legacy rows fall back to single imageUrl). */
+export function piecePhotos(piece: Pick<ArtshowPiece, "imageUrl" | "imageUrls">): string[] {
+  const list = Array.isArray(piece.imageUrls)
+    ? piece.imageUrls.filter((u): u is string => typeof u === "string" && u.length > 0)
+    : [];
+  if (list.length) return list.slice(0, 10);
+  return piece.imageUrl ? [piece.imageUrl] : [];
 }
 
 export async function setPieceMessage(pieceId: number, messageId: string): Promise<void> {
@@ -90,6 +102,32 @@ export async function getPiece(pieceId: number): Promise<ArtshowPiece | null> {
 export async function listPiecesByAuthor(guildId: string, authorId: string, limit = 20): Promise<ArtshowPiece[]> {
   return db.select().from(artshowPiecesTable)
     .where(and(eq(artshowPiecesTable.guildId, guildId), eq(artshowPiecesTable.authorId, authorId)))
+    .orderBy(desc(artshowPiecesTable.createdAt))
+    .limit(limit);
+}
+
+/** Pieces that never got a gallery message (failed hang) — for staff force-repost. */
+export async function listUnpostedPieces(guildId: string, opts?: {
+  weekKey?: string;
+  limit?: number;
+}): Promise<ArtshowPiece[]> {
+  const limit = opts?.limit ?? 25;
+  const week = opts?.weekKey;
+  if (week) {
+    return db.select().from(artshowPiecesTable)
+      .where(and(
+        eq(artshowPiecesTable.guildId, guildId),
+        eq(artshowPiecesTable.weekKey, week),
+        sql`${artshowPiecesTable.messageId} IS NULL`,
+      ))
+      .orderBy(desc(artshowPiecesTable.createdAt))
+      .limit(limit);
+  }
+  return db.select().from(artshowPiecesTable)
+    .where(and(
+      eq(artshowPiecesTable.guildId, guildId),
+      sql`${artshowPiecesTable.messageId} IS NULL`,
+    ))
     .orderBy(desc(artshowPiecesTable.createdAt))
     .limit(limit);
 }
@@ -116,6 +154,54 @@ export async function countAuthorSubmits(guildId: string, authorId: string): Pro
     .from(artshowPiecesTable)
     .where(and(eq(artshowPiecesTable.guildId, guildId), eq(artshowPiecesTable.authorId, authorId)));
   return Number(row?.n ?? 0);
+}
+
+/** Per-author submit counts — used for badge backfill. */
+export async function listAuthorSubmitCounts(guildId: string): Promise<Array<{ authorId: string; count: number }>> {
+  const rows = await db.select({
+    authorId: artshowPiecesTable.authorId,
+    count: sql<number>`count(*)::int`,
+  })
+    .from(artshowPiecesTable)
+    .where(eq(artshowPiecesTable.guildId, guildId))
+    .groupBy(artshowPiecesTable.authorId);
+  return rows.map(r => ({ authorId: r.authorId, count: Number(r.count) }));
+}
+
+/** Per-voter cast counts — used for badge backfill. */
+export async function listVoterCastCounts(guildId: string): Promise<Array<{ voterId: string; count: number }>> {
+  const rows = await db.select({
+    voterId: artshowVotesTable.voterId,
+    count: sql<number>`count(*)::int`,
+  })
+    .from(artshowVotesTable)
+    .where(eq(artshowVotesTable.guildId, guildId))
+    .groupBy(artshowVotesTable.voterId);
+  return rows.map(r => ({ voterId: r.voterId, count: Number(r.count) }));
+}
+
+/** Peak votes on any one piece per author — Rising Artist / Crowd Favorite thresholds. */
+export async function listAuthorPeakVotes(guildId: string): Promise<Array<{ authorId: string; peak: number }>> {
+  const rows = await db.select({
+    authorId: artshowPiecesTable.authorId,
+    peak: sql<number>`max(${artshowPiecesTable.votes})::int`,
+  })
+    .from(artshowPiecesTable)
+    .where(eq(artshowPiecesTable.guildId, guildId))
+    .groupBy(artshowPiecesTable.authorId);
+  return rows.map(r => ({ authorId: r.authorId, peak: Number(r.peak) }));
+}
+
+/** Crown counts per author — Hall Champion / Museum Legend. */
+export async function listAuthorCrownCounts(guildId: string): Promise<Array<{ authorId: string; count: number }>> {
+  const rows = await db.select({
+    authorId: artshowFameTable.authorId,
+    count: sql<number>`count(*)::int`,
+  })
+    .from(artshowFameTable)
+    .where(eq(artshowFameTable.guildId, guildId))
+    .groupBy(artshowFameTable.authorId);
+  return rows.map(r => ({ authorId: r.authorId, count: Number(r.count) }));
 }
 
 export async function countVotesCast(guildId: string, voterId: string): Promise<number> {
