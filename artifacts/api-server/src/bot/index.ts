@@ -141,28 +141,39 @@ export async function startBot() {
     partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
     // Bound Discord.js caches — default unlimited Message/Member retention is a
     // long-lived RSS leak on multi-guild bots even when canvas work is quiet.
+    // A full member list (member browse, mass role) used to stay until restart.
     makeCache: Options.cacheWithLimits({
       ...Options.DefaultMakeCacheSettings,
       MessageManager: 50,
       GuildMessageManager: 50,
       ReactionManager: 0,
+      ReactionUserManager: 0,
       GuildMemberManager: {
         maxSize: 200,
         keepOverLimit: (member) => member.id === member.client.user.id,
       },
+      UserManager: 200,
       // Keep a small presence cache only when AFK status-change is wired.
       PresenceManager: afkPresenceEnabled ? 50 : 0,
       VoiceStateManager: 0,
+      GuildBanManager: 0,
+      GuildInviteManager: 0,
+      GuildStickerManager: 0,
+      GuildScheduledEventManager: 0,
       StageInstanceManager: 0,
       ThreadManager: 20,
       ThreadMemberManager: 0,
     }),
     sweepers: {
       ...Options.DefaultSweeperSettings,
-      messages: { interval: 300, lifetime: 180 },
+      messages: { interval: 180, lifetime: 120 },
+      guildMembers: {
+        interval: 600,
+        filter: () => (member) => member.id !== member.client.user?.id,
+      },
       users: {
         interval: 600,
-        filter: () => (user) => user.bot && user.id !== user.client.user.id,
+        filter: () => (user) => user.bot && user.id !== user.client.user?.id,
       },
     },
   });
