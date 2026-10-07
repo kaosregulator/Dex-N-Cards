@@ -113,7 +113,7 @@ What this project is built with (click through for each upstream project):
 | Runtime | [Node.js](https://nodejs.org/) · [TypeScript](https://www.typescriptlang.org/) · [pnpm](https://pnpm.io/) |
 | Discord bot & API | [discord.js](https://discord.js.org/) · [Express](https://expressjs.com/) · [Zod](https://zod.dev/) |
 | Database | [PostgreSQL](https://www.postgresql.org/) · [Drizzle ORM](https://orm.drizzle.team/) · [node-postgres (pg)](https://node-postgres.com/) |
-| Image & canvas | [node-canvas](https://github.com/Automattic/node-canvas) · [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) · [sharp](https://sharp.pixelplumbing.com/) · [Konva](https://konvajs.org/) |
+| Image & canvas | [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (Skia — the only server canvas) · [sharp](https://sharp.pixelplumbing.com/) · [Konva](https://konvajs.org/) (Discord Activity client) |
 | Discord Activity | [Phaser](https://phaser.io/) · [Babylon.js](https://www.babylonjs.com/) · [Rive](https://rive.app/) · [Discord Embedded App SDK](https://discord.com/developers/docs/activities/overview) |
 | Dashboard | [React](https://react.dev/) · [Vite](https://vite.dev/) · [TanStack Query](https://tanstack.com/query) · [Tailwind CSS](https://tailwindcss.com/) · [Wouter](https://github.com/molefrog/wouter) |
 | Tooling | [esbuild](https://esbuild.github.io/) · [Vitest](https://vitest.dev/) · [Playwright](https://playwright.dev/) (optional MakeEmoji browser) |

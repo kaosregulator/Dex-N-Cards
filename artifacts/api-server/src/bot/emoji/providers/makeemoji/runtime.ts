@@ -10,6 +10,10 @@
 // Browser builds also drift: a Playwright upgrade expects a newer Chromium
 // revision than the one already on the host, which is a confusing failure to
 // debug from the raw error. `MAKEEMOJI_CHROMIUM_PATH` pins an existing binary.
+//
+// Memory: a fresh Chromium per /emoji generate is 150–400+ MB RSS. We keep a
+// single shared browser, serialize browser-path jobs (concurrency 1), and idle-
+// close after inactivity so a quiet host drops that footprint.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync, readdirSync } from "node:fs";
@@ -23,6 +27,11 @@ import { EmojiError } from "../../utils/errors.js";
 const ENV_EXECUTABLE = "MAKEEMOJI_CHROMIUM_PATH";
 /** Set to "0"/"false" to watch the automation in a headed browser while debugging. */
 const ENV_HEADLESS = "MAKEEMOJI_HEADLESS";
+/** Idle ms before the shared Chromium is closed (default 3 minutes). */
+const IDLE_CLOSE_MS = Math.max(
+  30_000,
+  Number(process.env["MAKEEMOJI_BROWSER_IDLE_MS"] ?? 180_000) || 180_000,
+);
 
 type PlaywrightModule = typeof import("playwright");
 
@@ -75,6 +84,16 @@ export function launchOptions(): LaunchOptions {
       "--no-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      // Cap Chromium extras — MakeEmoji is a short-lived page, not a desktop session.
+      "--renderer-process-limit=1",
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--disable-default-apps",
+      "--disable-sync",
+      "--disable-translate",
+      "--mute-audio",
+      "--no-first-run",
+      "--js-flags=--max-old-space-size=128",
     ],
   };
 }
@@ -171,6 +190,17 @@ export async function resolveChromiumPath(): Promise<string | null> {
   const configured = process.env[ENV_EXECUTABLE]?.trim();
   if (configured) return existsSync(configured) ? configured : null;
 
+  // Prefer env/project-aware discovery so HOME, PLAYWRIGHT_BROWSERS_PATH, and
+  // workspace `.cache/ms-playwright` win over Playwright's baked-in default
+  // path (which ignores a HOME override and can hide a workspace-local build).
+  const discovered = findInstalledChromium();
+  if (discovered) return discovered;
+
+  // When PLAYWRIGHT_BROWSERS_PATH is pinned, stay inside that tree — do not
+  // fall back to Playwright's default home cache (breaks isolation and the
+  // "missing browser" status check used by admin/health).
+  if (process.env["PLAYWRIGHT_BROWSERS_PATH"]?.trim()) return null;
+
   const pw = await loadPlaywright();
   if (pw) {
     try {
@@ -179,49 +209,131 @@ export async function resolveChromiumPath(): Promise<string | null> {
     } catch { /* no browser registered for this build; fall through */ }
   }
 
-  return findInstalledChromium();
+  return null;
 }
 
-/** Launch a browser, converting startup failures into a user-safe error. */
-export async function launchBrowser(): Promise<Browser> {
-  const pw = await loadPlaywright();
-  if (!pw) {
-    logger.error("playwright is not installed; /emoji cannot generate");
-    throw new EmojiError(
-      "provider_unavailable",
-      "The emoji generator isn't set up on this host right now.",
-    );
-  }
+// ── Shared Chromium (singleton + serial lane) ────────────────────────────────
 
-  // Resolve first rather than launching and recovering from the failure: the
-  // same resolution backs `browserProblem()`, so what status() reports and what
-  // a generation actually does can no longer disagree.
-  const executablePath = await resolveChromiumPath();
-  if (!executablePath) {
-    logger.error(
-      { fix: "pnpm emoji:install-browser", override: ENV_EXECUTABLE },
-      "no Chromium browser is installed; /emoji cannot generate",
-    );
-    throw new EmojiError(
-      "provider_unavailable",
-      "The emoji generator isn't set up on this server yet. An admin needs to install its browser.",
-    );
-  }
+let sharedBrowser: Browser | null = null;
+let launching: Promise<Browser> | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+/** Serialise browser-path generations so two Chromiums never stack. */
+let browserLane: Promise<unknown> = Promise.resolve();
 
+function bumpIdleClose(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    void closeSharedBrowser("idle");
+  }, IDLE_CLOSE_MS);
+  // Don't keep the event loop alive solely for the idle timer.
+  idleTimer.unref?.();
+}
+
+/** Close the shared browser (best-effort). Safe to call when none is open. */
+export async function closeSharedBrowser(reason = "manual"): Promise<void> {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  const browser = sharedBrowser;
+  sharedBrowser = null;
+  launching = null;
+  if (!browser) return;
   try {
-    return await pw.chromium.launch({ ...launchOptions(), executablePath });
+    await browser.close();
+    logger.info({ reason }, "MakeEmoji shared Chromium closed");
   } catch (err) {
-    // Getting here means a browser exists but will not start — usually missing
-    // system libraries rather than a missing binary, so the full message is
-    // logged: it names the offending shared object.
-    logger.error(
-      { err: (err as Error).message, executablePath },
-      "chromium failed to launch",
-    );
-    throw new EmojiError(
-      "browser_failed",
-      "The emoji generator's browser wouldn't start. This is usually temporary — try again in a moment.",
-    );
+    logger.debug({ err, reason }, "MakeEmoji shared Chromium close failed");
+  }
+}
+
+async function ensureSharedBrowser(): Promise<Browser> {
+  if (sharedBrowser?.isConnected()) {
+    bumpIdleClose();
+    return sharedBrowser;
+  }
+  sharedBrowser = null;
+
+  if (!launching) {
+    launching = (async () => {
+      const pw = await loadPlaywright();
+      if (!pw) {
+        logger.error("playwright is not installed; /emoji cannot generate");
+        throw new EmojiError(
+          "provider_unavailable",
+          "The emoji generator isn't set up on this host right now.",
+        );
+      }
+
+      const executablePath = await resolveChromiumPath();
+      if (!executablePath) {
+        logger.error(
+          { fix: "pnpm emoji:install-browser", override: ENV_EXECUTABLE },
+          "no Chromium browser is installed; /emoji cannot generate",
+        );
+        throw new EmojiError(
+          "provider_unavailable",
+          "The emoji generator isn't set up on this server yet. An admin needs to install its browser.",
+        );
+      }
+
+      try {
+        const browser = await pw.chromium.launch({ ...launchOptions(), executablePath });
+        browser.on("disconnected", () => {
+          if (sharedBrowser === browser) sharedBrowser = null;
+        });
+        sharedBrowser = browser;
+        logger.info({ executablePath }, "MakeEmoji shared Chromium launched");
+        bumpIdleClose();
+        return browser;
+      } catch (err) {
+        logger.error(
+          { err: (err as Error).message, executablePath },
+          "chromium failed to launch",
+        );
+        throw new EmojiError(
+          "browser_failed",
+          "The emoji generator's browser wouldn't start. This is usually temporary — try again in a moment.",
+        );
+      } finally {
+        launching = null;
+      }
+    })();
+  }
+
+  return launching;
+}
+
+/**
+ * Launch (or reuse) the shared Chromium.
+ *
+ * Prefer `withSharedBrowser` from generation code so jobs stay serialised.
+ * Callers that only need a Browser handle (tests / discovery) can use this;
+ * they must NOT call `browser.close()` — use `closeSharedBrowser` instead.
+ */
+export async function launchBrowser(): Promise<Browser> {
+  return ensureSharedBrowser();
+}
+
+/**
+ * Run `fn` with exclusive access to a fresh BrowserContext on the shared
+ * Chromium. Contexts are always closed; the browser stays warm for the next job.
+ */
+export async function withSharedBrowser<T>(
+  fn: (browser: Browser) => Promise<T>,
+): Promise<T> {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const prev = browserLane;
+  browserLane = prev.then(() => gate).catch(() => gate);
+  await prev.catch(() => {});
+  try {
+    const browser = await ensureSharedBrowser();
+    bumpIdleClose();
+    return await fn(browser);
+  } finally {
+    bumpIdleClose();
+    release();
   }
 }
 

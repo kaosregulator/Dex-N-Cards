@@ -714,7 +714,9 @@ export async function renderPetGif(pet: Pet, opts?: { durationMs?: number; prop?
   await loadPetBackground("pink");
 
   return encodeAnimation({
-    width, height, speed: "normal", durationMs, maxFrames: 24, quality: 3, renderScale: 1,
+    // quality/renderScale aligned with battle GIFs — quality:3 at full res was
+    // the heaviest NeuQuant path in the bot and spiked RSS under concurrent care.
+    width, height, speed: "normal", durationMs, maxFrames: 18, quality: 22, renderScale: 0.72,
     render: async (frame) => {
       const { ctx, t } = frame;
       const screen = drawDevice(ctx, width, height, t);
@@ -748,7 +750,7 @@ export async function renderHatchGif(pet: Pet): Promise<AnimationResult | null> 
   await loadEggSheet();
 
   return encodeAnimation({
-    width, height, speed: "fast", durationMs: 3000, maxFrames: 36, quality: 3, renderScale: 1,
+    width, height, speed: "fast", durationMs: 2800, maxFrames: 22, quality: 22, renderScale: 0.72,
     render: async (frame) => {
       const { ctx, t } = frame;
       const screen = drawDevice(ctx, width, height, t);
@@ -868,7 +870,7 @@ export async function renderIntroGif(species?: PetSpecies): Promise<AnimationRes
   const sheet = await loadEggSheet();
 
   return encodeAnimation({
-    width, height, speed: "normal", durationMs: 2200, maxFrames: 20, quality: 3, renderScale: 1,
+    width, height, speed: "normal", durationMs: 2200, maxFrames: 16, quality: 22, renderScale: 0.72,
     render: async (frame) => {
       const { ctx, t } = frame;
       const screen = drawDevice(ctx, width, height, t);
@@ -916,7 +918,7 @@ export async function renderChallengeGif(
   const width = 520;
   const height = 360;
   return encodeAnimation({
-    width, height, speed: "fast", durationMs: 2200, maxFrames: 24, quality: 3, renderScale: 1,
+    width, height, speed: "fast", durationMs: 2200, maxFrames: 18, quality: 22, renderScale: 0.72,
     render: (frame) => {
       const { ctx, t } = frame;
       const screen = drawDevice(ctx, width, height, t);
@@ -950,7 +952,7 @@ export async function renderEggFocusGif(spriteFile: string, caption: string, sub
   const { width, height } = PET_CANVAS;
   const img = await loadFrostEgg(spriteFile);
   return encodeAnimation({
-    width, height, speed: "normal", durationMs: 1800, maxFrames: 16, quality: 3, renderScale: 1,
+    width, height, speed: "normal", durationMs: 1800, maxFrames: 14, quality: 22, renderScale: 0.72,
     render: (frame) => {
       const { ctx, t } = frame;
       const screen = drawDevice(ctx, width, height, t);
@@ -985,7 +987,7 @@ export async function renderShopGif(spriteFiles: string[]): Promise<AnimationRes
   const files = spriteFiles.slice(0, 4);
   const imgs = await Promise.all(files.map(f => loadFrostEgg(f)));
   return encodeAnimation({
-    width, height, speed: "normal", durationMs: 2000, maxFrames: 16, quality: 3, renderScale: 1,
+    width, height, speed: "normal", durationMs: 2000, maxFrames: 14, quality: 22, renderScale: 0.72,
     render: (frame) => {
       const { ctx, t } = frame;
       const screen = drawDevice(ctx, width, height, t);

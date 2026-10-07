@@ -184,6 +184,21 @@ function frameSignature(ctx: Ctx, physW: number, physH: number): number {
   return h >>> 0;
 }
 
+interface FrameSurface {
+  canvas: Canvas;
+  ctx: Ctx;
+}
+
+// Drawing state (clip, transform, alpha) survives clearRect. Restore back to
+// the clean snapshot taken when the surface was created, then clear pixels.
+function resetSurface(surface: FrameSurface, physW: number, physH: number, renderScale: number): void {
+  surface.ctx.restore();
+  surface.ctx.save();
+  surface.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  surface.ctx.clearRect(0, 0, physW, physH);
+  if (renderScale !== 1) surface.ctx.scale(renderScale, renderScale);
+}
+
 export async function encodeAnimation(opts: EncodeOptions): Promise<AnimationResult | null> {
   return queueRender("gif", async () => {
   const mod = await getCanvas();
@@ -197,33 +212,52 @@ export async function encodeAnimation(opts: EncodeOptions): Promise<AnimationRes
     const physW = Math.max(1, Math.round(width * renderScale));
     const physH = Math.max(1, Math.round(height * renderScale));
 
-    // Render every frame up-front, tagging each with a pixel signature so we can
-    // drop duplicate consecutive frames (idle/hold phases) before encoding.
-    const frames: { ctx: Ctx; sig: number }[] = [];
-    for (let i = 0; i < frameCount; i++) {
-      const canvas = mod.createCanvas(physW, physH);
-      const ctx = canvas.getContext("2d") as unknown as Ctx;
-      if (renderScale !== 1) ctx.scale(renderScale, renderScale);
-      const t = frameCount <= 1 ? 1 : i / (frameCount - 1);
-      await render({ canvas, ctx, t, frameIndex: i, frameCount, mod });
-      frames.push({ ctx, sig: frameSignature(ctx, physW, physH) });
-    }
-
     const encoder = new GIFEncoder(physW, physH);
     encoder.start();
     encoder.setRepeat(0);        // loop forever
     encoder.setQuality(quality); // higher = coarser palette = smaller file
 
-    // Coalesce runs of identical frames into a single frame with a summed delay.
+    // Two surfaces, not one per frame. Holding every canvas until the GIF was
+    // finished kept a full bitmap for each frame alive at once (a siege turn
+    // is ~14 frames; three of those in parallel was a multi-hundred-MB spike).
+    // Identical consecutive frames are still coalesced: the held surface is
+    // only swapped when the picture actually changes, then encoded with the
+    // summed delay. gifencoder copies pixels inside addFrame, so the held
+    // surface can be reused immediately after.
+    const makeSurface = (): FrameSurface => {
+      const canvas = mod.createCanvas(physW, physH);
+      const ctx = canvas.getContext("2d") as unknown as Ctx;
+      ctx.save();
+      return { canvas, ctx };
+    };
+    let current = makeSurface();
+    let spare: FrameSurface | null = null;
+    let hold: { surface: FrameSurface; sig: number; run: number } | null = null;
     let emitted = 0;
-    let i = 0;
-    while (i < frames.length) {
-      let j = i + 1;
-      while (j < frames.length && frames[j]!.sig === frames[i]!.sig) j++;
-      encoder.setDelay(delayMs * (j - i));
-      encoder.addFrame(frames[i]!.ctx);
+
+    for (let i = 0; i < frameCount; i++) {
+      resetSurface(current, physW, physH, renderScale);
+      const t = frameCount <= 1 ? 1 : i / (frameCount - 1);
+      await render({ canvas: current.canvas, ctx: current.ctx, t, frameIndex: i, frameCount, mod });
+      const sig = frameSignature(current.ctx, physW, physH);
+      if (hold && hold.sig === sig) {
+        hold.run += 1;
+        continue;
+      }
+      if (hold) {
+        encoder.setDelay(delayMs * hold.run);
+        encoder.addFrame(hold.surface.ctx);
+        emitted++;
+        spare = hold.surface;
+      }
+      hold = { surface: current, sig, run: 1 };
+      current = spare ?? makeSurface();
+      spare = null;
+    }
+    if (hold) {
+      encoder.setDelay(delayMs * hold.run);
+      encoder.addFrame(hold.surface.ctx);
       emitted++;
-      i = j;
     }
     encoder.finish();
 

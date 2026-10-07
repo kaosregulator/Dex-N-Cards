@@ -10,6 +10,9 @@ import {
 import { ObjectStorageService } from "../../lib/objectStorage.js";
 import { frameArtWindow, drawFrameOverlay, progressionArtWindow, drawProgressionOverlay, type ProgTier } from "./card-frames.js";
 import { logger } from "../../lib/logger.js";
+import { shrinkArtBuffer, CARD_ART_MAX_EDGE } from "../images/raster.js";
+
+export { CARD_ART_MAX_EDGE, BACKDROP_MAX_EDGE } from "../images/raster.js";
 
 export interface Particle {
   x: number;
@@ -257,12 +260,38 @@ export function drawTitle(
   drawTextWithShadow(ctx, text, x, y, color, fontSize, align, TITLE_FONT);
 }
 
-// Small LRU-ish cache of decoded card art. Every animation frame draws the same
-// handful of card images, so without this we'd re-download + re-decode the same
-// URL dozens of times per GIF. Keyed by URL; capped so it can't grow unbounded.
+// Decoded card art, shared by every animation frame. Keyed by max-edge + URL.
+// The bytes stored here are already shrunk (see raster.ts), so a full roster
+// stays in the hundreds of megabytes instead of caching multi-megapixel
+// phone uploads. True LRU: a hit moves the entry to the end.
 type LoadedImage = import("@napi-rs/canvas").Image;
-const ART_CACHE_MAX = 128;
+const ART_CACHE_MAX = 64;
 const artCache = new Map<string, Promise<LoadedImage | null>>();
+const artBufferCache = new Map<string, Promise<Buffer | null>>();
+// In-flight original downloads, keyed by URL only. Dropped as soon as the
+// download settles so the full-resolution bytes are not retained — only the
+// shrunk PNG lives in artBufferCache. Concurrent colour + draw calls share
+// this one fetch instead of downloading the art twice.
+const rawInflight = new Map<string, Promise<Buffer | null>>();
+
+function artKey(url: string, maxEdge: number): string {
+  return `${maxEdge}|${url}`;
+}
+
+function touch<V>(map: Map<string, V>, key: string): void {
+  const value = map.get(key);
+  if (value === undefined) return;
+  map.delete(key);
+  map.set(key, value);
+}
+
+function trim(map: Map<string, unknown>, max: number): void {
+  while (map.size > max) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
 
 const storage = new ObjectStorageService();
 
@@ -336,86 +365,89 @@ async function fetchRemoteImage(url: string): Promise<Buffer | null> {
   }
 }
 
-export async function loadArt(mod: CanvasMod, url: string | null | undefined): Promise<LoadedImage | null> {
-  if (!url) return null;
-  const cached = artCache.get(url);
-  if (cached) return cached;
-
-  const promise = (async (): Promise<LoadedImage | null> => {
-    // If the URL is one of our object-storage paths, load it directly from GCS
-    // so server-side canvas rendering doesn't depend on the public HTTP domain.
-    const objectPath = extractObjectStoragePath(url);
-    if (objectPath) {
-      const buffer = await loadObjectStorageImage(objectPath);
-      if (buffer) {
-        try {
-          return await mod.loadImage(buffer);
-        } catch (err) {
-          logger.warn({ err, objectPath }, "Canvas failed to decode object-storage image");
-        }
-      }
-      // Fall back to the public URL if direct download fails.
-    }
-    try {
-      const remoteBuffer = await fetchRemoteImage(url);
-      if (remoteBuffer) return await mod.loadImage(remoteBuffer);
-    } catch (err) {
-      logger.warn({ err, url }, "Canvas failed to load remote image");
-    }
-    return null;
-  })();
-
-  artCache.set(url, promise);
-  // Never cache a FAILURE. A transient miss (network blip, image-load timeout,
-  // object-storage hiccup) resolves to null; if we kept that promise the card's
-  // art would stay a permanent black hole on every future canvas render even
-  // though the embed — which re-fetches the public URL each time — shows it
-  // fine. Evict the entry the moment it resolves null so the next render retries.
-  promise.then(
-    img => { if (img === null) artCache.delete(url); },
-    () => { artCache.delete(url); },
-  );
-  // Evict oldest insertion once over capacity (Map preserves insertion order).
-  if (artCache.size > ART_CACHE_MAX) {
-    const oldest = artCache.keys().next().value;
-    if (oldest !== undefined) artCache.delete(oldest);
-  }
-  return promise;
-}
-
-// Raw image bytes for a card art URL, cached alongside the decoded-image cache.
-// Feeds image processors (e.g. sharp for the spawn reveal blur/silhouette) that
-// need the encoded buffer rather than a decoded canvas Image. Reuses the exact
-// object-storage/remote fetch + timeout logic loadArt uses, so it inherits the
-// same hardening. Best-effort: null on any failure.
-const artBufferCache = new Map<string, Promise<Buffer | null>>();
-
-export async function loadArtBuffer(url: string | null | undefined): Promise<Buffer | null> {
-  if (!url) return null;
-  const cached = artBufferCache.get(url);
-  if (cached) return cached;
-
+async function fetchArtOnce(url: string): Promise<Buffer | null> {
+  const inflight = rawInflight.get(url);
+  if (inflight) return inflight;
   const promise = (async (): Promise<Buffer | null> => {
     const objectPath = extractObjectStoragePath(url);
     if (objectPath) {
       const buffer = await loadObjectStorageImage(objectPath);
       if (buffer) return buffer;
-      // Fall through to the public URL if direct download fails.
     }
     return fetchRemoteImage(url);
   })();
+  rawInflight.set(url, promise);
+  // The full-resolution download must not outlive the shrink step.
+  promise.finally(() => {
+    if (rawInflight.get(url) === promise) rawInflight.delete(url);
+  }).catch(() => {});
+  return promise;
+}
 
-  artBufferCache.set(url, promise);
-  // Same as loadArt: don't let a transient failure poison the cache. Evict on a
-  // null/failed resolution so the reveal (blur/silhouette) retries next time.
-  promise.then(
-    buf => { if (buf === null) artBufferCache.delete(url); },
-    () => { artBufferCache.delete(url); },
-  );
-  if (artBufferCache.size > ART_CACHE_MAX) {
-    const oldest = artBufferCache.keys().next().value;
-    if (oldest !== undefined) artBufferCache.delete(oldest);
+// Shrunk PNG bytes for a card art URL. Spawn-reveal blur/silhouette and the
+// dominant-colour sample both read this, so they share the download with the
+// canvas decode instead of fetching the original a second time.
+export async function loadArtBuffer(
+  url: string | null | undefined,
+  maxEdge: number = CARD_ART_MAX_EDGE,
+): Promise<Buffer | null> {
+  if (!url) return null;
+  const key = artKey(url, maxEdge);
+  const cached = artBufferCache.get(key);
+  if (cached) {
+    touch(artBufferCache, key);
+    return cached;
   }
+
+  const promise = (async (): Promise<Buffer | null> => {
+    const raw = await fetchArtOnce(url);
+    if (!raw) return null;
+    return shrinkArtBuffer(raw, maxEdge);
+  })();
+
+  artBufferCache.set(key, promise);
+  promise.then(
+    buf => { if (buf === null) artBufferCache.delete(key); },
+    () => { artBufferCache.delete(key); },
+  );
+  trim(artBufferCache, ART_CACHE_MAX);
+  return promise;
+}
+
+export async function loadArt(
+  mod: CanvasMod,
+  url: string | null | undefined,
+  maxEdge: number = CARD_ART_MAX_EDGE,
+): Promise<LoadedImage | null> {
+  if (!url) return null;
+  const key = artKey(url, maxEdge);
+  const cached = artCache.get(key);
+  if (cached) {
+    touch(artCache, key);
+    touch(artBufferCache, key);
+    return cached;
+  }
+
+  const promise = (async (): Promise<LoadedImage | null> => {
+    const png = await loadArtBuffer(url, maxEdge);
+    if (!png) return null;
+    try {
+      return await mod.loadImage(png);
+    } catch (err) {
+      logger.warn({ err, url, maxEdge }, "Canvas failed to decode shrunk art");
+      return null;
+    }
+  })();
+
+  artCache.set(key, promise);
+  // Never cache a FAILURE. A transient miss would otherwise stick and every
+  // later canvas would draw a blank card while the embed (which uses the
+  // public URL) still shows the art.
+  promise.then(
+    img => { if (img === null) artCache.delete(key); },
+    () => { artCache.delete(key); },
+  );
+  trim(artCache, ART_CACHE_MAX);
   return promise;
 }
 

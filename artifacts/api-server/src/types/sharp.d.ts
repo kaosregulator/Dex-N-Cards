@@ -1,12 +1,16 @@
 declare module "sharp" {
   function sharp(input?: Buffer | ArrayBuffer | Uint8Array | string | sharp.InputOptions, options?: sharp.InputOptions): sharp.Sharp;
   namespace sharp {
+    function cache(options: boolean | { memory?: number; files?: number; items?: number }): void;
+    function concurrency(concurrency?: number): number;
     interface RGBA { r: number; g: number; b: number; alpha: number }
     interface InputOptions {
       raw?: { width: number; height: number; channels: 1 | 2 | 3 | 4 };
       animated?: boolean;
+      limitInputPixels?: number | boolean;
       pageHeight?: number;
       page?: number;
+      pages?: number;
       create?: { width: number; height: number; channels: 1 | 2 | 3 | 4; background: RGBA };
     }
     interface RawInfo { width: number; height: number; channels: number; size: number }
@@ -37,6 +41,8 @@ declare module "sharp" {
       ensureAlpha(alpha?: number): Sharp;
       raw(): Sharp;
       metadata(): Promise<{ width?: number; height?: number; pages?: number; pageHeight?: number; delay?: number[] }>;
+      rotate(): Sharp;
+      removeAlpha(): Sharp;
       toBuffer(): Promise<Buffer>;
       toBuffer(options: { resolveWithObject: true }): Promise<{ data: Buffer; info: RawInfo }>;
     }

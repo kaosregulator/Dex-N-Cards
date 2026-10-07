@@ -10,6 +10,7 @@ import { fitFontSize, wrapLines } from "./text.js";
 import { quoteDisplayName, unstyleFancyText } from "./display-name.js";
 import type { QuoteTheme } from "./styles.js";
 import { logger } from "../../lib/logger.js";
+import { shrinkArtBuffer } from "../images/raster.js";
 
 export interface QuoteRenderInput {
   text: string;
@@ -32,8 +33,9 @@ async function loadAvatar(mod: CanvasMod, url: string | null): Promise<Img | nul
     // data: URLs (preview harness) and http(s) Discord CDNs both work via fetch.
     const res = await fetch(url, { signal: AbortSignal.timeout(6_000) });
     if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    return await mod.loadImage(buf);
+    const png = await shrinkArtBuffer(Buffer.from(await res.arrayBuffer()), 384);
+    if (!png) return null;
+    return await mod.loadImage(png);
   } catch (err) {
     logger.debug({ err }, "quote: avatar load failed");
     return null;

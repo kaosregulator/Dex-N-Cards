@@ -334,8 +334,8 @@ interface DecodedGif { frames: Drawable[]; delays: number[] }
 // ── Decoded-frame cache (bounded) ────────────────────────────────────────────
 // Preview cache stores GIF *bytes*. Warm boards were still re-decoding those
 // into canvases. Cache composited frames for recent cells only — never all 473.
-const DECODED_MAX_ENTRIES = 24;
-const DECODED_MAX_BYTES = 12 * 1024 * 1024;
+const DECODED_MAX_ENTRIES = 12;
+const DECODED_MAX_BYTES = 6 * 1024 * 1024;
 const DECODED_TTL_MS = 15 * 60 * 1000;
 
 interface DecodedCacheEntry {
@@ -397,26 +397,6 @@ export function clearBoardDecodedCache(): void {
 }
 
 /**
- * Evenly subsample a long GIF down to `maxFrames`, merging delays so the cycle
- * duration (and therefore playback speed) stays the same.
- */
-function subsampleFrames(gif: DecodedGif, maxFrames: number): DecodedGif {
-  const n = gif.frames.length;
-  if (n <= maxFrames) return gif;
-  const frames: Drawable[] = [];
-  const delays: number[] = [];
-  for (let i = 0; i < maxFrames; i++) {
-    const start = Math.floor((i * n) / maxFrames);
-    const end = Math.floor(((i + 1) * n) / maxFrames);
-    frames.push(gif.frames[start]!);
-    let d = 0;
-    for (let j = start; j < end; j++) d += gif.delays[j] ?? 90;
-    delays.push(Math.max(20, d));
-  }
-  return { frames, delays };
-}
-
-/**
  * Decode a GIF into fully-composited per-frame canvases.
  *
  * Our thumbnails come from the emoji encoder, which writes full frames with a
@@ -452,9 +432,20 @@ function decodeGif(mod: CanvasMod, buffer: Buffer): DecodedGif | null {
     const patch = mod.createCanvas(maxW, maxH);
     const pctx = patch.getContext("2d") as unknown as FrameCtx;
 
+    // Walk every source frame for correct disposal, but only snapshot the
+    // evenly-spaced keep-set — avoids N full canvases when N ≫ BOARD_MAX_FRAMES.
+    const n = frames.length;
+    const keepIdx = new Set<number>();
+    const keepCount = Math.min(BOARD_MAX_FRAMES, n);
+    for (let i = 0; i < keepCount; i++) {
+      keepIdx.add(n <= BOARD_MAX_FRAMES ? i : Math.floor((i * n) / keepCount));
+    }
+
     const out: Drawable[] = [];
     const delays: number[] = [];
-    for (const f of frames) {
+    let runDelay = 0;
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i]!;
       const id = pctx.createImageData(f.dims.width, f.dims.height);
       id.data.set(f.patch);
       pctx.putImageData(id, 0, 0);
@@ -465,16 +456,23 @@ function decodeGif(mod: CanvasMod, buffer: Buffer): DecodedGif | null {
         f.dims.left, f.dims.top, f.dims.width, f.dims.height,
       );
 
-      const snap = mod.createCanvas(W, H);
-      (snap.getContext("2d") as unknown as FrameCtx).drawImage(work as unknown, 0, 0);
-      out.push(snap as unknown as Drawable);
-      delays.push(f.delay && f.delay > 0 ? f.delay : 90);
+      runDelay += f.delay && f.delay > 0 ? f.delay : 90;
+
+      if (keepIdx.has(i)) {
+        const snap = mod.createCanvas(W, H);
+        (snap.getContext("2d") as unknown as FrameCtx).drawImage(work as unknown, 0, 0);
+        out.push(snap as unknown as Drawable);
+        delays.push(Math.max(20, runDelay));
+        runDelay = 0;
+      }
 
       if (f.disposalType === 2) {
         wctx.clearRect(f.dims.left, f.dims.top, f.dims.width, f.dims.height);
       }
     }
-    return subsampleFrames({ frames: out, delays }, BOARD_MAX_FRAMES);
+    if (out.length === 0) return null;
+    // Delays already merged while walking; no second subsample pass needed.
+    return { frames: out, delays };
   } catch (err) {
     logger.debug({ err }, "board cell GIF decode failed");
     return null;
@@ -529,8 +527,8 @@ async function loadCell(mod: CanvasMod, image: Buffer, style: string): Promise<C
 // ── Board result cache (bounded) ─────────────────────────────────────────────
 // Warm path without this still re-decoded + re-encoded (~0.6s). Cache a few
 // recent page GIFs keyed by target + styles + focus + favorites.
-const BOARD_RESULT_MAX_ENTRIES = 8;
-const BOARD_RESULT_MAX_BYTES = 16 * 1024 * 1024;
+const BOARD_RESULT_MAX_ENTRIES = 4;
+const BOARD_RESULT_MAX_BYTES = 8 * 1024 * 1024;
 const BOARD_RESULT_TTL_MS = 10 * 60 * 1000;
 
 interface BoardCacheEntry {

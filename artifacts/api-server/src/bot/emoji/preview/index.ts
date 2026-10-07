@@ -43,8 +43,8 @@ const THUMB_SIZE = "96";
 const PREVIEW_VERSION = 1;
 
 /** Ceilings. Previews are image buffers, so this cannot grow unbounded. */
-const MAX_ENTRIES = 400;
-const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+const MAX_ENTRIES = 160;
+const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const TTL_MS = 30 * 60 * 1000;
 
 interface PreviewEntry {

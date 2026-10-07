@@ -224,6 +224,7 @@ async function resolveFieldColor(f: SiegeFieldFighter): Promise<number> {
 }
 
 // ── Image loading (shared, cached, timeout-guarded) ──────────────────────────
+const IMG_CACHE_MAX = 48;
 const imgCache = new Map<string, Promise<CanvasImage | null>>();
 
 function loadSpritePath(mod: CanvasMod, path: string): Promise<CanvasImage | null> {
@@ -235,6 +236,11 @@ function loadSpritePath(mod: CanvasMod, path: string): Promise<CanvasImage | nul
       catch (err) { logger.debug({ err, path }, "siege-field: sprite decode failed"); return null; }
     })();
     imgCache.set(key, p);
+    while (imgCache.size > IMG_CACHE_MAX) {
+      const oldest = imgCache.keys().next().value;
+      if (oldest === undefined) break;
+      imgCache.delete(oldest);
+    }
   }
   return p;
 }

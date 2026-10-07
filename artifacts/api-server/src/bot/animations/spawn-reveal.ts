@@ -175,6 +175,42 @@ export async function createSpawnRevealSession(input: SpawnRevealInput): Promise
   if (mode === "puzzle" && !clearImg) return null;
   const tileOrder = mode === "puzzle" ? seededTileOrder(PUZZLE_TILES, String(input.artUrl)) : [];
 
+  // Prebake a small ladder of blur/silhouette stages once. Progressive spawn
+  // edits used to call sharp+loadImage on every tick (up to ~24× per spawn),
+  // which stacked with battles under multi-guild load. Nearest-keyframe lookup
+  // keeps the reveal smooth without per-tick native image work.
+  const KEYFRAMES = 10;
+  let keyframeArts: LoadedImage[] | null = null;
+  if (mode === "blur" || mode === "silhouette") {
+    try {
+      const frames: LoadedImage[] = [];
+      for (let i = 0; i < KEYFRAMES; i++) {
+        const progress = i / (KEYFRAMES - 1);
+        let buf: Buffer;
+        if (mode === "blur") {
+          const sigma = (1 - progress) * 26;
+          buf = sigma > 0.4
+            ? await sharpFn(base).blur(sigma).png().toBuffer()
+            : base;
+        } else {
+          const brightness = 0.06 + progress * 0.94;
+          const saturation = 0.12 + progress * 0.88;
+          const sBlur = (1 - progress) * 5;
+          let p = sharpFn(base).modulate({ brightness, saturation });
+          if (sBlur > 0.4) p = p.blur(sBlur);
+          buf = await p.png().toBuffer();
+        }
+        const img = await mod.loadImage(buf).catch(() => null);
+        if (!img) throw new Error("keyframe decode failed");
+        frames.push(img);
+      }
+      keyframeArts = frames;
+    } catch (err) {
+      logger.debug({ err }, "spawn-reveal: keyframe bake failed");
+      return null;
+    }
+  }
+
   // Draw the framed card at a given progress with an already-prepared art image
   // (blur/silhouette). Puzzle ignores `art` and reveals clear-art tiles instead.
   const drawFrame = (ctx: Ctx, progress: number, art: LoadedImage | null): void => {
@@ -236,30 +272,17 @@ export async function createSpawnRevealSession(input: SpawnRevealInput): Promise
   const renderFrame = async (progressIn: number): Promise<Buffer | null> => {
     const progress = clamp01(progressIn);
     let art: LoadedImage | null = clearImg;
-    try {
-      if (mode === "blur") {
-        // Heavy blur → clear, in small continuous steps across the window.
-        const sigma = (1 - progress) * 26;
-        art = sigma > 0.4
-          ? await mod.loadImage(await sharpFn(base).blur(sigma).png().toBuffer())
-          : await mod.loadImage(base);
-      } else if (mode === "silhouette") {
-        // Dark, desaturated silhouette → full brightness, colour & detail.
-        const brightness = 0.06 + progress * 0.94;
-        const saturation = 0.12 + progress * 0.88;
-        const sBlur = (1 - progress) * 5;
-        let p = sharpFn(base).modulate({ brightness, saturation });
-        if (sBlur > 0.4) p = p.blur(sBlur);
-        art = await mod.loadImage(await p.png().toBuffer());
-      }
-    } catch (err) {
-      logger.debug({ err }, "spawn-reveal: frame effect failed");
-      art = clearImg; // fall back to the clear art for this frame
+    if (keyframeArts && keyframeArts.length > 0) {
+      const idx = Math.min(
+        keyframeArts.length - 1,
+        Math.round(progress * (keyframeArts.length - 1)),
+      );
+      art = keyframeArts[idx] ?? clearImg;
     }
     return renderPng(WIDTH, HEIGHT, ctx => drawFrame(ctx, progress, art));
   };
 
-  return { mode, maxSteps: mode === "puzzle" ? PUZZLE_TILES : 24, renderFrame };
+  return { mode, maxSteps: mode === "puzzle" ? PUZZLE_TILES : KEYFRAMES, renderFrame };
 }
 
 // ── Shiny reveal ─────────────────────────────────────────────────────────────

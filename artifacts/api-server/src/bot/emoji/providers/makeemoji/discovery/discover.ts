@@ -19,8 +19,8 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Browser, Download, Page } from "playwright";
-import { launchBrowser, newContext } from "../runtime.js";
+import type { Download, Page } from "playwright";
+import { launchBrowser, newContext, closeSharedBrowser } from "../runtime.js";
 import { OPTION_KEYS, type ControlSpec, type Manifest, type OptionKey } from "../types.js";
 import { analyzeBundle, classifyProcessing, type BundleReport } from "./bundles.js";
 import { expandListboxes, inspectPage, mapControlToOption, type PageInventory } from "./inspect.js";
@@ -229,11 +229,10 @@ export async function discover(options: DiscoverOptions): Promise<DiscoveryOutco
   say("probing reachability with a plain HTTP request…");
   outcome.reachability.push(await probeFetch(siteUrl));
 
-  let browser: Browser | null = null;
   let resultBuffer: Buffer | null = null;
 
   try {
-    browser = await launchBrowser();
+    const browser = await launchBrowser();
     const context = await newContext(browser);
     const page = await context.newPage();
     page.setDefaultTimeout(timeout);
@@ -413,9 +412,8 @@ export async function discover(options: DiscoverOptions): Promise<DiscoveryOutco
 
     await context.close();
   } finally {
-    // A leaked Chromium on a bot host is a slow resource leak, so the browser is
-    // closed even when discovery fails partway.
-    await browser?.close().catch(() => {});
+    // Discovery is a one-shot CLI path — drop the shared Chromium when done.
+    await closeSharedBrowser("discovery").catch(() => {});
   }
 
   // ── assemble the manifest ─────────────────────────────────────────────────

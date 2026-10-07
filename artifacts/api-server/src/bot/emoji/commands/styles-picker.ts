@@ -135,13 +135,13 @@ function focusForSlice(slice: StyleEntry[], animation: string): string {
 }
 
 /**
- * Warm the neighbouring pages' boards in the background.
+ * Warm the next page's board in the background.
  *
  * Paging felt slow because each page composed eight fresh style GIFs on arrival.
- * While the user looks at page N we render N+1 *and* N−1 into the (bounded,
- * cached) board store, so Next and Prev usually hit the cache instead of a cold
- * compose. The focus is chosen the same way navigation would, so the warmed key
- * matches. Warms are best-effort and yield to on-demand renders in the queue.
+ * While the user looks at page N we warm N+1 (forward browse is the common path)
+ * into the bounded board store. Prefetching both neighbours used to triple board
+ * compose work and spike RSS; one neighbour is enough for the Next-button case.
+ * Warms are best-effort and yield to on-demand renders in the queue.
  */
 function prefetchNeighborBoards(
   session: EmojiSession, userId: string, page: number, pages: number,
@@ -167,19 +167,19 @@ function prefetchNeighborBoards(
       background: true,
     }).catch(() => {});
   };
-  warm(page + 1);
-  warm(page - 1);
+  // Prefer forward; if already on the last page, warm the previous instead.
+  if (page + 1 < pages) warm(page + 1);
+  else if (page > 0) warm(page - 1);
 }
 
 /**
- * Pre-warm the boards a user is most likely to open next, on `image`.
+ * Pre-warm the board a user is most likely to open next, on `image`.
  *
  * Called in the background the moment the opening chooser is shown (on the
  * caller's avatar) so tapping **My avatar** or **⭐ Favorites** paints from cache
- * instead of a cold eight-cell compose. Warms page 1 of all styles, page 1 of
- * favorites (when any), and the focused live preview. Entirely best-effort — it
- * runs at preview priority and yields to on-demand renders, and every path
- * swallows its own errors.
+ * instead of a cold eight-cell compose. Warms favorites page 1 when the user
+ * has any, otherwise all-styles page 1. Entirely best-effort — it runs at
+ * preview priority and yields to on-demand renders.
  */
 export function warmTargetBoards(
   image: Buffer, userId: string, sourceLabel: string, animation: string, format: string,
@@ -194,16 +194,17 @@ export function warmTargetBoards(
     }).catch(() => {});
   };
 
-  const page1 = all.slice(0, STYLES_PAGE_SIZE);
-  warm(page1, all.length, Math.max(1, Math.ceil(all.length / STYLES_PAGE_SIZE)));
-
+  // Warm only the first all-styles page (or favorites when the user has any).
+  // Previously this also warmed favorites + a live preview in parallel, which
+  // stacked three board/GIF jobs on every chooser open.
   const favVals = new Set(listFavorites(userId));
   if (favVals.size > 0) {
     const favs = all.filter(s => favVals.has(s.value));
     warm(favs.slice(0, STYLES_PAGE_SIZE), favs.length, Math.max(1, Math.ceil(favs.length / STYLES_PAGE_SIZE)));
+  } else {
+    const page1 = all.slice(0, STYLES_PAGE_SIZE);
+    warm(page1, all.length, Math.max(1, Math.ceil(all.length / STYLES_PAGE_SIZE)));
   }
-
-  void renderStylePreview(image, focusForSlice(page1, animation)).catch(() => {});
 }
 
 /**
