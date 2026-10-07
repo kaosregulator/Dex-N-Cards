@@ -6,6 +6,7 @@
  */
 
 import { roundRectPath, type Ctx, type CanvasMod } from "../animations/engine.js";
+import { shrinkArtBuffer } from "../images/raster.js";
 
 /** `<:name:id>` or `<a:name:id>` — Discord custom emoji markup. */
 const CUSTOM_EMOJI_RE = /^<(a)?:([\w~]+):(\d+)>$/;
@@ -13,6 +14,17 @@ const CUSTOM_EMOJI_RE = /^<(a)?:([\w~]+):(\d+)>$/;
 export type CurrencyImg = { width: number; height: number };
 
 const SYMBOL_IMG_CACHE = new Map<string, CurrencyImg | null>();
+const SYMBOL_CACHE_MAX = 64;
+
+function rememberSymbol(key: string, img: CurrencyImg | null): void {
+  SYMBOL_IMG_CACHE.delete(key);
+  SYMBOL_IMG_CACHE.set(key, img);
+  while (SYMBOL_IMG_CACHE.size > SYMBOL_CACHE_MAX) {
+    const oldest = SYMBOL_IMG_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    SYMBOL_IMG_CACHE.delete(oldest);
+  }
+}
 
 export function parseDiscordEmoji(symbol: string): {
   animated: boolean;
@@ -75,18 +87,27 @@ export async function loadImageUrl(
 ): Promise<CurrencyImg | null> {
   const key = `url:${url.trim()}`;
   if (!key || key === "url:") return null;
-  if (SYMBOL_IMG_CACHE.has(key)) return SYMBOL_IMG_CACHE.get(key) ?? null;
+  if (SYMBOL_IMG_CACHE.has(key)) {
+    const hit = SYMBOL_IMG_CACHE.get(key) ?? null;
+    rememberSymbol(key, hit);
+    return hit;
+  }
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(6_000) });
     if (!res.ok) {
-      SYMBOL_IMG_CACHE.set(key, null);
+      rememberSymbol(key, null);
       return null;
     }
-    const img = await mod.loadImage(Buffer.from(await res.arrayBuffer()));
-    SYMBOL_IMG_CACHE.set(key, img);
+    const png = await shrinkArtBuffer(Buffer.from(await res.arrayBuffer()), 256);
+    if (!png) {
+      rememberSymbol(key, null);
+      return null;
+    }
+    const img = await mod.loadImage(png);
+    rememberSymbol(key, img);
     return img;
   } catch {
-    SYMBOL_IMG_CACHE.set(key, null);
+    rememberSymbol(key, null);
     return null;
   }
 }
@@ -102,7 +123,11 @@ export async function loadCurrencyImage(
   if (/^https?:\/\//i.test(key)) return loadImageUrl(mod, key);
 
   const cacheKey = opts?.preferAnimated ? `a:${key}` : key;
-  if (SYMBOL_IMG_CACHE.has(cacheKey)) return SYMBOL_IMG_CACHE.get(cacheKey) ?? null;
+  if (SYMBOL_IMG_CACHE.has(cacheKey)) {
+    const hit = SYMBOL_IMG_CACHE.get(cacheKey) ?? null;
+    rememberSymbol(cacheKey, hit);
+    return hit;
+  }
 
   const custom = parseDiscordEmoji(key);
   try {
@@ -118,20 +143,20 @@ export async function loadCurrencyImage(
           `https://cdn.discordapp.com/emojis/${custom.id}.png?size=128&quality=lossless`,
         );
       }
-      SYMBOL_IMG_CACHE.set(cacheKey, img);
+      rememberSymbol(cacheKey, img);
       return img;
     }
     const code = emojiToCode(key);
     if (!code) {
-      SYMBOL_IMG_CACHE.set(cacheKey, null);
+      rememberSymbol(cacheKey, null);
       return null;
     }
     url = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/${code}.png`;
     const img = await loadImageUrl(mod, url);
-    SYMBOL_IMG_CACHE.set(cacheKey, img);
+    rememberSymbol(cacheKey, img);
     return img;
   } catch {
-    SYMBOL_IMG_CACHE.set(cacheKey, null);
+    rememberSymbol(cacheKey, null);
     return null;
   }
 }

@@ -59,13 +59,15 @@ Postgres database and your usual secrets (bot token, guild id, session secret).
 ### Memory (target ~300–500 MB baseline)
 
 The API + Discord bot share one process. Peak RSS used to climb past 1–3 GB when
-concurrent GIF encodes held every frame canvas, pets used NeuQuant `quality:3`,
-and `/emoji` launched a fresh Chromium per generate. Current defaults:
+concurrent GIF encodes held every frame canvas, card art was cached at phone
+resolution, pets used NeuQuant `quality:3`, and `/emoji` launched a fresh
+Chromium per generate. Current defaults:
 
-- Streaming GIF encode (one canvas + one pending frame)
+- Streaming GIF encode (two reusable surfaces, not N frames)
+- Card art shrunk with sharp before Skia decode (max edge 768)
 - Shared MakeEmoji Chromium (serial jobs, idle-close)
 - `RENDER_CONCURRENCY=2`
-- Bounded Discord.js / emoji / vibrant caches
+- Bounded Discord.js / emoji caches; sharp concurrency capped
 
 After deploy, watch Railway **Metrics → Memory**. Quiet baseline should sit near
 a few hundred MB; short spikes during a battle/emoji job are normal, multi-GB

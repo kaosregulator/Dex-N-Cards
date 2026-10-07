@@ -13,9 +13,6 @@ import { logger } from "../../lib/logger.js";
 
 export type CanvasMod = typeof import("@napi-rs/canvas");
 
-/** Pixel buffer returned by napi-rs getImageData (DOM lib is not enabled). */
-type FrameImageData = { data: Uint8ClampedArray; width: number; height: number };
-
 // The 2D context type used across the animation system. Mirrors the existing
 // battle-image renderer, which types the napi-rs context rather than pulling in
 // the DOM lib. Kept as a single alias so effects/pack/battle stay consistent.
@@ -30,8 +27,7 @@ export type Ctx = SKRSContext2D & {
   setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void;
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void;
   bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void;
-  getImageData(sx: number, sy: number, sw: number, sh: number): FrameImageData;
-  putImageData(image: FrameImageData, dx: number, dy: number): void;
+  getImageData(sx: number, sy: number, sw: number, sh: number): { data: Uint8ClampedArray };
   // Additive-blend layers (atmosphere embers/sparks/dust, physics glows) set
   // this; it exists on the spec-complete Skia context but is under-declared.
   globalCompositeOperation: string;
@@ -178,13 +174,29 @@ export interface EncodeOptions {
 // Cheap FNV-1a hash over a subsample of the frame's pixels. Used only to detect
 // *identical* consecutive frames for coalescing; a rare hash collision would at
 // worst merge two truly-different frames, so subsampling is safe.
-function frameSignatureFromData(data: Uint8ClampedArray): number {
+function frameSignature(ctx: Ctx, physW: number, physH: number): number {
+  const data = ctx.getImageData(0, 0, physW, physH).data;
   let h = 0x811c9dc5;
   // Step by a prime so the sample walks across scanlines, not down one column.
   for (let k = 0; k < data.length; k += 389) {
     h = Math.imul(h ^ data[k]!, 0x01000193);
   }
   return h >>> 0;
+}
+
+interface FrameSurface {
+  canvas: Canvas;
+  ctx: Ctx;
+}
+
+// Drawing state (clip, transform, alpha) survives clearRect. Restore back to
+// the clean snapshot taken when the surface was created, then clear pixels.
+function resetSurface(surface: FrameSurface, physW: number, physH: number, renderScale: number): void {
+  surface.ctx.restore();
+  surface.ctx.save();
+  surface.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  surface.ctx.clearRect(0, 0, physW, physH);
+  if (renderScale !== 1) surface.ctx.scale(renderScale, renderScale);
 }
 
 export async function encodeAnimation(opts: EncodeOptions): Promise<AnimationResult | null> {
@@ -200,60 +212,53 @@ export async function encodeAnimation(opts: EncodeOptions): Promise<AnimationRes
     const physW = Math.max(1, Math.round(width * renderScale));
     const physH = Math.max(1, Math.round(height * renderScale));
 
-    // Stream encode on ONE reusable canvas. The old path kept every frame's
-    // Skia canvas alive until encode finished (N × RGBA peak). Now peak RAM is
-    // one canvas + one pending ImageData for identical-frame coalescing.
-    const canvas = mod.createCanvas(physW, physH);
-    const ctx = canvas.getContext("2d") as unknown as Ctx;
-
     const encoder = new GIFEncoder(physW, physH);
     encoder.start();
     encoder.setRepeat(0);        // loop forever
     encoder.setQuality(quality); // higher = coarser palette = smaller file
 
-    // Hold at most one prior unique frame (ImageData) so identical idle/hold
-    // frames coalesce into a longer delay without retaining N Skia canvases.
-    let pending: FrameImageData | null = null;
-    let pendingSig = 0;
-    let pendingDelay = 0;
+    // Two surfaces, not one per frame. Holding every canvas until the GIF was
+    // finished kept a full bitmap for each frame alive at once (a siege turn
+    // is ~14 frames; three of those in parallel was a multi-hundred-MB spike).
+    // Identical consecutive frames are still coalesced: the held surface is
+    // only swapped when the picture actually changes, then encoded with the
+    // summed delay. gifencoder copies pixels inside addFrame, so the held
+    // surface can be reused immediately after.
+    const makeSurface = (): FrameSurface => {
+      const canvas = mod.createCanvas(physW, physH);
+      const ctx = canvas.getContext("2d") as unknown as Ctx;
+      ctx.save();
+      return { canvas, ctx };
+    };
+    let current = makeSurface();
+    let spare: FrameSurface | null = null;
+    let hold: { surface: FrameSurface; sig: number; run: number } | null = null;
     let emitted = 0;
 
-    const emitPending = (): void => {
-      if (!pending) return;
-      encoder.setDelay(pendingDelay);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.putImageData(pending, 0, 0);
-      encoder.addFrame(ctx);
-      emitted++;
-      pending = null;
-    };
-
     for (let i = 0; i < frameCount; i++) {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, physW, physH);
-      if (renderScale !== 1) ctx.scale(renderScale, renderScale);
+      resetSurface(current, physW, physH, renderScale);
       const t = frameCount <= 1 ? 1 : i / (frameCount - 1);
-      await render({ canvas, ctx, t, frameIndex: i, frameCount, mod });
-
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      const imageData = ctx.getImageData(0, 0, physW, physH);
-      const sig = frameSignatureFromData(imageData.data);
-
-      if (!pending) {
-        pending = imageData;
-        pendingSig = sig;
-        pendingDelay = delayMs;
-      } else if (sig === pendingSig) {
-        pendingDelay += delayMs;
-      } else {
-        emitPending();
-        pending = imageData;
-        pendingSig = sig;
-        pendingDelay = delayMs;
+      await render({ canvas: current.canvas, ctx: current.ctx, t, frameIndex: i, frameCount, mod });
+      const sig = frameSignature(current.ctx, physW, physH);
+      if (hold && hold.sig === sig) {
+        hold.run += 1;
+        continue;
       }
+      if (hold) {
+        encoder.setDelay(delayMs * hold.run);
+        encoder.addFrame(hold.surface.ctx);
+        emitted++;
+        spare = hold.surface;
+      }
+      hold = { surface: current, sig, run: 1 };
+      current = spare ?? makeSurface();
+      spare = null;
     }
-
-    emitPending();
+    if (hold) {
+      encoder.setDelay(delayMs * hold.run);
+      encoder.addFrame(hold.surface.ctx);
+      emitted++;
+    }
     encoder.finish();
 
     const buffer = encoder.out.getData();

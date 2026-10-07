@@ -1,24 +1,19 @@
-// Battle image — extract dominant art colours with node-vibrant.
-// Colours are cached per URL so repeated battles / board refreshes don't
-// re-download images. Failures are silent; callers fall back to rarity colours.
+// Accent colours for battle art.
+//
+// The sample is taken from the same shrunk PNG the canvas draws, so a fight
+// does not download and decode the full upload a second time just to pick a
+// glow colour. node-vibrant used to do that fetch on its own.
 
-import { Vibrant } from "node-vibrant/node";
 import { logger } from "../../../lib/logger.js";
+import { loadArtBuffer } from "../../animations/effects.js";
+import { dominantColorFromBuffer } from "../../images/raster.js";
 
-/** Cap URL→colour map so long-running bots don't retain every art URL forever. */
-const COLOR_CACHE_MAX = 256;
 const colorCache = new Map<string, number>();
+const COLOR_CACHE_MAX = 512;
 
-function hexToDecimal(hex: string): number | null {
-  const cleaned = hex.replace("#", "").trim();
-  if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) return null;
-  const parsed = parseInt(cleaned, 16);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function rememberColor(artUrl: string, color: number): void {
-  if (colorCache.has(artUrl)) colorCache.delete(artUrl);
-  colorCache.set(artUrl, color);
+function remember(url: string, color: number): void {
+  colorCache.delete(url);
+  colorCache.set(url, color);
   while (colorCache.size > COLOR_CACHE_MAX) {
     const oldest = colorCache.keys().next().value;
     if (oldest === undefined) break;
@@ -31,21 +26,19 @@ export async function extractArtColor(artUrl: string | null | undefined): Promis
   if (!artUrl) return null;
   const cached = colorCache.get(artUrl);
   if (cached != null) {
-    // Refresh LRU order on hit.
-    rememberColor(artUrl, cached);
+    remember(artUrl, cached);
     return cached;
   }
 
   try {
-    const palette = await Vibrant.from(artUrl).getPalette();
-    const swatch = palette.Vibrant ?? palette.Dominant ?? palette.Muted;
-    if (!swatch) return null;
-    const color = hexToDecimal(swatch.hex);
+    const png = await loadArtBuffer(artUrl);
+    if (!png) return null;
+    const color = await dominantColorFromBuffer(png);
     if (color == null) return null;
-    rememberColor(artUrl, color);
+    remember(artUrl, color);
     return color;
   } catch (err) {
-    logger.debug({ err, artUrl }, "battle image: vibrant extraction failed");
+    logger.debug({ err, artUrl }, "battle image: accent extraction failed");
     return null;
   }
 }

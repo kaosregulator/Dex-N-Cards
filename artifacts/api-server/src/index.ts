@@ -1,3 +1,4 @@
+import "./lib/native-memory.js";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { attachDuelSocket } from "./lib/duel-net";

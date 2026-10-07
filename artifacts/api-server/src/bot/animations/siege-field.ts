@@ -224,7 +224,7 @@ async function resolveFieldColor(f: SiegeFieldFighter): Promise<number> {
 }
 
 // ── Image loading (shared, cached, timeout-guarded) ──────────────────────────
-const IMG_CACHE_MAX = 96;
+const IMG_CACHE_MAX = 48;
 const imgCache = new Map<string, Promise<CanvasImage | null>>();
 
 function loadSpritePath(mod: CanvasMod, path: string): Promise<CanvasImage | null> {

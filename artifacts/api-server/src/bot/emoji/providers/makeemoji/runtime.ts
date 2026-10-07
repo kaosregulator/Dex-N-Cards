@@ -84,10 +84,15 @@ export function launchOptions(): LaunchOptions {
       "--no-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
-      // Cap renderer process count — MakeEmoji only needs one page at a time.
+      // Cap Chromium extras — MakeEmoji is a short-lived page, not a desktop session.
       "--renderer-process-limit=1",
       "--disable-extensions",
       "--disable-background-networking",
+      "--disable-default-apps",
+      "--disable-sync",
+      "--disable-translate",
+      "--mute-audio",
+      "--no-first-run",
       "--js-flags=--max-old-space-size=128",
     ],
   };

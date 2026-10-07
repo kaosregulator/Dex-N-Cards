@@ -10,6 +10,7 @@ import { quoteDisplayName, unstyleFancyText } from "./display-name.js";
 import type { DualQuoteTheme } from "./dual-styles.js";
 import { paintDuoVibeLayout } from "./render-dual-vibes.js";
 import { logger } from "../../lib/logger.js";
+import { shrinkArtBuffer } from "../images/raster.js";
 
 function readableLine(line: DualLine): DualLine {
   return {
@@ -43,7 +44,9 @@ async function loadAvatar(mod: CanvasMod, url: string | null): Promise<Img | nul
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(6_000) });
     if (!res.ok) return null;
-    return await mod.loadImage(Buffer.from(await res.arrayBuffer()));
+    const png = await shrinkArtBuffer(Buffer.from(await res.arrayBuffer()), 384);
+    if (!png) return null;
+    return await mod.loadImage(png);
   } catch (err) {
     logger.debug({ err }, "duo-quote: avatar load failed");
     return null;
