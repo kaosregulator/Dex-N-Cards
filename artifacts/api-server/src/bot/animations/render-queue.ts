@@ -17,8 +17,10 @@
 import PQueue from "p-queue";
 import { logger } from "../../lib/logger.js";
 
-// 2–4 is a safe range; default 3. Tunable without a redeploy.
-const CONCURRENCY = Math.min(8, Math.max(1, Number(process.env["RENDER_CONCURRENCY"] ?? 3)));
+// Default 2, hard ceiling 4. Each job already keeps two canvases (see
+// encodeAnimation); a higher default piled those up under a raid + battles.
+// Raise with RENDER_CONCURRENCY when the host has RAM to spare.
+const CONCURRENCY = Math.min(4, Math.max(1, Number(process.env["RENDER_CONCURRENCY"] ?? 2)));
 
 const queue = new PQueue({ concurrency: CONCURRENCY });
 

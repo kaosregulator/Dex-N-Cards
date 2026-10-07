@@ -3,8 +3,8 @@
 //
 // Draws the player's Discord avatar, account level + XP bar, and a compact row
 // of key stats onto one banner image. Theming is pulled from the avatar's
-// dominant colour (color-thief-node) blended with the existing rarity/vibrant
-// palette utilities — it augments, never replaces, what's already there.
+// dominant colour (one download, shared with the portrait) blended with the
+// existing rarity palette — it augments, never replaces, what's already there.
 //
 // Best-effort: if @napi-rs/canvas isn't available or a draw throws, it returns
 // null and the caller falls back to the plain embed (no header image).
@@ -13,6 +13,7 @@
 import { getCanvas, hexToRgba, roundRectPath, drawGradientBackground, type Ctx, type CanvasMod } from "../animations/engine.js";
 import { drawTextWithShadow, fitText } from "../animations/effects.js";
 import { queueRender } from "../animations/render-queue.js";
+import { dominantColorFromBuffer, shrinkArtBuffer } from "../images/raster.js";
 import { logger } from "../../lib/logger.js";
 
 export const HUB_HEADER = { width: 900, height: 260 } as const;
@@ -29,29 +30,27 @@ export interface HubHeaderInput {
   accent?: number | null; // optional pre-resolved accent; else derived from avatar
 }
 
-// Pull the avatar's dominant colour for theming. Best-effort → null on failure.
-async function avatarAccent(avatarUrl: string | null): Promise<number | null> {
-  if (!avatarUrl) return null;
+// One fetch for both the portrait and its accent. Avatars are drawn at 168px;
+// shrinking first keeps a 4096px Discord CDN image from landing in Skia whole.
+async function loadAvatar(mod: CanvasMod, url: string | null): Promise<{
+  img: Awaited<ReturnType<CanvasMod["loadImage"]>> | null;
+  accent: number | null;
+}> {
+  if (!url) return { img: null, accent: null };
   try {
-    const { getColorFromURL } = await import("color-thief-node");
-    const [r, g, b] = await getColorFromURL(avatarUrl);
-    return (r << 16) | (g << 8) | b;
-  } catch (err) {
-    logger.debug({ err }, "hub-header: avatar accent extraction failed");
-    return null;
-  }
-}
-
-async function loadAvatar(mod: CanvasMod, url: string | null) {
-  if (!url) return null;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    return await mod.loadImage(buf);
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return { img: null, accent: null };
+    const raw = Buffer.from(await res.arrayBuffer());
+    const png = await shrinkArtBuffer(raw, 384);
+    if (!png) return { img: null, accent: null };
+    const [img, accent] = await Promise.all([
+      mod.loadImage(png),
+      dominantColorFromBuffer(png),
+    ]);
+    return { img, accent };
   } catch (err) {
     logger.debug({ err }, "hub-header: avatar load failed");
-    return null;
+    return { img: null, accent: null };
   }
 }
 
@@ -61,7 +60,8 @@ export async function renderHubHeader(input: HubHeaderInput): Promise<Buffer | n
   if (!mod) return null;
   const { width, height } = HUB_HEADER;
   try {
-    const accent = input.accent ?? (await avatarAccent(input.avatarUrl)) ?? 0x5865f2;
+    const avatar = await loadAvatar(mod, input.avatarUrl);
+    const accent = input.accent ?? avatar.accent ?? 0x5865f2;
     const canvas = mod.createCanvas(width, height);
     const ctx = canvas.getContext("2d") as unknown as Ctx;
 
@@ -74,7 +74,7 @@ export async function renderHubHeader(input: HubHeaderInput): Promise<Buffer | n
 
     // Avatar (circular) on the left.
     const av = 168, ax = 46, ay = (height - av) / 2;
-    const img = await loadAvatar(mod, input.avatarUrl);
+    const img = avatar.img;
     ctx.save();
     ctx.beginPath();
     ctx.arc(ax + av / 2, ay + av / 2, av / 2, 0, Math.PI * 2);

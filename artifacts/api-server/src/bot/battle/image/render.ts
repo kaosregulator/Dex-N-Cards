@@ -24,11 +24,8 @@ import { logger } from "../../../lib/logger.js";
 import { queueRender } from "../../animations/render-queue.js";
 import { drawAtmosphere, atmosphereForBackground } from "../../animations/atmosphere.js";
 import type { Ctx as AnimCtx } from "../../animations/engine.js";
-import { writeFile, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { extractArtColor, blendColors } from "./vibrant-color.js";
+import { loadArt as loadSharedArt, BACKDROP_MAX_EDGE, CARD_ART_MAX_EDGE } from "../../animations/effects.js";
 
 // The minimal card description the renderer needs. Decoupled from Combatant so
 // the renderer can draw prep screens, previews, or anything else.
@@ -92,72 +89,22 @@ function registerFonts(mod: CanvasMod) {
   }
 }
 
-// Resolve an absolute public URL back to a local /objects/... path so we can
-// download it directly from GCS instead of bouncing off the public proxy.
-function extractObjectPath(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (u.pathname.startsWith("/api/storage/objects/")) {
-      return u.pathname.slice("/api/storage".length);
-    }
-    if (u.pathname.startsWith("/objects/")) {
-      return u.pathname;
-    }
-  } catch { /* not a URL */ }
-  return null;
-}
-
-// @napi-rs/canvas can mis-detect images loaded from buffers/URLs (it sometimes
-// throws "Invalid SVG image" for valid PNGs). Writing the bytes to a temp file
-// and loading by path works around that, so every fetched image goes through
-// disk before hitting the canvas.
-async function loadImageFromBuffer(mod: CanvasMod, buf: Buffer) {
-  const tmp = join(tmpdir(), `battle-art-${randomUUID()}.img`);
-  try {
-    await writeFile(tmp, buf);
-    return await mod.loadImage(tmp);
-  } finally {
-    await unlink(tmp).catch(() => {});
-  }
-}
-
-// Download an object-storage image directly from GCS. This avoids the public
-// proxy and fixes cases where the server's own fetch to its public URL fails.
-async function loadObjectStorageArt(mod: CanvasMod, objectPath: string) {
-  try {
-    const { ObjectStorageService } = await import("../../../lib/objectStorage.js");
-    const svc = new ObjectStorageService();
-    const file = await svc.getObjectEntityFile(objectPath);
-    const resp = await svc.downloadObject(file, 60);
-    const buf = Buffer.from(await resp.arrayBuffer());
-    return await loadImageFromBuffer(mod, buf);
-  } catch (err) {
-    logger.debug({ err, objectPath }, "battle image: failed to load object-storage art");
-    return null;
-  }
-}
-
-// Fetch remote/local art into an Image the canvas can draw. Returns null on any
-// failure so a broken URL just yields a card with no art (never a broken image).
-async function loadArt(mod: CanvasMod, url: string | null | undefined) {
+// Remote and object-storage art go through the shared loader, which downloads
+// once, shrinks with sharp, and caches the result. That used to be a second
+// full-resolution fetch on top of extractArtColor, written out to a temp file
+// and decoded at original size. Local theme files (frames, built-in backgrounds)
+// are already sized for the canvas and load by path.
+async function loadArt(
+  mod: CanvasMod,
+  url: string | null | undefined,
+  maxEdge: number = CARD_ART_MAX_EDGE,
+) {
   if (!url) return null;
   try {
-    // Local object path — fetch directly from GCS.
-    if (url.startsWith("/objects/")) {
-      return await loadObjectStorageArt(mod, url);
+    if (url.startsWith("/objects/") || /^https?:\/\//.test(url)) {
+      return await loadSharedArt(mod, url, maxEdge);
     }
-    // Absolute URL that points to our own object storage — also fetch directly.
-    if (/^https?:\/\//.test(url)) {
-      const objectPath = extractObjectPath(url);
-      if (objectPath) {
-        return await loadObjectStorageArt(mod, objectPath);
-      }
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const buf = Buffer.from(await res.arrayBuffer());
-      return await loadImageFromBuffer(mod, buf);
-    }
-    return await mod.loadImage(url); // local path
+    return await mod.loadImage(url);
   } catch (err) {
     logger.debug({ err, url }, "battle image: failed to load art");
     return null;
@@ -198,8 +145,8 @@ async function layerBackground(ctx: Ctx, mod: CanvasMod, opts: RenderOpts, custo
   const bg = resolveBackground(opts.background);
   // An admin-uploaded arena image (auto-shuffled per battle) wins over the
   // built-in theme key; if it fails to load we fall through to the theme/gradient.
-  const img = (opts.backgroundUrl ? await loadArt(mod, opts.backgroundUrl) : null)
-    ?? await loadArt(mod, bg.src);
+  const img = (opts.backgroundUrl ? await loadArt(mod, opts.backgroundUrl, BACKDROP_MAX_EDGE) : null)
+    ?? await loadArt(mod, bg.src, BACKDROP_MAX_EDGE);
   if (img) {
     // cover-fit
     const scale = Math.max(CANVAS.width / img.width, CANVAS.height / img.height);
@@ -766,7 +713,7 @@ export async function renderShowcaseImage(card: RenderCard, opts: ShowcaseOpts =
     // Draw admin-uploaded background (cover-fit) if one is configured; otherwise
     // the trophyBackground() fallback gradient is used.
     if (opts.backgroundUrl) {
-      const bgImg = await loadArt(mod, opts.backgroundUrl);
+      const bgImg = await loadArt(mod, opts.backgroundUrl, BACKDROP_MAX_EDGE);
       if (bgImg) {
         const scale = Math.max(W / bgImg.width, CANVAS.height / bgImg.height);
         const bw = bgImg.width * scale, bh = bgImg.height * scale;

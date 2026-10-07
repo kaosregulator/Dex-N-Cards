@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, Events, REST, Routes, ApplicationCommandType, type Interaction } from "discord.js";
+import { Client, GatewayIntentBits, Options, Partials, Events, REST, Routes, ApplicationCommandType, type Interaction } from "discord.js";
 import { logger } from "../lib/logger.js";
 import { BRAND_NAME } from "./help-banners.js";
 import {
@@ -136,6 +136,37 @@ export async function startBot() {
   const client = new Client({
     intents,
     partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
+    // discord.js keeps every member, user, and a window of messages unless told
+    // otherwise. A full member list (member browse, mass role) used to stay in
+    // the process until restart. Commands that need one member still fetch it.
+    makeCache: Options.cacheWithLimits({
+      ...Options.DefaultMakeCacheSettings,
+      MessageManager: 50,
+      GuildMemberManager: 200,
+      UserManager: 200,
+      PresenceManager: afkPresenceEnabled ? 50 : 0,
+      ReactionManager: 20,
+      ReactionUserManager: 0,
+      VoiceStateManager: 0,
+      GuildBanManager: 0,
+      GuildInviteManager: 0,
+      GuildStickerManager: 0,
+      GuildScheduledEventManager: 0,
+      StageInstanceManager: 0,
+      ThreadMemberManager: 0,
+    }),
+    sweepers: {
+      ...Options.DefaultSweeperSettings,
+      messages: { interval: 180, lifetime: 120 },
+      guildMembers: {
+        interval: 600,
+        filter: () => member => member.id !== member.client.user?.id,
+      },
+      users: {
+        interval: 600,
+        filter: () => user => user.bot && user.id !== user.client.user?.id,
+      },
+    },
   });
 
   initSpawnManager(client);

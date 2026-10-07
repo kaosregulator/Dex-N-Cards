@@ -75,6 +75,17 @@ export function launchOptions(): LaunchOptions {
       "--no-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      // The emoji browser is a short-lived fallback. These flags keep that
+      // Chromium from also spinning up GPU, translate, and extra renderer
+      // processes that push the container toward a multi-gigabyte spike.
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--disable-default-apps",
+      "--disable-sync",
+      "--disable-translate",
+      "--mute-audio",
+      "--no-first-run",
+      "--renderer-process-limit=1",
     ],
   };
 }
