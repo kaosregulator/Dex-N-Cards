@@ -185,6 +185,17 @@ export async function resolveChromiumPath(): Promise<string | null> {
   const configured = process.env[ENV_EXECUTABLE]?.trim();
   if (configured) return existsSync(configured) ? configured : null;
 
+  // Prefer env/project-aware discovery so HOME, PLAYWRIGHT_BROWSERS_PATH, and
+  // workspace `.cache/ms-playwright` win over Playwright's baked-in default
+  // path (which ignores a HOME override and can hide a workspace-local build).
+  const discovered = findInstalledChromium();
+  if (discovered) return discovered;
+
+  // When PLAYWRIGHT_BROWSERS_PATH is pinned, stay inside that tree — do not
+  // fall back to Playwright's default home cache (breaks isolation and the
+  // "missing browser" status check used by admin/health).
+  if (process.env["PLAYWRIGHT_BROWSERS_PATH"]?.trim()) return null;
+
   const pw = await loadPlaywright();
   if (pw) {
     try {
@@ -193,7 +204,7 @@ export async function resolveChromiumPath(): Promise<string | null> {
     } catch { /* no browser registered for this build; fall through */ }
   }
 
-  return findInstalledChromium();
+  return null;
 }
 
 // ── Shared Chromium (singleton + serial lane) ────────────────────────────────
