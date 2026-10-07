@@ -1,4 +1,7 @@
-import { Client, GatewayIntentBits, Partials, Events, REST, Routes, ApplicationCommandType, type Interaction } from "discord.js";
+import {
+  Client, GatewayIntentBits, Partials, Events, REST, Routes, ApplicationCommandType,
+  Options, type Interaction,
+} from "discord.js";
 import { logger } from "../lib/logger.js";
 import { BRAND_NAME } from "./help-banners.js";
 import {
@@ -136,6 +139,32 @@ export async function startBot() {
   const client = new Client({
     intents,
     partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
+    // Bound Discord.js caches — default unlimited Message/Member retention is a
+    // long-lived RSS leak on multi-guild bots even when canvas work is quiet.
+    makeCache: Options.cacheWithLimits({
+      ...Options.DefaultMakeCacheSettings,
+      MessageManager: 50,
+      GuildMessageManager: 50,
+      ReactionManager: 0,
+      GuildMemberManager: {
+        maxSize: 200,
+        keepOverLimit: (member) => member.id === member.client.user.id,
+      },
+      // Keep a small presence cache only when AFK status-change is wired.
+      PresenceManager: afkPresenceEnabled ? 50 : 0,
+      VoiceStateManager: 0,
+      StageInstanceManager: 0,
+      ThreadManager: 20,
+      ThreadMemberManager: 0,
+    }),
+    sweepers: {
+      ...Options.DefaultSweeperSettings,
+      messages: { interval: 300, lifetime: 180 },
+      users: {
+        interval: 600,
+        filter: () => (user) => user.bot && user.id !== user.client.user.id,
+      },
+    },
   });
 
   initSpawnManager(client);

@@ -255,9 +255,6 @@ importers:
       bottleneck:
         specifier: ^2.19.5
         version: 2.19.5
-      canvas:
-        specifier: 3.2.3
-        version: 3.2.3
       canvas-sketch-util:
         specifier: ^1.10.0
         version: 1.10.0
@@ -312,9 +309,6 @@ importers:
       google-auth-library:
         specifier: ^10.6.2
         version: 10.6.2
-      konva:
-        specifier: ^10.3.0
-        version: 10.3.0
       matter-js:
         specifier: ^0.20.0
         version: 0.20.0

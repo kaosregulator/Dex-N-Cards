@@ -17,8 +17,9 @@
 import PQueue from "p-queue";
 import { logger } from "../../lib/logger.js";
 
-// 2–4 is a safe range; default 3. Tunable without a redeploy.
-const CONCURRENCY = Math.min(8, Math.max(1, Number(process.env["RENDER_CONCURRENCY"] ?? 3)));
+// 1–4 is the safe range on a ~512–1024 MB Railway box. Default 2 (was 3, max 8)
+// so concurrent GIF encodes don't stack Skia + NeuQuant into multi-GB RSS.
+const CONCURRENCY = Math.min(4, Math.max(1, Number(process.env["RENDER_CONCURRENCY"] ?? 2)));
 
 const queue = new PQueue({ concurrency: CONCURRENCY });
 

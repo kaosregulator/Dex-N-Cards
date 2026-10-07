@@ -52,6 +52,24 @@ Postgres database and your usual secrets (bot token, guild id, session secret).
 | `DATABASE_SSL` | Force `require` / `disable` if auto TLS detection is wrong. Prefer leaving unset — the app uses `rejectUnauthorized: false` for managed hosts (needed for Railway). |
 | `AUTO_DB_PUSH` | Unset = push schema only when tables are missing. `1` = always push on start. `0` = never. |
 | `DN_DEPLOYMENT` | `1` if you host somewhere that is not Replit/Railway |
+| `RENDER_CONCURRENCY` | Canvas/GIF encode slots (default `2`, max `4`). Raise only if RSS headroom is clear. |
+| `MAKEEMOJI_BROWSER_IDLE_MS` | Idle ms before shared Chromium closes (default `180000`). |
+| `NODE_OPTIONS` | Optional. Production start adds `--max-old-space-size=460` if unset. |
+
+### Memory (target ~300–500 MB baseline)
+
+The API + Discord bot share one process. Peak RSS used to climb past 1–3 GB when
+concurrent GIF encodes held every frame canvas, pets used NeuQuant `quality:3`,
+and `/emoji` launched a fresh Chromium per generate. Current defaults:
+
+- Streaming GIF encode (one canvas + one pending frame)
+- Shared MakeEmoji Chromium (serial jobs, idle-close)
+- `RENDER_CONCURRENCY=2`
+- Bounded Discord.js / emoji / vibrant caches
+
+After deploy, watch Railway **Metrics → Memory**. Quiet baseline should sit near
+a few hundred MB; short spikes during a battle/emoji job are normal, multi-GB
+plateaus are not.
 
 ### Playwright / /emoji (automatic on Railway)
 

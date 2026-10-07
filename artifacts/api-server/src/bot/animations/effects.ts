@@ -261,7 +261,7 @@ export function drawTitle(
 // handful of card images, so without this we'd re-download + re-decode the same
 // URL dozens of times per GIF. Keyed by URL; capped so it can't grow unbounded.
 type LoadedImage = import("@napi-rs/canvas").Image;
-const ART_CACHE_MAX = 128;
+const ART_CACHE_MAX = 64;
 const artCache = new Map<string, Promise<LoadedImage | null>>();
 
 const storage = new ObjectStorageService();

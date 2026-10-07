@@ -5,6 +5,8 @@
 import { Vibrant } from "node-vibrant/node";
 import { logger } from "../../../lib/logger.js";
 
+/** Cap URL→colour map so long-running bots don't retain every art URL forever. */
+const COLOR_CACHE_MAX = 256;
 const colorCache = new Map<string, number>();
 
 function hexToDecimal(hex: string): number | null {
@@ -14,11 +16,25 @@ function hexToDecimal(hex: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function rememberColor(artUrl: string, color: number): void {
+  if (colorCache.has(artUrl)) colorCache.delete(artUrl);
+  colorCache.set(artUrl, color);
+  while (colorCache.size > COLOR_CACHE_MAX) {
+    const oldest = colorCache.keys().next().value;
+    if (oldest === undefined) break;
+    colorCache.delete(oldest);
+  }
+}
+
 /** Extract a dominant colour from a card-art URL. Returns null on failure. */
 export async function extractArtColor(artUrl: string | null | undefined): Promise<number | null> {
   if (!artUrl) return null;
   const cached = colorCache.get(artUrl);
-  if (cached != null) return cached;
+  if (cached != null) {
+    // Refresh LRU order on hit.
+    rememberColor(artUrl, cached);
+    return cached;
+  }
 
   try {
     const palette = await Vibrant.from(artUrl).getPalette();
@@ -26,7 +42,7 @@ export async function extractArtColor(artUrl: string | null | undefined): Promis
     if (!swatch) return null;
     const color = hexToDecimal(swatch.hex);
     if (color == null) return null;
-    colorCache.set(artUrl, color);
+    rememberColor(artUrl, color);
     return color;
   } catch (err) {
     logger.debug({ err, artUrl }, "battle image: vibrant extraction failed");

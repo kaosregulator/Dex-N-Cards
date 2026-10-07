@@ -11,8 +11,8 @@
 // by re-running discovery rather than by editing this file.
 //
 // Reliability rules this file follows, because it runs on a Discord bot:
-//   • one browser per generation, always closed in `finally` — a leaked Chromium
-//     is ~100 MB that never comes back
+//   • shared Chromium via withSharedBrowser — one process, serial jobs, idle-close
+//     (launching a fresh Chromium per generate was a 150–400 MB RSS spike)
 //   • every wait is bounded; nothing blocks forever on a selector that changed
 //   • a missing selector is `site_changed`, not a crash, so the user gets a
 //     clean message and an operator gets a log line naming the selector
@@ -25,7 +25,7 @@ import type { BrowserContext, Download, Page } from "playwright";
 import { logger } from "../../../../lib/logger.js";
 import { EmojiError } from "../../utils/errors.js";
 import type { GenerateOptions, GenerateResult } from "../../types.js";
-import { launchBrowser, newContext } from "./runtime.js";
+import { withSharedBrowser, newContext } from "./runtime.js";
 import { resolveValue } from "./manifest.js";
 import type { ControlSpec, Manifest, OptionKey } from "./types.js";
 import { recordNetwork } from "./discovery/recorder.js";
@@ -234,168 +234,174 @@ export async function generateViaBrowser(
   const remaining = () => Math.max(1000, deadline - Date.now());
 
   const tempDir = mkdtempSync(join(tmpdir(), "makeemoji-"));
-  const browser = await launchBrowser();
-  let context: BrowserContext | undefined;
 
   try {
-    context = await newContext(browser);
-    const page = await context.newPage();
-    page.setDefaultTimeout(STEP_TIMEOUT_MS);
+    return await withSharedBrowser(async (browser) => {
+      let context: BrowserContext | undefined;
+      try {
+        context = await newContext(browser);
+        const page = await context.newPage();
+        page.setDefaultTimeout(STEP_TIMEOUT_MS);
 
-    // Only recorded when explicitly asked for: the trace is large, and even
-    // redacted it describes exactly what the bot sent.
-    const recorder = options.debug ? recordNetwork(page) : null;
+        // Only recorded when explicitly asked for: the trace is large, and even
+        // redacted it describes exactly what the bot sent.
+        const recorder = options.debug ? recordNetwork(page) : null;
 
-    await page.goto(manifest.siteUrl, { waitUntil: "domcontentloaded", timeout: remaining() });
+        await page.goto(manifest.siteUrl, { waitUntil: "domcontentloaded", timeout: remaining() });
 
-    // Cookie banners and interstitials intercept the very clicks we need.
-    for (const selector of manifest.browser.dismissSelectors) {
-      await page.click(selector, { timeout: 3000 }).catch(() => {});
-    }
+        // Cookie banners and interstitials intercept the very clicks we need.
+        for (const selector of manifest.browser.dismissSelectors) {
+          await page.click(selector, { timeout: 3000 }).catch(() => {});
+        }
 
-    if (manifest.browser.readySelector) {
-      // File inputs are routinely visually hidden (MakeEmoji uses `class="hidden"`),
-      // so wait for attachment rather than visibility.
-      await page.waitForSelector(manifest.browser.readySelector, {
-        timeout: remaining(),
-        state: "attached",
-      }).catch(() => { throw new EmojiError("site_changed", "The emoji service looks different than expected."); });
-    }
+        if (manifest.browser.readySelector) {
+          // File inputs are routinely visually hidden (MakeEmoji uses `class="hidden"`),
+          // so wait for attachment rather than visibility.
+          await page.waitForSelector(manifest.browser.readySelector, {
+            timeout: remaining(),
+            state: "attached",
+          }).catch(() => { throw new EmojiError("site_changed", "The emoji service looks different than expected."); });
+        }
 
-    const fileInput = manifest.browser.fileInputSelector!;
-    await page.setInputFiles(fileInput, {
-      name: "source.png", mimeType: "image/png", buffer: options.image,
-    }).catch(() => {
-      logger.error({ fileInput }, "MakeEmoji file input not found — manifest is stale");
-      throw new EmojiError("site_changed", "The emoji service looks different than expected.");
-    });
-
-    // Live editors encode asynchronously after upload; give them a moment
-    // before applying options so listboxes and style tiles are interactive.
-    await page.waitForTimeout(1500);
-
-    const applied = await applyOptions(page, manifest, options);
-    logger.debug({ applied }, "MakeEmoji options applied");
-
-    // Some editors render live on change and have no trigger at all; a missing
-    // generate selector is therefore normal, not an error.
-    if (manifest.browser.generateSelector) {
-      await page.click(manifest.browser.generateSelector, { timeout: remaining() }).catch(() => {
-        logger.warn({ selector: manifest.browser.generateSelector }, "MakeEmoji generate control not clickable");
-      });
-    }
-
-    // After options change, MakeEmoji re-encodes client-side. Wait for a
-    // generated preview that matches the requested animation before scraping.
-    await page.waitForFunction(
-      ({ anim, selector }: { anim: string | null; selector: string | null }) => {
-        const w = globalThis as unknown as {
-          document: {
-            querySelectorAll(sel: string): ArrayLike<{
-              getAttribute(name: string): string | null;
-              src?: string;
-            }>;
-          };
-        };
-        const styleName = (anim ?? "")
-          .replace(/^gen_btn_/i, "")
-          .replace(/^:|:$/g, "")
-          .toLowerCase();
-        const nodes = Array.from(
-          w.document.querySelectorAll(selector ?? 'img[alt*="generated" i], img, video'),
-        );
-        return nodes.some(el => {
-          const alt = (el.getAttribute("alt") || "").toLowerCase();
-          const src = el.src || el.getAttribute("src") || "";
-          if (!(src.startsWith("blob:") || src.startsWith("data:"))) return false;
-          if (!/generated/.test(alt)) return false;
-          if (styleName && !alt.includes(styleName)) return false;
-          return !/placeholder/i.test(alt);
+        const fileInput = manifest.browser.fileInputSelector!;
+        await page.setInputFiles(fileInput, {
+          name: "source.png", mimeType: "image/png", buffer: options.image,
+        }).catch(() => {
+          logger.error({ fileInput }, "MakeEmoji file input not found — manifest is stale");
+          throw new EmojiError("site_changed", "The emoji service looks different than expected.");
         });
-      },
-      {
-        anim: options.animation ?? null,
-        selector: manifest.browser.resultSelector,
-      },
-      { timeout: Math.min(RESULT_TIMEOUT_MS, remaining()) },
-    ).catch(() => {});
-    await page.waitForTimeout(750);
 
-    // ── retrieve the finished file ─────────────────────────────────────────
-    let buffer: Buffer | null = null;
-    let sourceUrl: string | undefined;
+        // Live editors encode asynchronously after upload; give them a moment
+        // before applying options so listboxes and style tiles are interactive.
+        await page.waitForTimeout(1500);
 
-    if (manifest.browser.downloadSelector) {
-      // A real download gives the exact bytes the site intends to hand over.
-      const downloadPromise: Promise<Download> = page.waitForEvent("download", {
-        timeout: Math.min(RESULT_TIMEOUT_MS, remaining()),
-      });
-      await page.click(manifest.browser.downloadSelector, { timeout: remaining() }).catch(() => {});
-      const download = await downloadPromise.catch(() => null);
-      if (download) {
-        const path = join(tempDir, "result.bin");
-        await download.saveAs(path);
-        const { readFileSync } = await import("node:fs");
-        buffer = readFileSync(path);
-        sourceUrl = safeOrigin(download.url());
-      }
-    }
+        const applied = await applyOptions(page, manifest, options);
+        logger.debug({ applied }, "MakeEmoji options applied");
 
-    if (!buffer) {
-      // Fall back to the preview. Poll rather than wait once: generation
-      // finishes asynchronously and the element may already exist but still be
-      // showing the previous frame.
-      const until = Math.min(Date.now() + RESULT_TIMEOUT_MS, deadline);
-      const wantGif = !options.format || options.format === "gif";
-      const wantWebp = options.format === "webp";
-      while (Date.now() < until) {
-        const src = await findPreviewSrc(
-          page, manifest.browser.resultSelector, options.animation,
-        );
-        if (src) {
-          const candidate = await readPreviewBytes(page, src).catch(() => null);
-          if (candidate?.length) {
-            const isGif = candidate.subarray(0, 3).toString("ascii") === "GIF";
-            const isPng = candidate[0] === 0x89 && candidate[1] === 0x50;
-            const isWebp = candidate.subarray(0, 4).toString("ascii") === "RIFF";
-            // Skip placeholders that don't match the requested format while
-            // MakeEmoji is still re-encoding after an option change.
-            if (wantGif && isPng && !isGif) {
-              await page.waitForTimeout(750);
-              continue;
-            }
-            if (wantWebp && !isWebp) {
-              await page.waitForTimeout(750);
-              continue;
-            }
-            buffer = candidate;
-            sourceUrl = src.startsWith("data:") || src.startsWith("blob:") ? undefined : src;
-            break;
+        // Some editors render live on change and have no trigger at all; a missing
+        // generate selector is therefore normal, not an error.
+        if (manifest.browser.generateSelector) {
+          await page.click(manifest.browser.generateSelector, { timeout: remaining() }).catch(() => {
+            logger.warn({ selector: manifest.browser.generateSelector }, "MakeEmoji generate control not clickable");
+          });
+        }
+
+        // After options change, MakeEmoji re-encodes client-side. Wait for a
+        // generated preview that matches the requested animation before scraping.
+        await page.waitForFunction(
+          ({ anim, selector }: { anim: string | null; selector: string | null }) => {
+            const w = globalThis as unknown as {
+              document: {
+                querySelectorAll(sel: string): ArrayLike<{
+                  getAttribute(name: string): string | null;
+                  src?: string;
+                }>;
+              };
+            };
+            const styleName = (anim ?? "")
+              .replace(/^gen_btn_/i, "")
+              .replace(/^:|:$/g, "")
+              .toLowerCase();
+            const nodes = Array.from(
+              w.document.querySelectorAll(selector ?? 'img[alt*="generated" i], img, video'),
+            );
+            return nodes.some(el => {
+              const alt = (el.getAttribute("alt") || "").toLowerCase();
+              const src = el.src || el.getAttribute("src") || "";
+              if (!(src.startsWith("blob:") || src.startsWith("data:"))) return false;
+              if (!/generated/.test(alt)) return false;
+              if (styleName && !alt.includes(styleName)) return false;
+              return !/placeholder/i.test(alt);
+            });
+          },
+          {
+            anim: options.animation ?? null,
+            selector: manifest.browser.resultSelector,
+          },
+          { timeout: Math.min(RESULT_TIMEOUT_MS, remaining()) },
+        ).catch(() => {});
+        await page.waitForTimeout(750);
+
+        // ── retrieve the finished file ─────────────────────────────────────────
+        let buffer: Buffer | null = null;
+        let sourceUrl: string | undefined;
+
+        if (manifest.browser.downloadSelector) {
+          // A real download gives the exact bytes the site intends to hand over.
+          const downloadPromise: Promise<Download> = page.waitForEvent("download", {
+            timeout: Math.min(RESULT_TIMEOUT_MS, remaining()),
+          });
+          await page.click(manifest.browser.downloadSelector, { timeout: remaining() }).catch(() => {});
+          const download = await downloadPromise.catch(() => null);
+          if (download) {
+            const path = join(tempDir, "result.bin");
+            await download.saveAs(path);
+            const { readFileSync } = await import("node:fs");
+            buffer = readFileSync(path);
+            sourceUrl = safeOrigin(download.url());
           }
         }
-        await page.waitForTimeout(750);
+
+        if (!buffer) {
+          // Fall back to the preview. Poll rather than wait once: generation
+          // finishes asynchronously and the element may already exist but still be
+          // showing the previous frame.
+          const until = Math.min(Date.now() + RESULT_TIMEOUT_MS, deadline);
+          const wantGif = !options.format || options.format === "gif";
+          const wantWebp = options.format === "webp";
+          while (Date.now() < until) {
+            const src = await findPreviewSrc(
+              page, manifest.browser.resultSelector, options.animation,
+            );
+            if (src) {
+              const candidate = await readPreviewBytes(page, src).catch(() => null);
+              if (candidate?.length) {
+                const isGif = candidate.subarray(0, 3).toString("ascii") === "GIF";
+                const isPng = candidate[0] === 0x89 && candidate[1] === 0x50;
+                const isWebp = candidate.subarray(0, 4).toString("ascii") === "RIFF";
+                // Skip placeholders that don't match the requested format while
+                // MakeEmoji is still re-encoding after an option change.
+                if (wantGif && isPng && !isGif) {
+                  await page.waitForTimeout(750);
+                  continue;
+                }
+                if (wantWebp && !isWebp) {
+                  await page.waitForTimeout(750);
+                  continue;
+                }
+                buffer = candidate;
+                sourceUrl = src.startsWith("data:") || src.startsWith("blob:") ? undefined : src;
+                break;
+              }
+            }
+            await page.waitForTimeout(750);
+          }
+        }
+
+        if (recorder) {
+          recorder.stop();
+          writeDebugTrace("generate", recorder.exchanges, recorder.websockets);
+        }
+
+        if (!buffer?.length) {
+          logger.warn({ site: manifest.siteUrl }, "MakeEmoji produced no result");
+          throw new EmojiError("generation_failed", "The emoji service didn't produce a file. Please try again.");
+        }
+
+        return {
+          buffer,
+          format: options.format,
+          bytes: buffer.length,
+          providerId: "makeemoji-browser",
+          durationMs: Date.now() - started,
+          ...(sourceUrl ? { sourceUrl } : {}),
+          cached: false,
+        };
+      } finally {
+        // Close the context only — the shared Chromium stays warm for the next job.
+        await context?.close().catch(() => {});
       }
-    }
-
-    if (recorder) {
-      recorder.stop();
-      writeDebugTrace("generate", recorder.exchanges, recorder.websockets);
-    }
-
-    if (!buffer?.length) {
-      logger.warn({ site: manifest.siteUrl }, "MakeEmoji produced no result");
-      throw new EmojiError("generation_failed", "The emoji service didn't produce a file. Please try again.");
-    }
-
-    return {
-      buffer,
-      format: options.format,
-      bytes: buffer.length,
-      providerId: "makeemoji-browser",
-      durationMs: Date.now() - started,
-      ...(sourceUrl ? { sourceUrl } : {}),
-      cached: false,
-    };
+    });
   } catch (err) {
     if (err instanceof EmojiError) throw err;
     const message = (err as Error).message ?? "";
@@ -405,10 +411,6 @@ export async function generateViaBrowser(
     logger.error({ err: message.split("\n")[0] }, "MakeEmoji browser generation failed");
     throw new EmojiError("browser_failed", "The emoji generator hit a problem. Please try again.");
   } finally {
-    // Closed in every path: a leaked context or browser is a permanent memory
-    // cost on a long-running bot, and the temp dir holds the downloaded file.
-    await context?.close().catch(() => {});
-    await browser.close().catch(() => {});
     rmSync(tempDir, { recursive: true, force: true });
   }
 }

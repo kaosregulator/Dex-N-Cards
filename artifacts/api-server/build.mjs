@@ -33,8 +33,6 @@ async function buildAll() {
       "@napi-rs/canvas",
       "better-sqlite3",
       "sqlite3",
-      "canvas",
-      "konva",
       "bcrypt",
       "argon2",
       "fsevents",

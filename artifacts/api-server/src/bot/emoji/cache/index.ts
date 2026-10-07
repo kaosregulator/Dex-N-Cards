@@ -22,9 +22,9 @@ import type { GenerateOptions, GenerateResult } from "../types.js";
 /** Entries expire after this. Short: MakeEmoji's output could change. */
 const TTL_MS = 15 * 60 * 1000;
 
-/** Ceilings on what the cache may hold. */
-const MAX_ENTRIES = 120;
-const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+/** Ceilings on what the cache may hold (tuned for ~512 MB Railway boxes). */
+const MAX_ENTRIES = 64;
+const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
 
 interface CacheEntry {
   key: string;

@@ -13,6 +13,9 @@ import { logger } from "../../lib/logger.js";
 
 export type CanvasMod = typeof import("@napi-rs/canvas");
 
+/** Pixel buffer returned by napi-rs getImageData (DOM lib is not enabled). */
+type FrameImageData = { data: Uint8ClampedArray; width: number; height: number };
+
 // The 2D context type used across the animation system. Mirrors the existing
 // battle-image renderer, which types the napi-rs context rather than pulling in
 // the DOM lib. Kept as a single alias so effects/pack/battle stay consistent.
@@ -27,7 +30,8 @@ export type Ctx = SKRSContext2D & {
   setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void;
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void;
   bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void;
-  getImageData(sx: number, sy: number, sw: number, sh: number): { data: Uint8ClampedArray };
+  getImageData(sx: number, sy: number, sw: number, sh: number): FrameImageData;
+  putImageData(image: FrameImageData, dx: number, dy: number): void;
   // Additive-blend layers (atmosphere embers/sparks/dust, physics glows) set
   // this; it exists on the spec-complete Skia context but is under-declared.
   globalCompositeOperation: string;
@@ -174,8 +178,7 @@ export interface EncodeOptions {
 // Cheap FNV-1a hash over a subsample of the frame's pixels. Used only to detect
 // *identical* consecutive frames for coalescing; a rare hash collision would at
 // worst merge two truly-different frames, so subsampling is safe.
-function frameSignature(ctx: Ctx, physW: number, physH: number): number {
-  const data = ctx.getImageData(0, 0, physW, physH).data;
+function frameSignatureFromData(data: Uint8ClampedArray): number {
   let h = 0x811c9dc5;
   // Step by a prime so the sample walks across scanlines, not down one column.
   for (let k = 0; k < data.length; k += 389) {
@@ -197,34 +200,60 @@ export async function encodeAnimation(opts: EncodeOptions): Promise<AnimationRes
     const physW = Math.max(1, Math.round(width * renderScale));
     const physH = Math.max(1, Math.round(height * renderScale));
 
-    // Render every frame up-front, tagging each with a pixel signature so we can
-    // drop duplicate consecutive frames (idle/hold phases) before encoding.
-    const frames: { ctx: Ctx; sig: number }[] = [];
-    for (let i = 0; i < frameCount; i++) {
-      const canvas = mod.createCanvas(physW, physH);
-      const ctx = canvas.getContext("2d") as unknown as Ctx;
-      if (renderScale !== 1) ctx.scale(renderScale, renderScale);
-      const t = frameCount <= 1 ? 1 : i / (frameCount - 1);
-      await render({ canvas, ctx, t, frameIndex: i, frameCount, mod });
-      frames.push({ ctx, sig: frameSignature(ctx, physW, physH) });
-    }
+    // Stream encode on ONE reusable canvas. The old path kept every frame's
+    // Skia canvas alive until encode finished (N × RGBA peak). Now peak RAM is
+    // one canvas + one pending ImageData for identical-frame coalescing.
+    const canvas = mod.createCanvas(physW, physH);
+    const ctx = canvas.getContext("2d") as unknown as Ctx;
 
     const encoder = new GIFEncoder(physW, physH);
     encoder.start();
     encoder.setRepeat(0);        // loop forever
     encoder.setQuality(quality); // higher = coarser palette = smaller file
 
-    // Coalesce runs of identical frames into a single frame with a summed delay.
+    // Hold at most one prior unique frame (ImageData) so identical idle/hold
+    // frames coalesce into a longer delay without retaining N Skia canvases.
+    let pending: FrameImageData | null = null;
+    let pendingSig = 0;
+    let pendingDelay = 0;
     let emitted = 0;
-    let i = 0;
-    while (i < frames.length) {
-      let j = i + 1;
-      while (j < frames.length && frames[j]!.sig === frames[i]!.sig) j++;
-      encoder.setDelay(delayMs * (j - i));
-      encoder.addFrame(frames[i]!.ctx);
+
+    const emitPending = (): void => {
+      if (!pending) return;
+      encoder.setDelay(pendingDelay);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.putImageData(pending, 0, 0);
+      encoder.addFrame(ctx);
       emitted++;
-      i = j;
+      pending = null;
+    };
+
+    for (let i = 0; i < frameCount; i++) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, physW, physH);
+      if (renderScale !== 1) ctx.scale(renderScale, renderScale);
+      const t = frameCount <= 1 ? 1 : i / (frameCount - 1);
+      await render({ canvas, ctx, t, frameIndex: i, frameCount, mod });
+
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const imageData = ctx.getImageData(0, 0, physW, physH);
+      const sig = frameSignatureFromData(imageData.data);
+
+      if (!pending) {
+        pending = imageData;
+        pendingSig = sig;
+        pendingDelay = delayMs;
+      } else if (sig === pendingSig) {
+        pendingDelay += delayMs;
+      } else {
+        emitPending();
+        pending = imageData;
+        pendingSig = sig;
+        pendingDelay = delayMs;
+      }
     }
+
+    emitPending();
     encoder.finish();
 
     const buffer = encoder.out.getData();

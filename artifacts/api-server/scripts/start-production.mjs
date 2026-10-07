@@ -580,10 +580,25 @@ async function main() {
     await ensureAddonTables();
   }
 
+  // Cap the V8 heap so JS image buffers get GC'd before RSS climbs past a
+  // typical Railway 512–1024 MB plan. Native Skia/Chromium sit outside this
+  // limit — see RENDER_CONCURRENCY + shared MakeEmoji Chromium for those.
+  const existingNodeOpts = (process.env.NODE_OPTIONS ?? "").trim();
+  const heapFlag = "--max-old-space-size=";
+  const nodeOptions = existingNodeOpts.includes(heapFlag)
+    ? existingNodeOpts
+    : [existingNodeOpts, "--max-old-space-size=460"].filter(Boolean).join(" ");
+
   const child = spawnSync(process.execPath, ["--enable-source-maps", entry], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: process.env,
+    env: {
+      ...process.env,
+      NODE_OPTIONS: nodeOptions,
+      // Default render concurrency is 2 in code; pin here so older deploys that
+      // set RENDER_CONCURRENCY=8 cannot silently re-enable multi-GB spikes.
+      RENDER_CONCURRENCY: process.env.RENDER_CONCURRENCY ?? "2",
+    },
   });
   process.exit(child.status ?? 1);
 }
