@@ -7,6 +7,13 @@ import { requireDashboardAuth } from "../middlewares/dashboard-auth.js";
 import { HOME_GUILD_ID } from "../bot/home-guild.js";
 import { isUbConfigured, ubApi, UbApiError } from "../lib/unbelievaboat/client.js";
 import {
+  planBalanceEdit,
+  UB_BALANCE_DOCS,
+  UB_BALANCE_FIELDS,
+  UB_BALANCE_READONLY,
+  UB_RESET_TARGETS,
+} from "../lib/unbelievaboat/balance-edit.js";
+import {
   getOrCreateUbSettings,
   updateUbSettings,
   listRoleLinks,
@@ -86,6 +93,12 @@ router.get("/ub/status", async (req, res) => {
     permissions,
     apiError,
     docs: "https://api-docs.unbelievaboat.com/reference/reference",
+    balanceEditor: {
+      docs: UB_BALANCE_DOCS,
+      fields: UB_BALANCE_FIELDS,
+      readOnly: UB_BALANCE_READONLY,
+      reset: UB_RESET_TARGETS,
+    },
   });
 });
 
@@ -156,7 +169,14 @@ router.get("/ub/users/:userId", async (req, res) => {
     const balance = await ubApi.getUserBalance(settings.ubGuildId, req.params["userId"]!);
     let inventory: unknown[] = [];
     try { inventory = await ubApi.getInventory(settings.ubGuildId, req.params["userId"]!); } catch { /* */ }
-    res.json({ balance, inventory });
+    res.json({
+      balance,
+      inventory,
+      editable: UB_BALANCE_FIELDS,
+      readOnly: UB_BALANCE_READONLY,
+      reset: UB_RESET_TARGETS,
+      docs: UB_BALANCE_DOCS,
+    });
   } catch (err) {
     ubErr(res, err);
   }
@@ -173,25 +193,23 @@ router.patch("/ub/users/:userId", async (req, res) => {
     cash: z.number().int().optional(),
     bank: z.number().int().optional(),
     reason: z.string().max(200).optional(),
-    mode: z.enum(["patch", "set"]).default("patch"),
+    mode: z.enum(["patch", "set", "reset"]).default("patch"),
+    reset: z.enum(["cash", "bank", "all"]).optional(),
   }), req.body, res);
   if (!body) return;
-  if (body.cash === undefined && body.bank === undefined) {
-    res.status(400).json({ error: "Provide cash and/or bank." });
+  const plan = planBalanceEdit(body);
+  if (!plan.ok) {
+    res.status(400).json({ error: plan.error });
     return;
   }
   const settings = await getOrCreateUbSettings(guildId);
   const userId = req.params["userId"]!;
   try {
-    const balance = body.mode === "set"
-      ? await ubApi.setUserBalance(settings.ubGuildId, userId, {
-          cash: body.cash, bank: body.bank, reason: body.reason ?? "Dashboard admin set",
-        })
-      : await ubApi.patchUserBalance(settings.ubGuildId, userId, {
-          cash: body.cash, bank: body.bank, reason: body.reason ?? "Dashboard admin adjust",
-        });
-    await writeUbAudit(guildId, actorId(res), body.mode === "set" ? "balance_set" : "balance_patch", body, userId);
-    res.json({ balance });
+    const balance = plan.method === "PUT"
+      ? await ubApi.setUserBalance(settings.ubGuildId, userId, plan.body)
+      : await ubApi.patchUserBalance(settings.ubGuildId, userId, plan.body);
+    await writeUbAudit(guildId, actorId(res), plan.audit, { ...body, applied: plan.body }, userId);
+    res.json({ balance, applied: plan.body, audit: plan.audit });
   } catch (err) {
     ubErr(res, err);
   }

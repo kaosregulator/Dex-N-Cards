@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminGet, adminSend, ApiError } from "@/lib/api";
@@ -13,6 +13,11 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type UbStatus = {
   configured: boolean;
@@ -36,6 +41,24 @@ type UbStatus = {
   guild: { id: string; name: string; symbol: string; member_count: number } | null;
   apiError: string | null;
   docs: string;
+  balanceEditor?: {
+    docs: string;
+    fields: { key: string; label: string; type: string; summary: string }[];
+    readOnly: { key: string; label: string; summary: string }[];
+    reset: { key: "cash" | "bank" | "all"; label: string; detail: string }[];
+  };
+};
+
+type BalanceEditor = NonNullable<UbStatus["balanceEditor"]>;
+type UbBalance = { user_id: string; cash: number; bank: number; total: number; rank?: string };
+type UbInventoryItem = { item_id: string; quantity?: number; name?: string };
+type UbUserView = {
+  balance: UbBalance;
+  inventory: UbInventoryItem[];
+  editable?: BalanceEditor["fields"];
+  readOnly?: BalanceEditor["readOnly"];
+  reset?: BalanceEditor["reset"];
+  docs?: string;
 };
 
 type LbEntry = { rank: string; user_id: string; cash: number; bank: number; total: number };
@@ -54,6 +77,31 @@ function fmt(n: number) {
   return new Intl.NumberFormat().format(n);
 }
 
+function parseWhole(raw: string): number | undefined | null {
+  const cleaned = raw.trim().replace(/,/g, "").replace(/^\+/, "");
+  if (!cleaned) return undefined;
+  if (!/^-?\d+$/.test(cleaned)) return null;
+  return Number(cleaned);
+}
+
+const FALLBACK_EDITOR: BalanceEditor = {
+  docs: "https://api-docs.unbelievaboat.com/reference/patch-user-balance",
+  fields: [
+    { key: "cash", label: "Cash", type: "int32", summary: "Wallet. PATCH adds or subtracts. PUT sets the exact amount." },
+    { key: "bank", label: "Bank", type: "int32", summary: "Vault. Same as cash — a relative change, or an exact amount." },
+    { key: "reason", label: "Reason", type: "string", summary: "Optional note stored on the UnbelievaBoat audit log." },
+  ],
+  readOnly: [
+    { key: "total", label: "Total", summary: "Cash + bank. UnbelievaBoat calculates this." },
+    { key: "rank", label: "Rank", summary: "Leaderboard place. It moves when cash or bank changes." },
+  ],
+  reset: [
+    { key: "cash", label: "Clear cash", detail: "Sets cash to 0. Bank stays." },
+    { key: "bank", label: "Clear bank", detail: "Sets bank to 0. Cash stays." },
+    { key: "all", label: "Clear all", detail: "Sets cash and bank to 0." },
+  ],
+};
+
 export default function UnbelievaBoatAdmin() {
   const [, navigate] = useLocation();
   const { user, isLoading } = useAuth();
@@ -65,11 +113,13 @@ export default function UnbelievaBoatAdmin() {
 
   // User editor
   const [editUserId, setEditUserId] = useState("");
-  const [cashDelta, setCashDelta] = useState("0");
-  const [bankDelta, setBankDelta] = useState("0");
+  const [loadedId, setLoadedId] = useState("");
+  const [cashDelta, setCashDelta] = useState("");
+  const [bankDelta, setBankDelta] = useState("");
   const [setCash, setSetCash] = useState("");
   const [setBank, setSetBank] = useState("");
   const [reason, setReason] = useState("Dashboard hub adjust");
+  const [resetTarget, setResetTarget] = useState<null | "cash" | "bank" | "all">(null);
 
   // Role form
   const [roleName, setRoleName] = useState("");
@@ -122,6 +172,12 @@ export default function UnbelievaBoatAdmin() {
     enabled: !!user && tab === "pets",
   });
 
+  const loadedUser = useQuery<UbUserView>({
+    queryKey: ["ub", "user", loadedId],
+    queryFn: () => adminGet(`/api/admin/ub/users/${loadedId}`),
+    enabled: !!user && tab === "users" && /^\d{5,25}$/.test(loadedId),
+  });
+
   const audit = useQuery<{ rows: { id: number; action: string; actorId: string; targetUserId: string | null; createdAt: string }[] }>({
     queryKey: ["ub", "audit"],
     queryFn: () => adminGet("/api/admin/ub/audit"),
@@ -150,11 +206,30 @@ export default function UnbelievaBoatAdmin() {
   });
 
   const adjustUser = useMutation({
-    mutationFn: (body: { mode: "patch" | "set"; cash?: number; bank?: number; reason?: string }) =>
-      adminSend("PATCH", `/api/admin/ub/users/${editUserId.trim()}`, body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["ub", "leaderboard"] }); note("Balance updated"); },
+    mutationFn: (body: {
+      mode: "patch" | "set" | "reset";
+      cash?: number;
+      bank?: number;
+      reason?: string;
+      reset?: "cash" | "bank" | "all";
+    }) => adminSend("PATCH", `/api/admin/ub/users/${loadedId}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ub", "user", loadedId] });
+      qc.invalidateQueries({ queryKey: ["ub", "leaderboard"] });
+      setCashDelta("");
+      setBankDelta("");
+      setResetTarget(null);
+      note("Balance updated");
+    },
     onError: fail,
   });
+
+  useEffect(() => {
+    const bal = loadedUser.data?.balance;
+    if (!bal) return;
+    setSetCash(String(bal.cash));
+    setSetBank(String(bal.bank));
+  }, [loadedUser.data]);
 
   const createRole = useMutation({
     mutationFn: () => adminSend("POST", "/api/admin/ub/roles", {
@@ -234,10 +309,9 @@ export default function UnbelievaBoatAdmin() {
     <div className="container max-w-6xl py-8 px-4 space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">UnbelievaBoat Hub</h1>
+          <h1 className="text-2xl font-bold tracking-tight">UnbelievaBoat</h1>
           <p className="text-sm text-muted-foreground">
-            Official admin control for economy, leaderboards, role links, store catalog, and the Tamagotchi pet addon.
-            Addon only — does not replace DN Cards.
+            Economy, leaderboard, and member balances. Edit cash and bank, or clear either back to zero.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -268,7 +342,7 @@ export default function UnbelievaBoatAdmin() {
         <TabsList className="flex h-auto flex-wrap gap-1">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
-          <TabsTrigger value="users">Edit Users</TabsTrigger>
+          <TabsTrigger value="users">Edit user</TabsTrigger>
           <TabsTrigger value="roles">Roles</TabsTrigger>
           <TabsTrigger value="store">Store</TabsTrigger>
           <TabsTrigger value="pets">Pets</TabsTrigger>
@@ -337,7 +411,7 @@ export default function UnbelievaBoatAdmin() {
               <h2 className="font-semibold">Quick links</h2>
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li>• Discord: <code>/pet</code> hub · <code>/pet hatch</code> · <code>/pet challenge</code> · <code>/petadmin</code></li>
-                <li>• Move players on the leaderboard via <strong>Edit Users</strong> (patch or set cash/bank).</li>
+                <li>• <strong>Edit user</strong> changes cash and bank, or clears cash, bank, or both to 0.</li>
                 <li>• Create Discord role links and optionally push an UnbelievaBoat store item that grants the role.</li>
                 <li>• Author local catalog items (including pet shop goods), then Sync to UB when the token is live.</li>
               </ul>
@@ -395,7 +469,7 @@ export default function UnbelievaBoatAdmin() {
                       <td className="px-3 py-2">{fmt(u.bank)}</td>
                       <td className="px-3 py-2 font-medium">{fmt(u.total)}</td>
                       <td className="px-3 py-2">
-                        <Button size="sm" variant="ghost" onClick={() => { setEditUserId(u.user_id); setTab("users"); }}>
+                        <Button size="sm" variant="ghost" onClick={() => { setEditUserId(u.user_id); setLoadedId(u.user_id); setTab("users"); }}>
                           Edit
                         </Button>
                       </td>
@@ -407,69 +481,60 @@ export default function UnbelievaBoatAdmin() {
           )}
         </TabsContent>
 
-        <TabsContent value="users" className="space-y-4 pt-4">
-          <section className="max-w-xl space-y-4 rounded-lg border p-4">
-            <h2 className="font-semibold">Edit user balance</h2>
-            <p className="text-xs text-muted-foreground">
-              Patch = relative (±). Set = absolute. Use this to move someone up or down the UB leaderboard.
-            </p>
-            <div className="space-y-2">
-              <Label>Discord user ID</Label>
-              <Input className="font-mono text-xs" value={editUserId} onChange={(e) => setEditUserId(e.target.value)} placeholder="snowflake" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Cash delta</Label>
-                <Input value={cashDelta} onChange={(e) => setCashDelta(e.target.value)} placeholder="+100 or -50" />
-              </div>
-              <div className="space-y-2">
-                <Label>Bank delta</Label>
-                <Input value={bankDelta} onChange={(e) => setBankDelta(e.target.value)} placeholder="+0" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Reason</Label>
-              <Input value={reason} onChange={(e) => setReason(e.target.value)} />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={!editUserId || adjustUser.isPending}
-                onClick={() => adjustUser.mutate({
-                  mode: "patch",
-                  cash: Number(cashDelta) || 0,
-                  bank: Number(bankDelta) || 0,
-                  reason,
-                })}
-              >
-                Apply delta
-              </Button>
-            </div>
-            <div className="border-t pt-4 space-y-3">
-              <h3 className="text-sm font-medium">Or set absolute balances</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Cash</Label>
-                  <Input value={setCash} onChange={(e) => setSetCash(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Bank</Label>
-                  <Input value={setBank} onChange={(e) => setSetBank(e.target.value)} />
-                </div>
-              </div>
-              <Button
-                variant="secondary"
-                disabled={!editUserId || adjustUser.isPending}
-                onClick={() => adjustUser.mutate({
-                  mode: "set",
-                  cash: setCash === "" ? undefined : Number(setCash),
-                  bank: setBank === "" ? undefined : Number(setBank),
-                  reason,
-                })}
-              >
-                Set balances
-              </Button>
-            </div>
-          </section>
+        <TabsContent value="users" className="pt-4">
+          <UserEditor
+            draftId={editUserId}
+            loadedId={loadedId}
+            onDraftId={setEditUserId}
+            onLoad={() => setLoadedId(editUserId.trim())}
+            userView={loadedUser.data}
+            loading={loadedUser.isLoading}
+            loadError={loadedUser.error instanceof Error ? loadedUser.error.message : null}
+            editor={loadedUser.data?.editable
+              ? {
+                  docs: loadedUser.data.docs ?? FALLBACK_EDITOR.docs,
+                  fields: loadedUser.data.editable ?? FALLBACK_EDITOR.fields,
+                  readOnly: loadedUser.data.readOnly ?? FALLBACK_EDITOR.readOnly,
+                  reset: loadedUser.data.reset ?? FALLBACK_EDITOR.reset,
+                }
+              : (s?.balanceEditor ?? FALLBACK_EDITOR)}
+            symbol={s?.guild?.symbol}
+            cashDelta={cashDelta}
+            bankDelta={bankDelta}
+            setCash={setCash}
+            setBank={setBank}
+            reason={reason}
+            pending={adjustUser.isPending}
+            onCashDelta={setCashDelta}
+            onBankDelta={setBankDelta}
+            onSetCash={setSetCash}
+            onSetBank={setSetBank}
+            onReason={setReason}
+            onPatch={() => {
+              const cash = parseWhole(cashDelta);
+              const bank = parseWhole(bankDelta);
+              if (cash === null || bank === null) { setErr("Cash and bank must be whole numbers."); return; }
+              if (cash === undefined && bank === undefined) { setErr("Enter a cash change, a bank change, or both."); return; }
+              adjustUser.mutate({ mode: "patch", cash, bank, reason });
+            }}
+            onSet={() => {
+              const cash = parseWhole(setCash);
+              const bank = parseWhole(setBank);
+              if (cash === null || bank === null) { setErr("Cash and bank must be whole numbers."); return; }
+              if (cash === undefined && bank === undefined) { setErr("Enter an exact cash amount, bank amount, or both."); return; }
+              adjustUser.mutate({ mode: "set", cash, bank, reason });
+            }}
+            resetTarget={resetTarget}
+            onResetAsk={setResetTarget}
+            onResetConfirm={() => {
+              if (!resetTarget) return;
+              adjustUser.mutate({
+                mode: "reset",
+                reset: resetTarget,
+                reason: resetTarget === "all" ? "Reset cash and bank to 0" : `Reset ${resetTarget} to 0`,
+              });
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="roles" className="space-y-4 pt-4">
@@ -735,6 +800,237 @@ export default function UnbelievaBoatAdmin() {
           </div>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function money(symbol: string | undefined, n: number) {
+  const mark = symbol && symbol !== "—" ? `${symbol} ` : "";
+  return `${mark}${fmt(n)}`;
+}
+
+function UserEditor(props: {
+  draftId: string;
+  loadedId: string;
+  onDraftId: (id: string) => void;
+  onLoad: () => void;
+  userView?: UbUserView;
+  loading: boolean;
+  loadError: string | null;
+  editor: BalanceEditor;
+  symbol?: string;
+  cashDelta: string;
+  bankDelta: string;
+  setCash: string;
+  setBank: string;
+  reason: string;
+  pending: boolean;
+  onCashDelta: (v: string) => void;
+  onBankDelta: (v: string) => void;
+  onSetCash: (v: string) => void;
+  onSetBank: (v: string) => void;
+  onReason: (v: string) => void;
+  onPatch: () => void;
+  onSet: () => void;
+  resetTarget: "cash" | "bank" | "all" | null;
+  onResetAsk: (target: "cash" | "bank" | "all" | null) => void;
+  onResetConfirm: () => void;
+}) {
+  const bal = props.userView?.balance;
+  const reset = props.editor.reset.find(r => r.key === props.resetTarget);
+  const inventory = props.userView?.inventory ?? [];
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <Card>
+        <CardHeader>
+          <CardTitle>Edit a member</CardTitle>
+          <CardDescription>
+            Load their live balance, then change cash, bank, or both.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              className="font-mono text-xs"
+              value={props.draftId}
+              onChange={(e) => props.onDraftId(e.target.value)}
+              placeholder="Discord user ID"
+              onKeyDown={(e) => { if (e.key === "Enter") props.onLoad(); }}
+            />
+            <Button variant="secondary" disabled={!props.draftId.trim()} onClick={props.onLoad}>
+              Load
+            </Button>
+          </div>
+
+          {!props.loadedId && (
+            <p className="text-sm text-muted-foreground">
+              Paste a user ID, or choose Edit on the leaderboard.
+            </p>
+          )}
+          {props.loading && props.loadedId && (
+            <p className="text-sm text-muted-foreground">Loading balance…</p>
+          )}
+          {props.loadError && (
+            <p className="text-sm text-destructive">{props.loadError}</p>
+          )}
+
+          {bal && (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat label="Cash" value={money(props.symbol, bal.cash)} />
+                <Stat label="Bank" value={money(props.symbol, bal.bank)} />
+                <Stat label="Total" value={money(props.symbol, bal.total)} />
+                <Stat label="Rank" value={bal.rank ? `#${String(bal.rank).replace(/^#/, "")}` : "—"} />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Reason</Label>
+                <Input value={props.reason} onChange={(e) => props.onReason(e.target.value)} />
+                <p className="text-xs text-muted-foreground">Saved on the UnbelievaBoat audit log with every change.</p>
+              </div>
+
+              <div className="space-y-3 rounded-lg border p-4">
+                <div>
+                  <h3 className="text-sm font-medium">Add or subtract</h3>
+                  <p className="text-xs text-muted-foreground">Leave a box blank to leave that balance alone.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Cash change</Label>
+                    <Input value={props.cashDelta} onChange={(e) => props.onCashDelta(e.target.value)} placeholder="+100 or -50" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Bank change</Label>
+                    <Input value={props.bankDelta} onChange={(e) => props.onBankDelta(e.target.value)} placeholder="+100 or -50" />
+                  </div>
+                </div>
+                <Button disabled={props.pending} onClick={props.onPatch}>Apply change</Button>
+              </div>
+
+              <div className="space-y-3 rounded-lg border p-4">
+                <div>
+                  <h3 className="text-sm font-medium">Set exact amounts</h3>
+                  <p className="text-xs text-muted-foreground">These replace the current cash or bank. Clear a box to skip it.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Cash</Label>
+                    <Input value={props.setCash} onChange={(e) => props.onSetCash(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Bank</Label>
+                    <Input value={props.setBank} onChange={(e) => props.onSetBank(e.target.value)} />
+                  </div>
+                </div>
+                <Button variant="secondary" disabled={props.pending} onClick={props.onSet}>Set balances</Button>
+              </div>
+
+              <div className="space-y-3 rounded-lg border border-destructive/30 p-4">
+                <div>
+                  <h3 className="text-sm font-medium">Reset to zero</h3>
+                  <p className="text-xs text-muted-foreground">
+                    UnbelievaBoat has no wipe-user call. These set cash, bank, or both to 0.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {props.editor.reset.map(target => (
+                    <Button
+                      key={target.key}
+                      variant="destructive"
+                      size="sm"
+                      disabled={props.pending}
+                      onClick={() => props.onResetAsk(target.key)}
+                    >
+                      {target.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {inventory.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium">Inventory</h3>
+                  <p className="text-xs text-muted-foreground">Shown for context. Balance edits do not change items.</p>
+                  <ul className="space-y-1 text-sm text-muted-foreground">
+                    {inventory.map(item => (
+                      <li key={item.item_id}>
+                        {item.name ?? item.item_id}
+                        {item.quantity != null ? ` × ${item.quantity}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>What you can edit</CardTitle>
+          <CardDescription>
+            From UnbelievaBoat Update Balance.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <ul className="space-y-3">
+            {props.editor.fields.map(field => (
+              <li key={field.key}>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{field.label}</span>
+                  <Badge variant="outline" className="font-mono text-[10px]">{field.type}</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{field.summary}</p>
+              </li>
+            ))}
+          </ul>
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Read only</p>
+            <ul className="space-y-2">
+              {props.editor.readOnly.map(field => (
+                <li key={field.key}>
+                  <span className="text-sm font-medium">{field.label}</span>
+                  <p className="text-xs text-muted-foreground">{field.summary}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <a className="inline-block text-xs underline" href={props.editor.docs} target="_blank" rel="noreferrer">
+            Update Balance docs
+          </a>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={!!props.resetTarget} onOpenChange={(open) => { if (!open) props.onResetAsk(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{reset?.label ?? "Reset"} to zero?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {reset?.detail} This updates user {props.loadedId || "the selected member"} and writes an audit reason.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={props.onResetConfirm}
+            >
+              Reset to 0
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/30 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</p>
+      <p className="text-lg font-semibold tabular-nums">{value}</p>
     </div>
   );
 }
