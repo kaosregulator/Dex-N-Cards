@@ -65,8 +65,9 @@ export default function UnbelievaBoatAdmin() {
 
   // User editor
   const [editUserId, setEditUserId] = useState("");
-  const [cashDelta, setCashDelta] = useState("0");
-  const [bankDelta, setBankDelta] = useState("0");
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
+  const [cashDelta, setCashDelta] = useState("");
+  const [bankDelta, setBankDelta] = useState("");
   const [setCash, setSetCash] = useState("");
   const [setBank, setSetBank] = useState("");
   const [reason, setReason] = useState("Dashboard hub adjust");
@@ -128,6 +129,17 @@ export default function UnbelievaBoatAdmin() {
     enabled: !!user && tab === "audit",
   });
 
+  type UserBalanceView = {
+    balance: { user_id: string; cash: number; bank: number; total: number; rank?: string };
+    inventory: unknown[];
+  };
+
+  const userBalance = useQuery<UserBalanceView>({
+    queryKey: ["ub", "user", loadedUserId],
+    queryFn: () => adminGet(`/api/admin/ub/users/${loadedUserId}`),
+    enabled: !!user && !!loadedUserId && !!status.data?.configured,
+  });
+
   function note(msg: string) {
     setFlash(msg);
     setErr(null);
@@ -135,6 +147,16 @@ export default function UnbelievaBoatAdmin() {
   }
   function fail(e: unknown) {
     setErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Request failed");
+  }
+
+  function loadUser() {
+    const id = editUserId.trim();
+    if (!id) {
+      setErr("Enter a Discord user ID first.");
+      return;
+    }
+    setLoadedUserId(id);
+    setErr(null);
   }
 
   const patchSettings = useMutation({
@@ -151,8 +173,17 @@ export default function UnbelievaBoatAdmin() {
 
   const adjustUser = useMutation({
     mutationFn: (body: { mode: "patch" | "set"; cash?: number; bank?: number; reason?: string }) =>
-      adminSend("PATCH", `/api/admin/ub/users/${editUserId.trim()}`, body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["ub", "leaderboard"] }); note("Balance updated"); },
+      adminSend<{ balance: UserBalanceView["balance"] }>("PATCH", `/api/admin/ub/users/${editUserId.trim()}`, body),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["ub", "leaderboard"] });
+      qc.invalidateQueries({ queryKey: ["ub", "user", editUserId.trim()] });
+      qc.invalidateQueries({ queryKey: ["ub", "audit"] });
+      if (data?.balance) {
+        setSetCash(String(data.balance.cash));
+        setSetBank(String(data.balance.bank));
+      }
+      note("Balance updated");
+    },
     onError: fail,
   });
 
@@ -337,7 +368,7 @@ export default function UnbelievaBoatAdmin() {
               <h2 className="font-semibold">Quick links</h2>
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li>• Discord: <code>/pet</code> hub · <code>/pet hatch</code> · <code>/pet challenge</code> · <code>/petadmin</code></li>
-                <li>• Move players on the leaderboard via <strong>Edit Users</strong> (patch or set cash/bank).</li>
+                <li>• <strong>Edit Users</strong> — load a member, then adjust/set/clear <strong>cash & bank</strong> (UB PATCH/PUT).</li>
                 <li>• Create Discord role links and optionally push an UnbelievaBoat store item that grants the role.</li>
                 <li>• Author local catalog items (including pet shop goods), then Sync to UB when the token is live.</li>
               </ul>
@@ -395,7 +426,17 @@ export default function UnbelievaBoatAdmin() {
                       <td className="px-3 py-2">{fmt(u.bank)}</td>
                       <td className="px-3 py-2 font-medium">{fmt(u.total)}</td>
                       <td className="px-3 py-2">
-                        <Button size="sm" variant="ghost" onClick={() => { setEditUserId(u.user_id); setTab("users"); }}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setEditUserId(u.user_id);
+                            setLoadedUserId(u.user_id);
+                            setSetCash(String(u.cash));
+                            setSetBank(String(u.bank));
+                            setTab("users");
+                          }}
+                        >
                           Edit
                         </Button>
                       </td>
@@ -408,66 +449,171 @@ export default function UnbelievaBoatAdmin() {
         </TabsContent>
 
         <TabsContent value="users" className="space-y-4 pt-4">
-          <section className="max-w-xl space-y-4 rounded-lg border p-4">
-            <h2 className="font-semibold">Edit user balance</h2>
-            <p className="text-xs text-muted-foreground">
-              Patch = relative (±). Set = absolute. Use this to move someone up or down the UB leaderboard.
-            </p>
+          <section className="max-w-2xl space-y-5 rounded-lg border p-5">
+            <div>
+              <h2 className="font-semibold text-lg">Edit user</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                UnbelievaBoat economy fields you can change: <strong>cash</strong>, <strong>bank</strong>, and optional <strong>reason</strong> (audit).
+                Total &amp; rank are read-only. There is no delete-user API — reset means set cash/bank to 0.
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label>Discord user ID</Label>
-              <Input className="font-mono text-xs" value={editUserId} onChange={(e) => setEditUserId(e.target.value)} placeholder="snowflake" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Cash delta</Label>
-                <Input value={cashDelta} onChange={(e) => setCashDelta(e.target.value)} placeholder="+100 or -50" />
+              <div className="flex flex-wrap gap-2">
+                <Input
+                  className="font-mono text-xs flex-1 min-w-[12rem]"
+                  value={editUserId}
+                  onChange={(e) => setEditUserId(e.target.value)}
+                  placeholder="snowflake"
+                  onKeyDown={(e) => { if (e.key === "Enter") loadUser(); }}
+                />
+                <Button variant="secondary" disabled={!editUserId.trim() || !s?.configured} onClick={loadUser}>
+                  Load balance
+                </Button>
               </div>
-              <div className="space-y-2">
-                <Label>Bank delta</Label>
-                <Input value={bankDelta} onChange={(e) => setBankDelta(e.target.value)} placeholder="+0" />
-              </div>
             </div>
+
+            {!s?.configured ? (
+              <p className="text-sm text-muted-foreground">Connect <code>UNBELIEVABOAT_TOKEN</code> to edit live balances.</p>
+            ) : loadedUserId && userBalance.isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading balance…</p>
+            ) : userBalance.data?.balance ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-md border bg-muted/30 p-3 text-sm">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Rank</p>
+                  <p className="font-medium">#{userBalance.data.balance.rank ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Cash</p>
+                  <p className="font-medium tabular-nums">{fmt(userBalance.data.balance.cash)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Bank</p>
+                  <p className="font-medium tabular-nums">{fmt(userBalance.data.balance.bank)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
+                  <p className="font-semibold tabular-nums">{fmt(userBalance.data.balance.total)}</p>
+                </div>
+              </div>
+            ) : loadedUserId && userBalance.isError ? (
+              <p className="text-sm text-destructive">Could not load that user — check the ID and API token.</p>
+            ) : null}
+
             <div className="space-y-2">
-              <Label>Reason</Label>
-              <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+              <Label>Reason (audit log)</Label>
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why this change?" />
             </div>
-            <div className="flex flex-wrap gap-2">
+
+            <div className="space-y-3 border-t pt-4">
+              <h3 className="text-sm font-medium">Adjust (±) — PATCH</h3>
+              <p className="text-xs text-muted-foreground">Add or remove from cash and/or bank. Leave a field blank to skip it.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Cash delta</Label>
+                  <Input value={cashDelta} onChange={(e) => setCashDelta(e.target.value)} placeholder="+100 or -50" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Bank delta</Label>
+                  <Input value={bankDelta} onChange={(e) => setBankDelta(e.target.value)} placeholder="+250 or -25" />
+                </div>
+              </div>
               <Button
-                disabled={!editUserId || adjustUser.isPending}
-                onClick={() => adjustUser.mutate({
-                  mode: "patch",
-                  cash: Number(cashDelta) || 0,
-                  bank: Number(bankDelta) || 0,
-                  reason,
-                })}
+                disabled={!editUserId.trim() || adjustUser.isPending || (cashDelta === "" && bankDelta === "")}
+                onClick={() => {
+                  const cash = cashDelta === "" ? undefined : Number(cashDelta);
+                  const bank = bankDelta === "" ? undefined : Number(bankDelta);
+                  if ((cash !== undefined && !Number.isFinite(cash)) || (bank !== undefined && !Number.isFinite(bank))) {
+                    setErr("Cash/bank deltas must be numbers.");
+                    return;
+                  }
+                  if ((cash ?? 0) === 0 && (bank ?? 0) === 0) {
+                    setErr("Enter a non-zero cash and/or bank delta.");
+                    return;
+                  }
+                  adjustUser.mutate({ mode: "patch", cash, bank, reason: reason || "Dashboard hub adjust" });
+                }}
               >
                 Apply delta
               </Button>
             </div>
-            <div className="border-t pt-4 space-y-3">
-              <h3 className="text-sm font-medium">Or set absolute balances</h3>
+
+            <div className="space-y-3 border-t pt-4">
+              <h3 className="text-sm font-medium">Set absolute — PUT</h3>
+              <p className="text-xs text-muted-foreground">Overwrite cash and/or bank to exact values. Blank = leave unchanged.</p>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Cash</Label>
-                  <Input value={setCash} onChange={(e) => setSetCash(e.target.value)} />
+                  <Input value={setCash} onChange={(e) => setSetCash(e.target.value)} placeholder="exact amount" />
                 </div>
                 <div className="space-y-2">
                   <Label>Bank</Label>
-                  <Input value={setBank} onChange={(e) => setSetBank(e.target.value)} />
+                  <Input value={setBank} onChange={(e) => setSetBank(e.target.value)} placeholder="exact amount" />
                 </div>
               </div>
-              <Button
-                variant="secondary"
-                disabled={!editUserId || adjustUser.isPending}
-                onClick={() => adjustUser.mutate({
-                  mode: "set",
-                  cash: setCash === "" ? undefined : Number(setCash),
-                  bank: setBank === "" ? undefined : Number(setBank),
-                  reason,
-                })}
-              >
-                Set balances
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  disabled={!editUserId.trim() || adjustUser.isPending || (setCash === "" && setBank === "")}
+                  onClick={() => {
+                    const cash = setCash === "" ? undefined : Number(setCash);
+                    const bank = setBank === "" ? undefined : Number(setBank);
+                    if ((cash !== undefined && (!Number.isFinite(cash) || cash < 0))
+                      || (bank !== undefined && (!Number.isFinite(bank) || bank < 0))) {
+                      setErr("Absolute cash/bank must be non-negative numbers.");
+                      return;
+                    }
+                    adjustUser.mutate({ mode: "set", cash, bank, reason: reason || "Dashboard hub set" });
+                  }}
+                >
+                  Set balances
+                </Button>
+                {userBalance.data?.balance && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    onClick={() => {
+                      setSetCash(String(userBalance.data!.balance.cash));
+                      setSetBank(String(userBalance.data!.balance.bank));
+                    }}
+                  >
+                    Fill from current
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <h3 className="text-sm font-medium">Quick clear / reset</h3>
+              <p className="text-xs text-muted-foreground">Uses Set (PUT) to zero. No separate clear endpoint on UnbelievaBoat.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  disabled={!editUserId.trim() || adjustUser.isPending}
+                  onClick={() => adjustUser.mutate({ mode: "set", cash: 0, reason: reason || "Dashboard clear cash" })}
+                >
+                  Clear cash → 0
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!editUserId.trim() || adjustUser.isPending}
+                  onClick={() => adjustUser.mutate({ mode: "set", bank: 0, reason: reason || "Dashboard clear bank" })}
+                >
+                  Clear bank → 0
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={!editUserId.trim() || adjustUser.isPending}
+                  onClick={() => {
+                    if (!window.confirm(`Reset cash and bank to 0 for ${editUserId.trim()}?`)) return;
+                    adjustUser.mutate({ mode: "set", cash: 0, bank: 0, reason: reason || "Dashboard reset all" });
+                  }}
+                >
+                  Reset all → 0
+                </Button>
+              </div>
             </div>
           </section>
         </TabsContent>

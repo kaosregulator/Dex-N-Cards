@@ -105,8 +105,7 @@ function hubRows() {
       new ButtonBuilder().setCustomId("ubadmin:toggle_store").setLabel("Toggle store").setStyle(ButtonStyle.Danger),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("ubadmin:adjust").setLabel("Adjust cash").setEmoji("✏️").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("ubadmin:set_cash").setLabel("Set cash").setEmoji("🔢").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("ubadmin:edit_user").setLabel("Edit user").setEmoji("✏️").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("ubadmin:add_perk").setLabel("Add perk").setEmoji("✨").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("ubadmin:casino_station").setLabel("Casino station").setEmoji("🎰").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("ubadmin:pet_tools").setLabel("Pet tools").setEmoji("🛠️").setStyle(ButtonStyle.Secondary),
@@ -276,10 +275,11 @@ async function buildOverviewEmbed(guildId: string): Promise<EmbedBuilder> {
         `Pets enabled: **${petSettings.enabled ? "yes" : "no"}** · hatch **${petSettings.hatchCost}** · growth **${petSettings.growthHours}h** · neglect **${petSettings.maxNeglects}**`,
         "",
         "Player hub: **`/casino`** panel (wallet · mega slots · public blackjack · UNO · collect · top · store)",
+        "**Edit user** — adjust/set/clear **cash & bank** (UnbelievaBoat PATCH/PUT).",
         "_Optional website mirror still at `/admin/unbelievaboat`._",
       ].filter(Boolean).join("\n"),
     )
-    .setFooter({ text: "Admin only · UnbelievaBoat cash powers pet shop & hatch" });
+    .setFooter({ text: "Admin only · UnbelievaBoat cash & bank · pet shop & hatch" });
 }
 
 function storeNavRows() {
@@ -1773,31 +1773,198 @@ export async function handleUbAdminComponent(
     return;
   }
 
-  if (id === "ubadmin:set_cash" && interaction.isButton()) {
+  // Legacy hub buttons (old messages) → same Edit user picker
+  if ((id === "ubadmin:set_cash" || id === "ubadmin:adjust") && interaction.isButton()) {
     const menu = new UserSelectMenuBuilder()
-      .setCustomId("ubadmin:set_user")
-      .setPlaceholder("Whose cash to SET (absolute)?")
+      .setCustomId("ubadmin:edit_user_pick")
+      .setPlaceholder("Whose UnbelievaBoat balance?")
       .setMaxValues(1);
     await interaction.reply({
-      content: "Pick a member, then enter the absolute cash balance.",
+      content: "Pick a member to edit **cash** and **bank** (adjust, set, or reset).",
       components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(menu)],
       ...EPHEMERAL,
     });
     return;
   }
 
+  if (id === "ubadmin:edit_user" && interaction.isButton()) {
+    const menu = new UserSelectMenuBuilder()
+      .setCustomId("ubadmin:edit_user_pick")
+      .setPlaceholder("Whose UnbelievaBoat balance?")
+      .setMaxValues(1);
+    await interaction.reply({
+      content: "Pick a member — you'll see cash, bank, and every edit action.",
+      components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(menu)],
+      ...EPHEMERAL,
+    });
+    return;
+  }
+
+  if (id === "ubadmin:edit_user_pick" && interaction.isUserSelectMenu()) {
+    const userId = interaction.values[0]!;
+    await interaction.deferReply(EPHEMERAL);
+    const settings = await getOrCreateUbSettings(guildId);
+    if (!isUbConfigured() || !settings.enabled) {
+      await interaction.editReply("UnbelievaBoat token missing or API link disabled — flip it on in `/unbelievaboat`.");
+      return;
+    }
+    try {
+      const bal = await ubApi.getUserBalance(settings.ubGuildId, userId);
+      const embed = new EmbedBuilder()
+        .setColor(0xe91e8c)
+        .setAuthor({ name: "Edit user balance", iconURL: UB_ICON })
+        .setDescription(
+          [
+            `Member: <@${userId}>`,
+            `Rank: **#${bal.rank ?? "—"}**`,
+            "",
+            `💵 Cash **${fmt(bal.cash)}**`,
+            `🏦 Bank **${fmt(bal.bank)}**`,
+            `Σ Total **${fmt(bal.total)}**`,
+            "",
+            "_Pick an action below. UB API fields: `cash`, `bank`, `reason`._",
+          ].join("\n"),
+        );
+      const actions = new StringSelectMenuBuilder()
+        .setCustomId(`ubadmin:edit_action:${userId}`)
+        .setPlaceholder("What do you want to edit?")
+        .addOptions(
+          {
+            label: "Adjust (± cash & bank)",
+            value: "adjust",
+            emoji: "✏️",
+            description: "Relative PATCH — add or remove from cash/bank",
+          },
+          {
+            label: "Set absolute cash & bank",
+            value: "set",
+            emoji: "🔢",
+            description: "PUT — set exact cash and/or bank values",
+          },
+          {
+            label: "Clear cash → 0",
+            value: "clear_cash",
+            emoji: "💵",
+            description: "Set cash to zero (bank unchanged)",
+          },
+          {
+            label: "Clear bank → 0",
+            value: "clear_bank",
+            emoji: "🏦",
+            description: "Set bank to zero (cash unchanged)",
+          },
+          {
+            label: "Reset all → 0",
+            value: "reset_all",
+            emoji: "♻️",
+            description: "Set cash and bank both to zero",
+          },
+        );
+      await interaction.editReply({
+        embeds: [embed],
+        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(actions)],
+      });
+    } catch (err) {
+      await interaction.editReply(`❌ ${err instanceof Error ? err.message : "Could not load balance."}`);
+    }
+    return;
+  }
+
+  if (id.startsWith("ubadmin:edit_action:") && interaction.isStringSelectMenu()) {
+    const userId = id.slice("ubadmin:edit_action:".length);
+    const choice = interaction.values[0]!;
+
+    if (choice === "adjust" || choice === "set") {
+      const isSet = choice === "set";
+      const modal = new ModalBuilder()
+        .setCustomId(`ubadmin:${isSet ? "set_modal" : "adjust_modal"}:${userId}`)
+        .setTitle(isSet ? "Set cash & bank" : "Adjust cash & bank");
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("cash")
+            .setLabel(isSet ? "Cash (absolute, blank = skip)" : "Cash delta (e.g. 100 or -50)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setMaxLength(12)
+            .setPlaceholder(isSet ? "leave blank to keep" : "0"),
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("bank")
+            .setLabel(isSet ? "Bank (absolute, blank = skip)" : "Bank delta (e.g. 50 or -25)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setMaxLength(12)
+            .setPlaceholder(isSet ? "leave blank to keep" : "0"),
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("reason")
+            .setLabel("Reason (audit log)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setMaxLength(80)
+            .setPlaceholder(isSet ? "Discord /unbelievaboat set" : "Discord /unbelievaboat adjust"),
+        ),
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // clear_cash | clear_bank | reset_all
+    await interaction.deferReply(EPHEMERAL);
+    const settings = await getOrCreateUbSettings(guildId);
+    if (!isUbConfigured() || !settings.enabled) {
+      await interaction.editReply("UnbelievaBoat token missing or API link disabled.");
+      return;
+    }
+    const reason =
+      choice === "reset_all" ? "Discord /unbelievaboat reset all"
+        : choice === "clear_cash" ? "Discord /unbelievaboat clear cash"
+          : "Discord /unbelievaboat clear bank";
+    const body =
+      choice === "reset_all" ? { cash: 0, bank: 0, reason }
+        : choice === "clear_cash" ? { cash: 0, reason }
+          : { bank: 0, reason };
+    try {
+      const bal = await ubApi.setUserBalance(settings.ubGuildId, userId, body);
+      await writeUbAudit(guildId, interaction.user.id, `discord_${choice}`, { userId, body, bal });
+      await interaction.editReply(
+        [
+          choice === "reset_all" ? `Reset <@${userId}> cash & bank to **0**.`
+            : choice === "clear_cash" ? `Cleared <@${userId}> cash to **0**.`
+              : `Cleared <@${userId}> bank to **0**.`,
+          `Now: cash **${fmt(bal.cash)}** · bank **${fmt(bal.bank)}** · total **${fmt(bal.total)}**.`,
+        ].join("\n"),
+      );
+    } catch (err) {
+      await interaction.editReply(`❌ ${err instanceof Error ? err.message : "Balance reset failed."}`);
+    }
+    return;
+  }
+
+  // Legacy set_user select (old messages) → absolute cash+bank modal
   if (id === "ubadmin:set_user" && interaction.isUserSelectMenu()) {
     const userId = interaction.values[0]!;
     const modal = new ModalBuilder()
       .setCustomId(`ubadmin:set_modal:${userId}`)
-      .setTitle("Set UnbelievaBoat cash");
+      .setTitle("Set cash & bank");
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId("cash")
-          .setLabel("Absolute cash amount")
+          .setLabel("Cash (absolute, blank = skip)")
           .setStyle(TextInputStyle.Short)
-          .setRequired(true)
+          .setRequired(false)
+          .setMaxLength(12),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("bank")
+          .setLabel("Bank (absolute, blank = skip)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
           .setMaxLength(12),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
@@ -2058,32 +2225,30 @@ export async function handleUbAdminComponent(
     return;
   }
 
-  if (id === "ubadmin:adjust" && interaction.isButton()) {
-    const menu = new UserSelectMenuBuilder()
-      .setCustomId("ubadmin:adjust_user")
-      .setPlaceholder("Whose UnbelievaBoat balance?")
-      .setMaxValues(1);
-    await interaction.reply({
-      content: "Pick a member, then enter a cash delta.",
-      components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(menu)],
-      ...EPHEMERAL,
-    });
-    return;
-  }
-
+  // Legacy adjust_user select (old messages) → cash+bank delta modal
   if (id === "ubadmin:adjust_user" && interaction.isUserSelectMenu()) {
     const userId = interaction.values[0]!;
     const modal = new ModalBuilder()
       .setCustomId(`ubadmin:adjust_modal:${userId}`)
-      .setTitle("Adjust UnbelievaBoat cash");
+      .setTitle("Adjust cash & bank");
     modal.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId("cash")
           .setLabel("Cash delta (e.g. 100 or -50)")
           .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setMaxLength(12),
+          .setRequired(false)
+          .setMaxLength(12)
+          .setPlaceholder("0"),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("bank")
+          .setLabel("Bank delta (e.g. 50 or -25)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(12)
+          .setPlaceholder("0"),
       ),
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
@@ -2628,16 +2793,40 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
 
   if ((parts[1] === "adjust_modal" || parts[1] === "set_modal") && parts[2]) {
     const userId = parts[2];
-    const cashRaw = interaction.fields.getTextInputValue("cash").trim();
+    const isSet = parts[1] === "set_modal";
+    const cashRaw = interaction.fields.getTextInputValue("cash")?.trim() ?? "";
+    let bankRaw = "";
+    try {
+      bankRaw = interaction.fields.getTextInputValue("bank")?.trim() ?? "";
+    } catch {
+      // Older modals without a bank field
+    }
     const reason = interaction.fields.getTextInputValue("reason")?.trim()
-      || (parts[1] === "set_modal" ? "Discord /unbelievaboat set" : "Discord /unbelievaboat adjust");
-    const cash = Number(cashRaw);
-    if (!Number.isFinite(cash) || (parts[1] === "adjust_modal" && cash === 0)) {
+      || (isSet ? "Discord /unbelievaboat set" : "Discord /unbelievaboat adjust");
+
+    const cashProvided = cashRaw !== "";
+    const bankProvided = bankRaw !== "";
+    const cash = cashProvided ? Number(cashRaw) : undefined;
+    const bank = bankProvided ? Number(bankRaw) : undefined;
+
+    if (!cashProvided && !bankProvided) {
+      await interaction.reply({ content: "Enter at least one of **cash** or **bank**.", ...EPHEMERAL });
+      return;
+    }
+    if (cashProvided && !Number.isFinite(cash!)) {
       await interaction.reply({ content: "Enter a valid cash number.", ...EPHEMERAL });
       return;
     }
-    if (parts[1] === "set_modal" && cash < 0) {
-      await interaction.reply({ content: "Absolute cash cannot be negative.", ...EPHEMERAL });
+    if (bankProvided && !Number.isFinite(bank!)) {
+      await interaction.reply({ content: "Enter a valid bank number.", ...EPHEMERAL });
+      return;
+    }
+    if (!isSet && (cash ?? 0) === 0 && (bank ?? 0) === 0) {
+      await interaction.reply({ content: "Delta must change cash and/or bank (not both zero).", ...EPHEMERAL });
+      return;
+    }
+    if (isSet && ((cashProvided && cash! < 0) || (bankProvided && bank! < 0))) {
+      await interaction.reply({ content: "Absolute cash/bank cannot be negative.", ...EPHEMERAL });
       return;
     }
 
@@ -2648,16 +2837,25 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       return;
     }
     try {
-      const bal = parts[1] === "set_modal"
-        ? await ubApi.setUserBalance(settings.ubGuildId, userId, { cash, reason })
-        : await ubApi.patchUserBalance(settings.ubGuildId, userId, { cash, reason });
+      const payload = {
+        ...(cashProvided ? { cash: Math.trunc(cash!) } : {}),
+        ...(bankProvided ? { bank: Math.trunc(bank!) } : {}),
+        reason,
+      };
+      const bal = isSet
+        ? await ubApi.setUserBalance(settings.ubGuildId, userId, payload)
+        : await ubApi.patchUserBalance(settings.ubGuildId, userId, payload);
       await writeUbAudit(guildId, interaction.user.id,
-        parts[1] === "set_modal" ? "discord_cash_set" : "discord_cash_adjust",
-        { userId, cash, reason, bal });
+        isSet ? "discord_balance_set" : "discord_balance_adjust",
+        { userId, ...payload, bal });
+      const deltaBits = [
+        cashProvided ? `cash **${isSet ? "" : (cash! > 0 ? "+" : "")}${fmt(cash!)}**` : null,
+        bankProvided ? `bank **${isSet ? "" : (bank! > 0 ? "+" : "")}${fmt(bank!)}**` : null,
+      ].filter(Boolean).join(" · ");
       await interaction.editReply(
-        parts[1] === "set_modal"
-          ? `Set <@${userId}> cash to **${fmt(bal.cash)}**.\nBank **${fmt(bal.bank)}** · total **${fmt(bal.total)}**.`
-          : `Adjusted <@${userId}> by **${cash > 0 ? "+" : ""}${fmt(cash)}** cash.\nNow: cash **${fmt(bal.cash)}** · bank **${fmt(bal.bank)}** · total **${fmt(bal.total)}.`,
+        isSet
+          ? `Set <@${userId}> → ${deltaBits}.\nNow: cash **${fmt(bal.cash)}** · bank **${fmt(bal.bank)}** · total **${fmt(bal.total)}**.`
+          : `Adjusted <@${userId}> → ${deltaBits}.\nNow: cash **${fmt(bal.cash)}** · bank **${fmt(bal.bank)}** · total **${fmt(bal.total)}**.`,
       );
     } catch (err) {
       await interaction.editReply(`❌ ${err instanceof Error ? err.message : "Balance edit failed."}`);

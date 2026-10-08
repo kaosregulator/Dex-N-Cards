@@ -59,7 +59,9 @@ Change either prefix per guild; they must not be identical.
 
 ## Discord dashboard — `/unbelievaboat`
 
-Leaderboard · adjust/set cash · toggles · **Roles & economy** (per-role collect CD / income, **Pick in chat** Discord emoji/GIF icons, Sync UB / Seed collect) · **Casino station** (cooldowns + payouts) · **log channel** · **rob immunity roles** · pets tools.
+Leaderboard · **Edit user** (adjust/set/clear **cash & bank**, or reset both to 0) · toggles · **Roles & economy** (per-role collect CD / income, **Pick in chat** Discord emoji/GIF icons, Sync UB / Seed collect) · **Casino station** (cooldowns + payouts) · **log channel** · **rob immunity roles** · pets tools.
+
+Editable UnbelievaBoat balance fields (API PATCH/PUT): `cash`, `bank`, `reason`. Total/rank are read-only. There is no delete-user endpoint — clearing means set cash and/or bank to `0`.
 
 Store icons: unicode, guild emoji, Discord attachment, or Tenor/Giphy paste — animated images play on the store board (meta `animated` + host sniff).
 
