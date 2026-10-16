@@ -148,7 +148,7 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
             `Drops are live in <#${settings.spawnChannelId}>.\n\n` +
             `**👈 What to do next**\n` +
             `• **Post the welcome guide:** Go to your info channel and run \`/welcome\`\n` +
-            `• **Add your own cards:** \`/add_card\` with an image, or \`/create_card_from_mttv\` for a Vault Values image\n` +
+            `• **Add your own cards:** \`/add_card\` with an image, \`/create_card_from_mttv\` for one Vault item, or \`/create_cards_from_mttv\` to batch up to 5\n` +
             `• **Test drops:** \`/drop\` (force one) · \`/mass_drop\` (batch)\n` +
             `• **Players need help?** \`/help\` (admins: open the **Admin** topic)\n\n` +
             `Re-open anytime: \`${settings.commandPrefix}setup\` or \`/setup\``,

@@ -50,6 +50,7 @@ Collect, trade, battle, and build — with a User Hub for daily profile flow, co
 - **`/config`** — visual toggles, intervals, rates, pack settings
 - Sets, rarity, embeds, giveaways — `/set_hub`, `/rarity`, `/embed`, `/giveaway`
 - **`/cardadmin`** — create (upload / Kitsu / Vault Values), edit, give, drop
+- **`/create_cards_from_mttv`** — bulk Vault Values: filter by website rarity, tag up to 5, preview images, create
 - **`/admin_hub`** — staff toolbox · **`/help` → Admin** for the full reference
 
 ---
@@ -178,6 +179,8 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/config` | Visual configuration panel |
 | `/admin_hub` | Admin toolbox |
 | `/cardadmin` | Create / edit / give / drop cards (upload · Kitsu · Vault Values) |
+| `/create_card_from_mttv` | One new card from a Vault Values item (image + DN rarity) |
+| `/create_cards_from_mttv` | Bulk Vault create — website rarity filter, tag 5, image preview |
 | `/battle_admin` · `/raid_admin` | Combat admin |
 | `/set_hub` · `/set_admin` | Card sets / spawn rotation |
 | `/event` | Limited events |

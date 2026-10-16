@@ -249,6 +249,10 @@ function buildLegacyCommands() {
       .addIntegerOption(o => o.setName("max_copies").setDescription("Max copies if limited (default 50)").setMinValue(1))
       .addBooleanOption(o => o.setName("event_exclusive").setDescription("Event exclusive — never spawns randomly?"))),
 
+    adminCmd("createcardsfrommttv", "Batch-create cards from Vault Values — pick a website rarity, tag 5, preview, create", s => s
+      .addStringOption(o => o.setName("rarity").setDescription("DN rarity for new cards — default auto from each item's Vault rarity").setAutocomplete(true))
+      .addStringOption(o => o.setName("set").setDescription("Optional set to add every created card to").setAutocomplete(true))),
+
     adminCmd("editimage", "Update a card's image from Vault Values or an uploaded file", s => s
       .addStringOption(o => o.setName("name").setDescription("Card to edit").setRequired(true).setAutocomplete(true))
       .addAttachmentOption(o => o.setName("image").setDescription("Upload image/GIF (overrides the Vault Values search)"))),
@@ -557,6 +561,7 @@ export const COMMAND_RENAMES: Record<string, string> = {
   collectorrole: "wishlist_role",
   addcard: "add_card",
   createcardfrommttv: "create_card_from_mttv",
+  createcardsfrommttv: "create_cards_from_mttv",
   createcardfrom: "create_card_from",
   editcard: "edit_card",
   editimage: "edit_image",
@@ -633,7 +638,7 @@ export const HUB_REPLACED_COMMANDS = new Set<string>([
   "info_mttv", "calc", "valuehelp", "valuelist", "postcalculator",
   // Still on the /cardadmin panel (buttons/modals are enough — no file upload).
   // Restored as slash (autocomplete or an image Discord modals can't take):
-  //   drop, massdrop, addcard, createcardfrommttv, editimage.
+  //   drop, massdrop, addcard, createcardfrommttv, createcardsfrommttv, editimage.
   "createcardfrom", "library",
   "editcard", "deletecard",
   "give", "takeback", "giveall",
@@ -687,7 +692,7 @@ export const USER_HUB_COMMANDS = new Set([
 export const ADMIN_HUB_COMMANDS = new Set([
   "setup", "config", "minigames", "adminhub", "sethub", "set_admin", "deletecard", "deleteallcards",
   "welcomeadmin", "adminhelp", "drop", "massdrop", "give", "giveshards",
-  "takeback", "takeshards", "addcard", "createcardfrommttv", "createcardfrom", "library", "editcard", "editimage", "dashboard", "collectorrole",
+  "takeback", "takeshards", "addcard", "createcardfrommttv", "createcardsfrommttv", "createcardfrom", "library", "editcard", "editimage", "dashboard", "collectorrole",
   "battleforceend",
   "rarity", "embed", "event", "edituser", "giveall", "editpack",
   "postcalculator", "postboard", "massrole",

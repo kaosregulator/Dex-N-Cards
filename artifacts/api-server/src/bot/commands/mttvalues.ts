@@ -322,6 +322,122 @@ function defaultTypeFromVaultItem(item: MTTVItem): string {
   return slug || "vault";
 }
 
+export type VaultCreateInput = {
+  guildId: string;
+  item: MTTVItem;
+  rarityRaw: string;
+  typeRaw?: string;
+  uploadedImageUrl?: string;
+  uploadedContentType?: string;
+  setName?: string | null;
+  descriptionOverride?: string;
+  limited?: boolean;
+  maxCopies?: number | null;
+  eventExclusive?: boolean;
+};
+
+export type VaultCreateOk = {
+  ok: true;
+  card: { id: number; name: string; rarity: string };
+  message: string;
+};
+export type VaultCreateFail = { ok: false; message: string };
+export type VaultCreateResult = VaultCreateOk | VaultCreateFail;
+
+/** Same create path used by `/create_card_from_mttv` and the batch hub. */
+export async function createCardFromVaultItem(input: VaultCreateInput): Promise<VaultCreateResult> {
+  const rarityRaw = (input.rarityRaw || "auto").trim().toLowerCase();
+  if (rarityRaw && rarityRaw !== "auto" && !CREATE_CARD_RARITIES.has(rarityRaw)) {
+    return { ok: false, message: "❌ Pick one of the built-in rarities, or use `auto` to take the Vault Values rarity." };
+  }
+
+  const explicitRarity = rarityRaw !== "" && rarityRaw !== "auto";
+  const mappedRarity = dnRarityFromVault(input.item.rarity[0]);
+  const baseRarity = (explicitRarity ? rarityRaw : mappedRarity) as Rarity | null;
+  if (!baseRarity || !CREATE_CARD_RARITIES.has(baseRarity)) {
+    return {
+      ok: false,
+      message:
+        `❌ Vault Values has no rarity we can use for **${input.item.name}**. Pass a DN rarity (common, uncommon, rare, epic, legendary, or mythic).`,
+    };
+  }
+  const rarityNote = !explicitRarity && input.item.rarity[0] ? ` from Vault ${input.item.rarity[0]}` : "";
+  const type = (input.typeRaw ?? "").trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40) || defaultTypeFromVaultItem(input.item);
+  const defs = createCardRarityDefaults(baseRarity);
+
+  const existing = await getCardByName(input.item.name, input.guildId);
+  if (existing) {
+    return {
+      ok: false,
+      message:
+        `❌ A card named **${input.item.name}** already exists (ID #${existing.id}). ` +
+        `Use \`/edit_image\` or \`/edit_card\` to change it.`,
+    };
+  }
+
+  let imageUrl: string | undefined;
+  let imageNote = "";
+  if (input.uploadedImageUrl) {
+    imageUrl = await persistBotImage(input.uploadedImageUrl, input.uploadedContentType);
+    imageNote = " · image from your upload";
+  } else if (input.item.image) {
+    imageUrl = await persistBotImage(input.item.image);
+    imageNote = " · image from Vault Values";
+  } else {
+    return {
+      ok: false,
+      message: `❌ **${input.item.name}** has no image on Vault Values.`,
+    };
+  }
+
+  let card;
+  try {
+    card = await addCard({
+      name: input.item.name,
+      rarity: baseRarity,
+      cardType: type,
+      description: input.descriptionOverride || input.item.description || "",
+      imageUrl,
+      worthValue: defs.worth,
+      burnValue: defs.burn,
+      dropWeight: defs.weight,
+      isLimitedEdition: input.limited ?? false,
+      maxCopies: input.limited ? (input.maxCopies ?? 50) : undefined,
+      isEventExclusive: input.eventExclusive ?? false,
+      droppable: !input.eventExclusive,
+      inPacks: !input.eventExclusive && baseRarity !== "mythic",
+    }, input.guildId);
+  } catch (err) {
+    logger.error({ err, itemName: input.item.name, guildId: input.guildId }, "Failed to create card from MTTV");
+    return {
+      ok: false,
+      message: `❌ Could not create card **${input.item.name}** — the server hit an error while saving it.`,
+    };
+  }
+
+  let setNote = "";
+  if (input.setName) {
+    try {
+      const set = await getSetByName(input.setName, input.guildId);
+      if (set) {
+        await addCardToSet(set.id, card.id, input.guildId);
+        setNote = ` and added to set \`${set.name}\``;
+      } else {
+        setNote = ` (set \`${input.setName}\` was not found, so no set was assigned)`;
+      }
+    } catch (err) {
+      logger.error({ err, cardId: card.id, setName: input.setName, guildId: input.guildId }, "Failed to add MTTV-created card to set");
+      setNote = ` (could not add to set \`${input.setName}\`)`;
+    }
+  }
+
+  return {
+    ok: true,
+    card: { id: card.id, name: card.name, rarity: card.rarity },
+    message: `✅ Created **${card.name}** from Vault Values (${baseRarity}${rarityNote})${imageNote}${setNote}`,
+  };
+}
+
 export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInteraction): Promise<void> {
   // Caller (admin.ts) has already deferred the reply.
   const guildId = interaction.guildId!;
@@ -334,11 +450,6 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
   const limited = interaction.options.getBoolean("limited") ?? false;
   const maxCopies = interaction.options.getInteger("max_copies") ?? undefined;
   const eventExclusive = interaction.options.getBoolean("event_exclusive") ?? false;
-
-  if (rarityRaw && rarityRaw !== "auto" && !CREATE_CARD_RARITIES.has(rarityRaw)) {
-    await interaction.editReply("❌ Pick one of the built-in rarities from autocomplete, or use `auto` to take the Vault Values rarity.");
-    return;
-  }
 
   let item: MTTVItem | undefined;
   try {
@@ -362,90 +473,29 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
     return;
   }
 
-  const explicitRarity = rarityRaw !== "" && rarityRaw !== "auto";
-  const mappedRarity = dnRarityFromVault(item.rarity[0]);
-  const baseRarity = (explicitRarity ? rarityRaw : mappedRarity) as Rarity | null;
-  if (!baseRarity || !CREATE_CARD_RARITIES.has(baseRarity)) {
-    await interaction.editReply(
-      `❌ Vault Values has no rarity we can use for **${item.name}**. Pass \`rarity:\` (common, uncommon, rare, epic, legendary, or mythic).`,
-    );
+  const result = await createCardFromVaultItem({
+    guildId,
+    item,
+    rarityRaw,
+    typeRaw,
+    uploadedImageUrl: uploaded?.url,
+    uploadedContentType: uploaded?.contentType ?? undefined,
+    setName,
+    descriptionOverride,
+    limited,
+    maxCopies,
+    eventExclusive,
+  });
+  if (!result.ok) {
+    await interaction.editReply(result.message);
     return;
-  }
-  const rarityNote = !explicitRarity && item.rarity[0] ? ` from Vault ${item.rarity[0]}` : "";
-  const type = typeRaw || defaultTypeFromVaultItem(item);
-  const defs = createCardRarityDefaults(baseRarity);
-
-  const existing = await getCardByName(item.name, guildId);
-  if (existing) {
-    await interaction.editReply(
-      `❌ A card named **${item.name}** already exists (ID #${existing.id}). ` +
-      `Use \`/edit_image\` or \`/edit_card\` to change it.`,
-    );
-    return;
-  }
-
-  let imageUrl: string | undefined;
-  let imageNote = "";
-  if (uploaded) {
-    imageUrl = await persistBotImage(uploaded.url, uploaded.contentType ?? undefined);
-    imageNote = " · image from your upload";
-  } else if (item.image) {
-    imageUrl = await persistBotImage(item.image);
-    imageNote = " · image from Vault Values";
-  } else {
-    await interaction.editReply(
-      `❌ **${item.name}** has no image on Vault Values. Run \`/create_card_from_mttv\` again and attach one with the \`image\` option.`,
-    );
-    return;
-  }
-
-  let card;
-  try {
-    card = await addCard({
-      name: item.name,
-      rarity: baseRarity,
-      cardType: type,
-      description: descriptionOverride || item.description || "",
-      imageUrl,
-      worthValue: defs.worth,
-      burnValue: defs.burn,
-      dropWeight: defs.weight,
-      isLimitedEdition: limited,
-      maxCopies: limited ? (maxCopies ?? 50) : undefined,
-      isEventExclusive: eventExclusive,
-      droppable: !eventExclusive,
-      inPacks: !eventExclusive && baseRarity !== "mythic",
-    }, guildId);
-  } catch (err) {
-    logger.error({ err, itemName: item.name, guildId }, "Failed to create card from MTTV");
-    await interaction.editReply(
-      `❌ Could not create card **${item.name}** — the server hit an error while saving it. ` +
-      `Try again; if it keeps failing, tell me the exact item name and the error message you see.`,
-    );
-    return;
-  }
-
-  let setNote = "";
-  if (setName) {
-    try {
-      const set = await getSetByName(setName, guildId);
-      if (set) {
-        await addCardToSet(set.id, card.id, guildId);
-        setNote = ` and added to set \`${set.name}\``;
-      } else {
-        setNote = ` (set \`${setName}\` was not found, so no set was assigned)`;
-      }
-    } catch (err) {
-      logger.error({ err, cardId: card.id, setName, guildId }, "Failed to add MTTV-created card to set");
-      setNote = ` (could not add to set \`${setName}\`)`;
-    }
   }
 
   await renderPanel(
     interaction,
-    card.id,
+    result.card.id,
     false,
-    `✅ Created **${card.name}** from Vault Values (${baseRarity}${rarityNote})${imageNote}${setNote} — tweak any field below`,
+    `${result.message} — tweak any field below`,
   );
 }
 

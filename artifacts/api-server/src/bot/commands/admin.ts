@@ -134,6 +134,13 @@ export async function handleAdminCommand(
     return;
   }
 
+  // /create_cards_from_mttv — stepped bulk Vault create (own ephemeral hub, no defer).
+  if (cmd === "createcardsfrommttv") {
+    const { handleVaultBatchCommand } = await import("./vault-batch.js");
+    await handleVaultBatchCommand(interaction);
+    return;
+  }
+
   // /create_card_from — creates a DN card using Kitsu anime/manga/character data.
   if (cmd === "createcardfrom") {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });

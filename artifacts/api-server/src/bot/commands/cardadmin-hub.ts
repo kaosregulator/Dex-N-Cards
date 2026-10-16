@@ -46,6 +46,7 @@ function hubEmbed(): EmbedBuilder {
         "",
         "`/drop` · `/mass_drop` — force a spawn (card and set autocomplete)",
         "`/create_card_from_mttv` — Vault Values item, its image, and a DN rarity",
+        "`/create_cards_from_mttv` — bulk: website rarity filter → tag 5 → image preview → create",
         "`/add_card` — upload your own image · `/edit_image` — Vault image or a file",
       ].join("\n"),
     )

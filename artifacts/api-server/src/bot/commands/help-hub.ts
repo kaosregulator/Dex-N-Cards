@@ -353,6 +353,7 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/progression` — hub: which area (spawn / pack / drop / all) is in control, plus per-card overrides" },
         { name: "🗂️ Cards & Sets", value:
           "`/create_card_from_mttv item: rarity: [image:]` — Vault Values art + DN rarity\n" +
+          "`/create_cards_from_mttv` — bulk: filter by website rarity, tag 5, preview images, create\n" +
           "`/add_card` — upload your own image · `/edit_image` — Vault image or a file\n" +
           "`/cardadmin` panel — Kitsu · Library · Edit · Delete · Give\n" +
           "`/set_hub` · `/set_admin` — **Delete** one set, or **Delete all sets** (cards stay)\n" +

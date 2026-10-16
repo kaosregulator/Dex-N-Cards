@@ -478,6 +478,17 @@ export async function startBot() {
         await handleArtShowModal(interaction);
         return;
       }
+      // ── Vault batch create (vaultbatch:*) ──────────────────────────────────
+      if (interaction.isButton() && interaction.customId.startsWith("vaultbatch:")) {
+        const { handleVaultBatchButton } = await import("./commands/vault-batch.js");
+        await handleVaultBatchButton(interaction);
+        return;
+      }
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith("vaultbatch:")) {
+        const { handleVaultBatchSelect } = await import("./commands/vault-batch.js");
+        await handleVaultBatchSelect(interaction);
+        return;
+      }
       // ── Arrival progression hub (progresshub:*) ────────────────────────────
       if (interaction.isButton() && interaction.customId.startsWith("progresshub:")) {
         const { handleProgressionHubButton } = await import("./commands/progression-hub.js");

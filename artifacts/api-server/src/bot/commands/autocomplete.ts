@@ -169,6 +169,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       (cmd === "massdrop" && focused.name === "set") ||
       (cmd === "addcard" && focused.name === "set") ||
       (cmd === "createcardfrommttv" && focused.name === "set") ||
+      (cmd === "createcardsfrommttv" && focused.name === "set") ||
       (cmd === "createcardfrom" && focused.name === "set") ||
       (cmd === "cardadmin" && focused.name === "set" &&
         ["create", "create_kitsu", "create_vault", "giveall", "drop", "mass_drop"].includes(sub ?? ""));
@@ -260,7 +261,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
     // Legacy custom-tier assignment still exists in advanced tools; new cards
     // should start with a stable built-in rarity identity.
     if (
-      ((cmd === "addcard" || cmd === "createcardfrommttv" || cmd === "createcardfrom") && focused.name === "rarity") ||
+      ((cmd === "addcard" || cmd === "createcardfrommttv" || cmd === "createcardsfrommttv" || cmd === "createcardfrom") && focused.name === "rarity") ||
       (cmd === "cardadmin" && focused.name === "rarity" && ["create", "create_kitsu", "create_vault"].includes(sub ?? ""))
     ) {
       if (!interaction.guild) { await interaction.respond([]); return; }
@@ -274,7 +275,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
         name: `${rarityEmoji(r, settings, displayMap)} ${rarityLabel(r, settings, displayMap)}`.slice(0, 100),
         value: r,
       }));
-      if (cmd === "createcardfrommttv") {
+      if (cmd === "createcardfrommttv" || cmd === "createcardsfrommttv") {
         builtInOptions.unshift({ name: "Auto — use the Vault Values rarity", value: "auto" });
       }
       const filtered = !q
