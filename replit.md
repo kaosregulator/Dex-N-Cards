@@ -52,7 +52,7 @@ DN Cards is DarkNight's collectible military trading card game for the Roblox + 
 - Giveaway System schema: `lib/db/src/schema/giveaways.ts` (giveaways, giveaway_entries, giveaway_winners)
 - Giveaway System module: `artifacts/api-server/src/bot/giveaway/` (`db.ts` CRUD, `engine.ts` progress+winner draw, `embeds.ts` UI, `manager.ts` message/claim, `hub.ts` `/giveaway` browse+admin, `sweeper.ts` auto-end/reroll, `message-hook.ts` message tracking, `prizes.ts` payout). Old `/giveaways` + `/giveaway_admin` slash names are gone — use `/giveaway`.
 - Unified help hub: `artifacts/api-server/src/bot/commands/help-hub.ts` (interactive `/help` — topic dropdown, live-edited pages, animated banner; Admin page is the staff reference). Banner/palette: `artifacts/api-server/src/bot/help-banners.ts`. Rebrandable via `/embed … key:help`.
-- Trade / Vault Values / card-admin / secret / casino hubs: `trade-hub.ts`, `vaultvalue-hub.ts`, `cardadmin-hub.ts`, `secret-hub.ts`, `casino.ts` — **true panel hubs** (one slash each, buttons/modals; no Discord subcommand sprawl). Handlers kept; most flat slash names dropped via `HUB_REPLACED_COMMANDS`. Card admin restored the ones buttons can't do: `/drop`, `/mass_drop`, `/add_card`, `/create_card_from_mttv` (Vault image + rarity, optional upload), `/edit_image`. Give / take / shards / Kitsu / library / delete stay on `/cardadmin`.
+- Trade / Vault Values / card-admin / secret / casino hubs: `trade-hub.ts`, `vaultvalue-hub.ts`, `cardadmin-hub.ts`, `secret-hub.ts`, `casino.ts` — **true panel hubs** (one slash each, buttons/modals; no Discord subcommand sprawl). Handlers kept; most flat slash names dropped via `HUB_REPLACED_COMMANDS`. Card admin restored the ones buttons can't do: `/drop`, `/mass_drop`, `/add_card`, `/create_card_from_mttv` (Vault image + rarity, optional upload), `/edit_image`. Give / take / shards / Kitsu / library / delete stay on `/cardadmin`. `/delete_all_cards` asks first, then erases every card on the home server and any sets left. `/set_hub` and `/set_admin` can delete one set or every set (cards stay) after unlinking memberships, including legacy Set 1 / Set 2.
 - Bob (retired entertainment NPC) schema leftovers only: `lib/db/src/schema/bob.ts` + boot `CREATE TABLE IF NOT EXISTS bob_*` in `artifacts/api-server/src/index.ts`. The runtime module `artifacts/api-server/src/bot/bob/` is **gone** — no `/bob` slash commands are registered. Do not drop the tables without a coordinated migration.
 - Headquarters (HQ) schema: `lib/db/src/schema/headquarters.ts` (player_hq, hq_unlocks, hq_displays, hq_placements, hq_defenders, hq_base_state, hq_base_attacks, hq_base_reigns, hq_world_nodes, hq_terrain)
 - UnbelievaBoat addon schema: `lib/db/src/schema/unbelievaboat.ts` (ub_settings, ub_role_links, ub_store_catalog, ub_audit_log) + `lib/db/src/schema/pets.ts` (pet_settings, pets, pet_challenges, pet_care_log)
@@ -437,7 +437,8 @@ Slash names below match `register.ts` `buildCommands()` (after renames + hub fil
 | `/add_card` · `/edit_image` | Upload a card image, or pull one from Vault Values |
 | `/create_card_from_mttv` | New card from a Vault Values item (its image + a DN rarity; `image:` overrides) |
 | `/battle_admin` · `/raid_admin` · `/hqadmin` | Combat / HQ staff tools |
-| `/set_hub` · `/set_admin` | Card sets / spawn rotation |
+| `/set_hub` · `/set_admin` | Card sets / spawn rotation. **Delete** or **Delete all sets** unlinks cards and removes the set, including legacy Set 1 / Set 2 |
+| `/delete_all_cards` | Asks “Are you sure?”, then deletes every card on the home server (in a set or not) and any sets left |
 | `/event` | Limited events |
 | `/rarity` · `/embed` | Rarity tiers · embed branding |
 | `/quiet_setup` · `/afk_setup` | Sanctuary / AFK setup |

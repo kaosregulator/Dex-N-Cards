@@ -262,6 +262,8 @@ function buildLegacyCommands() {
 
     adminCmd("set_admin", "Interactive set hub — full set management with buttons and dropdowns, no subcommands needed", s => s),
 
+    adminCmd("deleteallcards", "Delete every card on this server, then any sets left. Asks you to confirm", s => s),
+
     buildCardAdminCommandJson(),
 
     // Restored from the card-admin hub (PR #161 / #163). Buttons can't attach a
@@ -636,6 +638,7 @@ export const COMMAND_RENAMES: Record<string, string> = {
   takeback: "take_back",
   battleforceend: "battle_force_end",
   massdrop: "mass_drop",
+  deleteallcards: "delete_all_cards",
   adminhub: "admin_hub",
   user_hub: "user-hub",
   show_shiny: "show-shiny",
@@ -755,7 +758,7 @@ export const USER_HUB_COMMANDS = new Set([
 ]);
 
 export const ADMIN_HUB_COMMANDS = new Set([
-  "setup", "config", "minigames", "adminhub", "sethub", "set_admin", "deletecard",
+  "setup", "config", "minigames", "adminhub", "sethub", "set_admin", "deletecard", "deleteallcards",
   "welcomeadmin", "adminhelp", "drop", "massdrop", "give", "giveshards",
   "takeback", "takeshards", "addcard", "createcardfrommttv", "createcardfrom", "library", "editcard", "editimage", "dashboard", "collectorrole",
   "battleforceend",

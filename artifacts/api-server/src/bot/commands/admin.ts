@@ -77,6 +77,12 @@ export async function handleAdminCommand(
     await handleSetAdminHubCommand(interaction);
     return;
   }
+  // /delete_all_cards — confirm, then wipe this guild's cards and leftover sets.
+  if (cmd === "deleteallcards") {
+    const { handleDeleteAllCardsCommand } = await import("./delete-all-cards.js");
+    await handleDeleteAllCardsCommand(interaction);
+    return;
+  }
   // /delete_card — permanently removes a card from the global roster.
   if (cmd === "deletecard") {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });

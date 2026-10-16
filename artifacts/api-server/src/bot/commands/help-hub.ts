@@ -355,7 +355,8 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/create_card_from_mttv item: rarity: [image:]` — Vault Values art + DN rarity\n" +
           "`/add_card` — upload your own image · `/edit_image` — Vault image or a file\n" +
           "`/cardadmin` panel — Kitsu · Library · Edit · Delete · Give\n" +
-          "`/set_hub` · `/set_admin` — set manager\n" +
+          "`/set_hub` · `/set_admin` — **Delete** one set, or **Delete all sets** (cards stay)\n" +
+          "`/delete_all_cards` — asks first, then erases every card and any sets left\n" +
           "`/rarity` — names, colors, worth, burn, weights, order" },
         { name: "🎨 Appearance & Embeds", value:
           "`/embed set key:<embed> field:<field> value:<v>` — customize any embed (incl. **key:help** to rebrand this guide)\n" +

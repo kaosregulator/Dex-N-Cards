@@ -46,6 +46,10 @@ describe("restored card-admin slash commands", () => {
       expect(names.has(name), name).toBe(true);
       expect(HUB_REPLACED_COMMANDS.has(internalCommandName(name)), name).toBe(false);
     }
+    expect(names.has("delete_all_cards"), "delete_all_cards").toBe(true);
+    expect(HUB_REPLACED_COMMANDS.has("deleteallcards")).toBe(false);
+    const wipe = chat.find((c) => c.name === "delete_all_cards") as { description?: string } | undefined;
+    expect(wipe?.description?.length ?? 999).toBeLessThanOrEqual(100);
     expect(chat.length).toBeLessThanOrEqual(100);
   });
 

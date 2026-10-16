@@ -424,7 +424,7 @@ export async function listSets(viewerGuildId?: string | null): Promise<Array<{ s
 
 // Delete every card in a set by NAME — destructive (used by `/unloadset` and
 // `unloadDefaultCards`). Cards are looked up via the memberships junction.
-// Cascades through collections, spawn_log, trades, and finally the set row itself.
+// Clears every foreign key first, then the cards, then the set row.
 export async function deleteSetByName(setName: string, actorGuildId: string): Promise<{ removed: number }> {
   const set = await getSetByName(setName, actorGuildId);
   if (!set) return { removed: 0 };
@@ -433,17 +433,21 @@ export async function deleteSetByName(setName: string, actorGuildId: string): Pr
     .from(cardSetMembershipsTable).where(eq(cardSetMembershipsTable.setId, set.id));
   const ids = members.map(m => m.cardId);
 
-  if (ids.length > 0) {
-    await db.delete(collectionsTable).where(inArray(collectionsTable.cardId, ids));
-    await db.delete(spawnLogTable).where(inArray(spawnLogTable.cardId, ids));
-    await db.delete(tradesTable).where(
-      sql`${tradesTable.offeredCardId} IN ${ids} OR ${tradesTable.requestedCardId} IN ${ids}`,
-    );
-    await db.delete(cardsTable).where(inArray(cardsTable.id, ids));
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const edges = await loadFkEdges(client);
+    if (ids.length > 0) {
+      await eraseRows(client, edges, "cards", ids, LOOSE_CARD_COLUMNS);
+    }
+    await eraseRows(client, edges, "sets", [set.id], LOOSE_SET_COLUMNS);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
-  // Memberships cascade with cards, but if the set was empty we still drop
-  // the set row to match the legacy "no traces left" semantics.
-  await db.delete(setsTable).where(eq(setsTable.id, set.id));
 
   invalidateCardCache();
   invalidateActiveSetCardsCache();
@@ -468,10 +472,19 @@ function slugifySetName(raw: string): string {
 // Returns undefined when missing. No cross-guild fallback.
 export async function getSetByName(name: string, viewerGuildId?: string | null): Promise<CardSet | undefined> {
   const slug = slugifySetName(name);
-  if (!slug) return undefined;
+  const literal = name.trim().toLowerCase();
+  if (!slug && !literal) return undefined;
   if (!viewerGuildId) return undefined;
+  // Legacy rows keep the typed name ("Set 1"). Newer rows store the slug
+  // ("set-1"). Match either so both can be found and deleted.
   const [row] = await db.select().from(setsTable)
-    .where(and(eq(setsTable.guildId, viewerGuildId), sql`lower(${setsTable.name}) = ${slug}`))
+    .where(and(
+      eq(setsTable.guildId, viewerGuildId),
+      or(
+        sql`lower(${setsTable.name}) = ${literal}`,
+        sql`lower(${setsTable.name}) = ${slug}`,
+      ),
+    ))
     .limit(1);
   return row;
 }
@@ -513,37 +526,213 @@ export async function renameSet(setId: number, newName: string, actorGuildId: st
   return row;
 }
 
-/** Non-destructive — deletes the set row + membership rows only. Cards stay. */
+/** Deletes one set owned by this guild. Unlinks its cards and drops any
+ *  active-spawn pointer first, so a legacy set (Set 1 / Set 2) can be removed
+ *  even when the database has no ON DELETE cascade. Cards stay in the roster. */
 export async function deleteSetById(setId: number, actorGuildId: string): Promise<{ removedMemberships: number }> {
   const set = await getSetById(setId, actorGuildId);
   if (!set) return { removedMemberships: 0 };
   if (!isOwnedBy(set, actorGuildId)) throw new Error("You can only delete sets owned by your server.");
   const memberships = await db.select({ cardId: cardSetMembershipsTable.cardId })
     .from(cardSetMembershipsTable).where(eq(cardSetMembershipsTable.setId, setId));
-  await db.delete(setsTable).where(eq(setsTable.id, setId));
-  // Cascade clears cardSetMembershipsTable rows automatically.
+  await eraseSetIds([setId]);
   invalidateActiveSetCardsCache();
   return { removedMemberships: memberships.length };
 }
 
-/** Non-destructive — deletes every set (and its memberships) owned by the
- * actor guild. Cards themselves are left untouched. */
+/** Deletes every set owned by this guild. Cards stay. Memberships and
+ *  active-spawn pointers are cleared first so legacy sets can actually go. */
 export async function deleteAllSets(actorGuildId: string): Promise<{ deletedSets: number; removedMemberships: number }> {
   const rows = await listSetsV2(actorGuildId);
   if (rows.length === 0) return { deletedSets: 0, removedMemberships: 0 };
   const setIds = rows.map(r => r.set.id);
   const memberships = await db.select({ cardId: cardSetMembershipsTable.cardId, setId: cardSetMembershipsTable.setId })
     .from(cardSetMembershipsTable).where(inArray(cardSetMembershipsTable.setId, setIds));
-  await db.delete(setsTable).where(inArray(setsTable.id, setIds));
-  // Cascade clears memberships; clear active set if it pointed to one of these.
-  await db.update(guildSettingsTable)
-    .set({ activeSetId: null, updatedAt: new Date() })
-    .where(and(eq(guildSettingsTable.guildId, actorGuildId), inArray(guildSettingsTable.activeSetId, setIds)));
-  await db.update(guildSettingsTable)
-    .set({ activeSetIdSecondary: null, updatedAt: new Date() })
-    .where(and(eq(guildSettingsTable.guildId, actorGuildId), inArray(guildSettingsTable.activeSetIdSecondary, setIds)));
+  await eraseSetIds(setIds);
   invalidateActiveSetCardsCache();
   return { deletedSets: setIds.length, removedMemberships: memberships.length };
+}
+
+/** Remove set rows after clearing anything that points at them. Cards stay. */
+async function eraseSetIds(setIds: number[]): Promise<void> {
+  if (setIds.length === 0) return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const edges = await loadFkEdges(client);
+    await eraseRows(client, edges, "sets", setIds, LOOSE_SET_COLUMNS);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+function sqlIdent(name: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(name)) throw new Error(`Unexpected SQL identifier: ${name}`);
+  return `"${name}"`;
+}
+
+const LOOSE_CARD_COLUMNS = [
+  "card_id", "offered_card_id", "requested_card_id", "challenger_card_id", "opponent_card_id",
+];
+const LOOSE_SET_COLUMNS = ["set_id", "active_set_id", "active_set_id_secondary"];
+
+type FkEdge = {
+  childTable: string;
+  childColumn: string;
+  parentTable: string;
+  parentColumn: string;
+  nullable: boolean;
+};
+
+/** Every public foreign key, matched column-to-column so a composite key
+ *  cannot null the wrong side. */
+async function loadFkEdges(client: import("pg").PoolClient): Promise<FkEdge[]> {
+  const res = await client.query<FkEdge>(`
+    SELECT
+      src.relname AS "childTable",
+      att.attname AS "childColumn",
+      dst.relname AS "parentTable",
+      patt.attname AS "parentColumn",
+      NOT att.attnotnull AS nullable
+    FROM pg_constraint con
+    JOIN pg_class src ON src.oid = con.conrelid
+    JOIN pg_class dst ON dst.oid = con.confrelid
+    JOIN pg_namespace ns ON ns.oid = src.relnamespace
+    JOIN LATERAL unnest(con.conkey, con.confkey) AS pair(child_att, parent_att) ON true
+    JOIN pg_attribute att
+      ON att.attrelid = src.oid AND att.attnum = pair.child_att AND NOT att.attisdropped
+    JOIN pg_attribute patt
+      ON patt.attrelid = dst.oid AND patt.attnum = pair.parent_att AND NOT patt.attisdropped
+    JOIN pg_type ptype ON ptype.oid = patt.atttypid
+    WHERE con.contype = 'f'
+      AND ns.nspname = 'public'
+      AND ptype.typname IN ('int2', 'int4', 'int8')
+  `);
+  return res.rows;
+}
+
+/** Remove or null rows that point at these ids, including rows that point at
+ *  those rows, so a missing ON DELETE rule cannot block the parent delete.
+ *  Guild settings are only unlinked — that row is the server's config. */
+async function purgeReferencingRows(
+  client: import("pg").PoolClient,
+  edges: FkEdge[],
+  parentTable: string,
+  parentColumn: string,
+  ids: number[],
+  stack: string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const here = `${parentTable}.${parentColumn}`;
+  if (stack.includes(here)) return;
+  if (stack.length > 8) throw new Error(`Foreign-key chain too deep while deleting ${here}`);
+  const next = [...stack, here];
+  const incoming = edges.filter(e => e.parentTable === parentTable && e.parentColumn === parentColumn);
+  for (const edge of incoming) {
+    const table = sqlIdent(edge.childTable);
+    const column = sqlIdent(edge.childColumn);
+    if (edge.nullable || edge.childTable === "guild_settings") {
+      await client.query(
+        `UPDATE ${table} SET ${column} = NULL WHERE ${column} = ANY($1::bigint[])`,
+        [ids],
+      );
+      continue;
+    }
+    const childKeys = [...new Set(
+      edges.filter(e => e.parentTable === edge.childTable).map(e => e.parentColumn),
+    )];
+    for (const childKey of childKeys) {
+      const nested = await client.query<{ id: string }>(
+        `SELECT DISTINCT ${sqlIdent(childKey)}::bigint AS id
+         FROM ${table}
+         WHERE ${column} = ANY($1::bigint[]) AND ${sqlIdent(childKey)} IS NOT NULL`,
+        [ids],
+      );
+      const nestedIds = nested.rows.map(r => Number(r.id)).filter(n => Number.isInteger(n));
+      await purgeReferencingRows(client, edges, edge.childTable, childKey, nestedIds, next);
+    }
+    await client.query(`DELETE FROM ${table} WHERE ${column} = ANY($1::bigint[])`, [ids]);
+  }
+}
+
+/** card_id / set_id columns that were never declared as foreign keys
+ *  (progress, HQ displays, and similar). They would not block the delete,
+ *  but they would keep pointing at cards that no longer exist. */
+async function clearLooseIdColumns(
+  client: import("pg").PoolClient,
+  ids: number[],
+  columnNames: string[],
+  skipTables: string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const found = await client.query<{ table_name: string; column_name: string; is_nullable: string }>(`
+    SELECT c.table_name, c.column_name, c.is_nullable
+    FROM information_schema.columns c
+    JOIN pg_class cls ON cls.relname = c.table_name
+    JOIN pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = c.table_schema
+    WHERE c.table_schema = 'public'
+      AND cls.relkind = 'r'
+      AND c.column_name = ANY($1::text[])
+      AND c.udt_name IN ('int2', 'int4', 'int8')
+  `, [columnNames]);
+  for (const col of found.rows) {
+    if (skipTables.includes(col.table_name)) continue;
+    const table = sqlIdent(col.table_name);
+    const column = sqlIdent(col.column_name);
+    if (col.is_nullable === "YES" || col.table_name === "guild_settings") {
+      await client.query(
+        `UPDATE ${table} SET ${column} = NULL WHERE ${column} = ANY($1::bigint[])`,
+        [ids],
+      );
+    } else {
+      await client.query(`DELETE FROM ${table} WHERE ${column} = ANY($1::bigint[])`, [ids]);
+    }
+  }
+}
+
+async function eraseRows(
+  client: import("pg").PoolClient,
+  edges: FkEdge[],
+  table: string,
+  ids: number[],
+  looseColumns: string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  await purgeReferencingRows(client, edges, table, "id", ids, []);
+  await clearLooseIdColumns(client, ids, looseColumns, [table]);
+  await client.query(`DELETE FROM ${sqlIdent(table)} WHERE id = ANY($1::bigint[])`, [ids]);
+}
+
+/** Erase every card owned by this guild — in a set or not — then delete any
+ *  sets that guild still has. Home-guild admin command only. */
+export async function deleteAllGuildCards(actorGuildId: string): Promise<{ deletedCards: number; deletedSets: number }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const cards = await client.query<{ id: number }>("SELECT id FROM cards WHERE guild_id = $1", [actorGuildId]);
+    const sets = await client.query<{ id: number }>("SELECT id FROM sets WHERE guild_id = $1", [actorGuildId]);
+    const cardIds = cards.rows.map(r => Number(r.id));
+    const setIds = sets.rows.map(r => Number(r.id));
+    const edges = await loadFkEdges(client);
+
+    await eraseRows(client, edges, "cards", cardIds, LOOSE_CARD_COLUMNS);
+    await eraseRows(client, edges, "sets", setIds, LOOSE_SET_COLUMNS);
+
+    await client.query("COMMIT");
+    invalidateCardCache();
+    invalidateActiveSetCardsCache();
+    logger.info({ actorGuildId, deletedCards: cardIds.length, deletedSets: setIds.length }, "Deleted all guild cards and sets");
+    return { deletedCards: cardIds.length, deletedSets: setIds.length };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // A set can only contain cards from its own guild. It must never contain a

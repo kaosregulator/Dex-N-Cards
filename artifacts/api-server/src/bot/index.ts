@@ -963,6 +963,12 @@ export async function startBot() {
           return;
         }
 
+        if (action === "delallcards") {
+          const { handleDeleteAllCardsButton } = await import("./commands/delete-all-cards.js");
+          await handleDeleteAllCardsButton(interaction);
+          return;
+        }
+
         // ── Rarity hub + display edit panel buttons ────────────────────────
         if (action === "rarity_hub") {
           await handleRarityHubButton(interaction);
