@@ -161,7 +161,7 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
     .setTitle("🏰 Sieges")
     .setDescription(
       "The big one — a tactical **4-card formation** battle for a base.\n\n" +
-      "🏰 **`/battle siege`** — storm a player's base or a world territory.\n" +
+      "🏰 **`/battle siege`** — lay siege to a player's base or a world territory.\n" +
       "🛡️ Four cards hold the **front line**; fight through it and, when it breaks, **reserves deploy** — punch all the way through to drain the commander's **life points**.\n" +
       "🃏 Each turn: **Draw Phase** → **Main Phase** — pick a fighter, choose a target, and play **Siege Battle Cards** (combos, finishers & formation orders).\n" +
       "🎴 Close-up **Card Clash** cinematics play automatically when a blow lands — not a separate mode.\n" +

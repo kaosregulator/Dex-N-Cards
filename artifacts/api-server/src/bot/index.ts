@@ -284,11 +284,6 @@ export async function startBot() {
     try {
       // ── Autocomplete (card / set suggestions as user types) ───────────────
       if (interaction.isAutocomplete()) {
-        if (interaction.commandName === "badge") {
-          const { handleBadgeAutocomplete } = await import("./badges/commands.js");
-          await handleBadgeAutocomplete(interaction);
-          return;
-        }
         await handleAutocomplete(interaction);
         return;
       }
@@ -481,6 +476,31 @@ export async function startBot() {
       if (interaction.isModalSubmit() && interaction.customId.startsWith("artshow:")) {
         const { handleArtShowModal } = await import("./artshow/commands.js");
         await handleArtShowModal(interaction);
+        return;
+      }
+      // ── Arrival progression hub (progresshub:*) ────────────────────────────
+      if (interaction.isButton() && interaction.customId.startsWith("progresshub:")) {
+        const { handleProgressionHubButton } = await import("./commands/progression-hub.js");
+        await handleProgressionHubButton(interaction);
+        return;
+      }
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith("progresshub:")) {
+        const { handleProgressionHubSelect } = await import("./commands/progression-hub.js");
+        await handleProgressionHubSelect(interaction);
+        return;
+      }
+      if (interaction.isModalSubmit() && interaction.customId.startsWith("progresshub:")) {
+        const { handleProgressionHubModal } = await import("./commands/progression-hub.js");
+        await handleProgressionHubModal(interaction);
+        return;
+      }
+      // ── Badge hub (badgeshub:*) ────────────────────────────────────────────
+      if (
+        (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu()) &&
+        interaction.customId.startsWith("badgeshub:")
+      ) {
+        const { handleBadgeHubComponent } = await import("./badges/commands.js");
+        await handleBadgeHubComponent(interaction);
         return;
       }
       // ── UB Lottery store + admin (lottery: / lottoadmin:) ───────────────────
@@ -1224,9 +1244,6 @@ export async function startBot() {
       } else if (cmd === "hqadmin") {
         const { handleHqAdminCommand } = await import("./commands/hq-admin.js");
         await handleHqAdminCommand(interaction);
-      } else if (cmd === "hqbuild") {
-        const { handleHqBuildCommand } = await import("./commands/hq-build.js");
-        await handleHqBuildCommand(interaction);
       } else if (cmd === "pet") {
         const { handlePetCommand } = await import("./pets/command.js");
         await handlePetCommand(interaction);
@@ -1248,9 +1265,6 @@ export async function startBot() {
       } else if (cmd === "badges") {
         const { handleBadgesCommand } = await import("./badges/commands.js");
         await handleBadgesCommand(interaction);
-      } else if (cmd === "badge") {
-        const { handleBadgeCommand } = await import("./badges/commands.js");
-        await handleBadgeCommand(interaction);
       } else if (cmd === "artshow") {
         const { handleArtShowCommand } = await import("./artshow/commands.js");
         await handleArtShowCommand(interaction);
@@ -1263,9 +1277,6 @@ export async function startBot() {
       } else if (cmd === "casino") {
         const { handleCasinoCommand } = await import("./unbelievaboat/casino.js");
         await handleCasinoCommand(interaction);
-      } else if (cmd.endsWith("_ub")) {
-        const { handleUbSlashCommand } = await import("./unbelievaboat/ub-slash-router.js");
-        await handleUbSlashCommand(interaction, cmd);
       } else if (cmd === "vaultvalue") {
         const { handleVaultValueCommand } = await import("./commands/vaultvalue-hub.js");
         await handleVaultValueCommand(interaction);
@@ -1309,14 +1320,11 @@ export async function startBot() {
     "quiet", "vacation", "loa", "quietsetup",
     "begin", "show_shiny",
     "quote",
-    "collection_hub", "hq", "hqadmin", "hqbuild",
+    "collection_hub", "hq", "hqadmin",
     "pet", "petadmin", "ubadmin", "unbelievaboat", "tatsu", "trivia", "memberdate",
-    "badges", "badge", "artshow",
+    "badges", "artshow",
     "lottery", "lotteryadmin",
     "casino", "vaultvalue", "cardadmin", "secret",
-    "daily_ub", "collect_ub", "bal_ub", "deposit_ub", "withdraw_ub",
-    "slots_ub", "blackjack_ub", "roulette_ub", "uno_ub", "higherlower_ub", "redblack_ub",
-    "work_ub", "crime_ub", "beg_ub", "rob_ub", "russian_ub", "store_ub", "top_ub",
     "valuehelp", "valuelist", "info_mttv", "giveall", "editpack", "postcalculator",
     "postboard", "massrole", "emoji",
   ]);
@@ -1465,14 +1473,11 @@ async function registerCommands(appId: string, token: string, client: Client) {
     .sort();
   const hubsPresent = ["trade", "vaultvalue", "cardadmin", "secret", "casino", "tatsu", "trivia", "help"]
     .filter(n => chatNames.includes(n));
-  const ubSlash = chatNames.filter(n => n.endsWith("_ub"));
   const foldedStillRegistered = [...HUB_REPLACED_COMMANDS].filter(n => chatNames.includes(n));
 
   logger.info({
     chatCount: chatNames.length,
     hubsPresent,
-    ubSlashCount: ubSlash.length,
-    ubSlash,
     foldedStillRegistered,
   }, "Slash registration payload");
 
@@ -1514,7 +1519,7 @@ async function registerCommands(appId: string, token: string, client: Client) {
   }
 
   // 2) Register guild-specific only — instant effect, no 1-hour propagation.
-  // Full PUT replaces the guild command set (hubs + *_ub shortcuts in, folded flats out).
+  // Full PUT replaces the guild command set (hubs in, folded flats out).
   for (const [, guild] of client.guilds.cache) {
     await rest
       .put(Routes.applicationGuildCommands(appId, guild.id), { body: commands })
@@ -1522,7 +1527,6 @@ async function registerCommands(appId: string, token: string, client: Client) {
         guildId: guild.id,
         chatCount: chatNames.length,
         hubs: hubsPresent,
-        ubSlashCount: ubSlash.length,
       }, "Guild slash commands registered"))
       .catch(err => logger.error({ err, guildId: guild.id }, "Guild command registration failed"));
   }

@@ -6,13 +6,7 @@ Addon for DN Cards — does **not** replace shards, packs, or the existing bot. 
 
 Bets and store purchases spend **cash first, then bank** via the UnbelievaBoat API. Wins credit **cash**.
 
-Casino vault (slash shortcuts — `/casino` itself is a **button hub**, not nested subcommands):
-
-| Command | Effect |
-| --- | --- |
-| `/deposit_ub` · `.dep` / `.dep all` | Cash → bank |
-| `/withdraw_ub` · `.with` / `.wd` | Bank → cash |
-| `/bal_ub` · `.bal` | Wallet view |
+Casino vault lives on the **`/casino`** button hub (not nested subcommands). Prefix still works (default `.`): `.dep` / `.dep all`, `.with` / `.wd`, `.bal`.
 
 ## Cooldowns + payouts (Casino station)
 
@@ -20,7 +14,7 @@ UnbelievaBoat’s Discord `set-cooldown` / `set-game-cooldown` settings are **no
 
 | Command | Default CD | Default payout |
 | --- | --- | --- |
-| Cash Check-In (`/daily_ub`) | 20h | 100–250 |
+| Cash Check-In (`/casino` → Daily) | 20h | 100–250 |
 | Role collect | **Per-role** (`meta.collectCooldownSec`); guild value is fallback for unset roles only | perk `income_amount` |
 | Work | 4h | 20–250 |
 | Crime | 4h | win 250–700 · 55% fail · fine ≥10 (1–2% wallet) |
@@ -68,8 +62,7 @@ Store icons: unicode, guild emoji, Discord attachment, or Tenor/Giphy paste — 
 ## Player hub — `/casino`
 
 All player economy/casino actions live under **`/casino`** (full floor **button** dashboard).
-**Also:** 18 short aliases ending in **`_ub`** (`/daily_ub`, `/slots_ub`, `/blackjack_ub`, `/collect_ub`, …) — Discord
-forces lowercase, so the suffix avoids colliding with DN `/daily` (shards).
+Prefix commands still work (guild `gamesPrefix`, default `.`) and post as UnbelievaBoat.
 
 | Floor action | Notes |
 | --- | --- |
@@ -85,7 +78,7 @@ forces lowercase, so the suffix avoids colliding with DN `/daily` (shards).
 | Store | Role perk store |
 | Top | Dex N Cards × UnbelievaBoat animated leaderboard |
 
-Floor webhooks append `_▶️ Run \`/…_ub\` · all tables: \`/casino\`` so bystanders see the slash.
+Floor webhooks append `_▶️ \`/casino\`` so bystanders see the hub.
 
 ## Logs
 
@@ -106,9 +99,8 @@ on every redeploy when drizzle push is skipped — no manual push needed. See `d
 
 ## Slash command budget
 
-`/casino` hub + 18 `*_ub` shortcuts ≈ **78** chat-input (under Discord’s 100). Prefer new
-games as `/casino` panel buttons (or reuse an existing `*_ub`) instead of more top-level names.
-Slash registration runs automatically on bot login — redeploy is enough.
+Prefer new games as `/casino` panel buttons instead of more top-level slash names
+(Discord’s 100-command cap). Slash registration runs automatically on bot login — redeploy is enough.
 
 ## Secrets
 

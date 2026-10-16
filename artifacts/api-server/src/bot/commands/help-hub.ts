@@ -172,13 +172,12 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/hq` — your personal **Headquarters**: an isometric room you customize. Feature your proudest cards on **Trophy Hall** pedestals, place **decorations** you earn by playing or find as **catch drops**, **buy furniture** from the daily-rotating **🛒 Shop** (shards), and restyle with **themes, real wallpaper & floors** as you unlock new rooms.\n" +
           "**/hq → 🗺️ World Map** — a whole continent already held by six **AI factions**. March on a castle, take it, and it pays you 💠 every hour you hold it. Pick **Cinematic** to watch the full opening scene before the battle.\n" +
           "**/hq → 🛠️ Build** — the world editor: move a cursor around the isometric grid and paint **paving, ponds, hills and raised platforms** in rectangles, indoors or on your grounds.\n" +
-          "`/hqbuild place|remove|list|clear|wallpaper|materials` — the same editor by typing exact coordinates\n" +
           "`/hq user:@member` — visit someone else's HQ and see what they've accomplished" },
         { name: "🏅 Progress & Rank", value:
           "**/user-hub → Progression** — account level & XP across every activity\n" +
           "**/user-hub → Collector Profile** — rank, net worth, achievements & the leaderboard\n" +
           "**/user-hub → Calendar** — your login streak\n" +
-          "`/collector` — opt in/out of the spawn-ping collector role" },
+          "**/user-hub → Wishlist** — save cards and opt into the **wishlist ping role** (`/wishlist_role`)" },
         { name: "⭐ Star Rank & Card Recycle", value:
           "Cards gain a **Star Rank (0–5★)** that boosts their battle stats.\n" +
           "`/card_recycle name:<card>` — recycle **duplicate copies** you already own to raise that card's ⭐ Star Rank (one copy is always kept; rarity never changes)." },
@@ -217,8 +216,7 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/trade` → **Gift shards** — send shards to a friend." },
         { name: "💵 Casino (UnbelievaBoat)", value:
           "`/casino` — button floor: wallet · slots · blackjack · roulette · UNO · collect · store · top\n" +
-          "Shortcuts: `/daily_ub` `/blackjack_ub` `/slots_ub` `/collect_ub` … (all `*_ub`)\n" +
-          "Prefix (default `.`): `.bj 50` · `.slots` · `.dep`/`.with` · `.col` · `.work`/`.crime` · `.rr @user 50` · `.rr ai @user 50` · `.help`\n" +
+          "Prefix commands still work (default `.`) and post as UnbelievaBoat — run `/casino` for the floor.\n" +
           "`/unbelievaboat` — (admin) **Roles & economy** = per-role collect CDs · Casino station for daily/work/… · `/tatsu`" },
       );
   },
@@ -233,7 +231,7 @@ const PAGES: Record<HelpSection, PageFn> = {
           "Propose mixes cards and/or 💠 shards. Accept/Decline by trade ID or use buttons on the offer.\n" +
           "Deals over **3:1** in value show an orange ⚠️ fairness warning (informational)." },
         { name: "📌 Wishlist", value:
-          "**/user-hub → Wishlist** — add cards you want (get pinged when they spawn), see your list, and remove entries." },
+          "**/user-hub → Wishlist** — add cards you want, then **Ping me** to join the wishlist role. When a wishlisted card spawns, that role is pinged." },
         { name: "🏪 Marketplace", value:
           "Open the **🏪 Market** from `/user-hub` — one panel to **sell** (fixed price or timed auction), **browse** active listings, **buy** or **buy out**, **bid** on auctions, and **manage** your own listings & bids." },
       );
@@ -321,11 +319,13 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/quiet_setup ensure_room` — sync rooms + quarantine roles + hides\n" +
           "`/quiet_setup rename` — custom labels for Quiet / Vacation / LOA / Step Away\n" +
           "Includes **Stones in the Water** — a short click-through release exercise. Outsiders can't see the room." },
-        { name: "🏅 Badges (`/badges` · `/badge`)", value:
-          "`/badges` — view your (or someone's) badge collection\n" +
-          "`/badge give` / `take` — staff award or remove manual badges\n" +
-          "`/badge catalogue` — see configured rules · customize in the dashboard **Badges** hub\n" +
+        { name: "🏅 Badges (`/badges`)", value:
+          "`/badges` — hub: catalogue, a member's collection, Show, Give, Take\n" +
+          "Everyone can browse. Give / Take need admin — pressing them without it says so.\n" +
           "Trivia winners earn **badges** (no Discord roles)." },
+        { name: "🖼️ Art Show (`/artshow`)", value:
+          "`/artshow` — board, gallery, and staff tools on one hub. Members Submit from the board.\n" +
+          "Setup / Crown / Fix are visible to everyone; you need to be an admin to use them." },
         { name: "🎮 Community Trivia (`/trivia`)", value:
           "`/trivia` — (staff) host **Flash**, **Trivia**, **Picture**, or schedule **QOTD**\n" +
           "Players guess with big buttons, a Guess popup, or typing until staff hits **End**\n" +
@@ -350,7 +350,7 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/event start|list|stop` — limited-time spawn boosts" },
         { name: "✨ Reveals & Card Progression", value:
           "`/config → 🎞️ Reveals` — spawn reveal style (**Auto**/Blur/Puzzle/Silhouette/Off) + **shiny catch animation** toggle\n" +
-          "`/progression_default` · `/progression_card` — default / per-card Star/Level on spawn/pull/drop" },
+          "`/progression` — hub: which area (spawn / pack / drop / all) is in control, plus per-card overrides" },
         { name: "🗂️ Cards & Sets", value:
           "`/create_card_from_mttv item: rarity: [image:]` — Vault Values art + DN rarity\n" +
           "`/add_card` — upload your own image · `/edit_image` — Vault image or a file\n" +
@@ -369,7 +369,9 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/quiet_setup` · `/quiet` — sanctuary place **or force out**\n" +
           "`/unbelievaboat` · `/casino` — UnbelievaBoat economy & casino\n" +
           "`/tatsu` — Tatsu score/points dashboard & spam tools\n" +
-          "`/trivia` — community flash trivia, QOTD, picture rounds" },
+          "`/trivia` — community flash trivia, QOTD, picture rounds\n" +
+          "`/wishlist_role` — role pinged when a wishlisted card spawns\n" +
+          "`/artshow` — Art Show hub · `/progression` — arrival Star/Level hub" },
         { name: "🌐 Website", value: `Public: **[${site}](${site})** · Admin dashboard: run \`/dashboard\` for your login link.` },
       );
   },

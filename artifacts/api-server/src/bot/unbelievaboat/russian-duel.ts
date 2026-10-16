@@ -483,7 +483,7 @@ export async function handleRussianComponent(interaction: ButtonInteraction): Pr
     const session = duels.get(key);
     if (!session || session.expires < Date.now()) {
       duels.delete(key);
-      await interaction.reply({ content: "Duel expired — start again with `/russian_ub` or `.rr`.", ...EPHEMERAL });
+      await interaction.reply({ content: "Duel expired — start again with `/casino` or `.rr`.", ...EPHEMERAL });
       return true;
     }
     if (interaction.user.id !== turnUserId) {

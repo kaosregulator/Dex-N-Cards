@@ -7,13 +7,9 @@ import { messageAsChatInput } from "../commands/message-as-chat.js";
 import type { OptBag } from "../commands/option-proxy.js";
 
 const HELP = [
-  "**Casino** — short prefix (default `.`). Results post as **UnbelievaBoat**.",
-  "`.dep` / `.dep all` · `.with` / `.wd` · `.col` · `.bal` · `.daily`",
-  "`.work` · `.crime` · `.beg` · `.rob @user`",
-  "`.bj 50` · `.slots 100` · `.roulette 50 red` · `.uno 50`",
-  "`.hl 50` · `.rb 50 red` · `.rr @user 50` · `.top` · `.store`",
-  "Full names work too (`.deposit`, `.blackjack`, `.collect`, …).",
-  "Slash: `/deposit_ub` `/blackjack_ub` … or `/casino`. Change prefix: `!setgamesprefix .`",
+  "**Casino** — results post as **UnbelievaBoat**.",
+  "Run **`/casino`** for the floor. Prefix commands still work (default `.`).",
+  "Change prefix: `!setgamesprefix .`",
 ].join("\n");
 
 /** Canonical command → common short / UB-style aliases people type. */

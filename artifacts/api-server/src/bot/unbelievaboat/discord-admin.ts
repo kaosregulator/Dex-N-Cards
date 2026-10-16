@@ -199,7 +199,7 @@ async function buildCasinoStation(guildId: string, notice?: string): Promise<{
     .setDescription(
       [
         notice ? `${notice}\n` : "",
-        "_Webhook floor commands (`*_ub` / `/casino` / games prefix). UB’s own Discord cooldowns are **not** on their API — these are ours._",
+        "_Webhook floor commands (`/casino` / games prefix). UB’s own Discord cooldowns are **not** on their API — these are ours._",
         "_Cooldown input: `30m`, `4h`, `daily`, `90s`, or a bare number of **minutes**._",
         "",
         `**Daily** · CD ${cdText(cds.dailySec * 1000)} · payout **${fmt(pay.dailyMin)}–${fmt(pay.dailyMax)}**`,

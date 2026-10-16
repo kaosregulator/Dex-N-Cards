@@ -2044,8 +2044,7 @@ async function removeAtCursor(guildId: string, userId: string): Promise<string> 
 
 /**
  * Render one build canvas with the cursor overlaid — the shared picture behind
- * both the visual Build section and every `/hqbuild` reply, so the two halves of
- * the editor can never drift apart visually.
+ * the visual Build section, so the canvas never drifts from the cursor.
  */
 export async function renderBuildCanvas(
   interaction: HubInteraction, canvas: string, cursor: BuildCursor,
@@ -2060,7 +2059,7 @@ export async function renderBuildCanvas(
     : renderRoomImage(guildId, await buildRenderView(guildId, userId, name, avatar, hq, false, cursor));
 }
 
-/** Persist an HQ's wallpaper choice (shared with `/hqbuild wallpaper`). */
+/** Persist an HQ's wallpaper choice (shared with `/hq` → Build). */
 export async function setHqWallpaper(guildId: string, userId: string, wallpaperId: string): Promise<void> {
   const hq = await getOrCreateHq(guildId, userId);
   await updateHq(guildId, userId, { stats: { ...readHqStats(hq), wallpaperId } }).catch(() => {});
@@ -2181,8 +2180,8 @@ async function buildAttackBriefing(guildId: string, attackerId: string, defender
   const mode = siegeModeMeta(siegeCfg.mode);
   const yourP = squad.reduce((s, c) => s + c.power, 0), theirP = defenders.reduce((s, c) => s + c.power, 0);
   embed.setDescription(
-    `Your strongest **${squad.length}** cards storm **${defenders.length}** stationed defenders in a **real battle** ` +
-    "— true stats, moves, specials and passives. Break every rank to capture the base.\n\n" +
+    `Your strongest **${squad.length}** cards fight **${defenders.length}** stationed defenders in a **Siege Battle** ` +
+    "— true stats, moves, specials and passives. Break the front line, then drain the commander's **life points** to capture the base.\n\n" +
     `⚔️ Your strength: **${yourP}**  ·  🛡️ Their defence: **${theirP}**` +
     (forti.totalPct > 0 ? `  ·  🏯 **+${forti.totalPct}%** ${forti.tier.label} fortifications` : ""),
   );
@@ -2260,8 +2259,7 @@ function formatReign(sec: number): string {
 // Legacy simulateSiegeBattle / resolveSiege are NOT used on this path; they remain
 // in hq/siege-battle.ts and hq/siege.ts as helpers / compatibility only.
 
-// The attacker's lead card as the champion figure the castle frame draws
-// storming the gate.
+// The attacker's lead card as the champion figure the castle frame draws.
 function championFor(cards: OwnedBattleCard[], cx: LoadedCtx): HqRenderDefender | null {
   const card = cards[0];
   if (!card) return null;
@@ -2744,7 +2742,7 @@ async function notifySiege(
       .setTitle(captured ? "🏰 Your base was captured!" : "🛡️ Your base held!")
       .setDescription(
         captured
-          ? `**${attackerName}** stormed your base in **${guildName}** and now holds it. ` +
+          ? `**${attackerName}** laid siege to your base in **${guildName}** and now holds it. ` +
             "Reclaim it from **/hq → 🏰 Base** once the shield lifts, or station stronger defenders."
           : `**${attackerName}** attacked your base in **${guildName}**, but your defenders held the walls. ` +
             `They walked away with only ${reward} shards.`,

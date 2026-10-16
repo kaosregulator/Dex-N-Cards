@@ -133,16 +133,15 @@ Confirm logs show:
 ### Slash commands (automatic on Railway)
 
 The bot **re-registers guild slash commands on every login** (`ClientReady` →
-`registerCommands`). That includes `/casino`, `/tatsu`, Quiet Mode, and the
-18 `*_ub` player shortcuts (`/daily_ub`, `/slots_ub`, …).
+`registerCommands`). That includes `/casino`, `/tatsu`, and Quiet Mode.
 
 No manual Discord Developer Portal step or register script is required after
 redeploy. Confirm logs show:
 
-- `Slash registration payload` with `ubSlashCount: 18` (and `chatCount` ≈ 78)
+- `Slash registration payload` with `chatCount` under Discord’s 100
 - `Guild slash commands registered` for your `HOME_GUILD_ID`
 
-Discord’s slash picker may take a few seconds to refresh; type `/daily_ub` to verify.
+Discord’s slash picker may take a few seconds to refresh; type `/casino` to verify.
 
 ## First deploy checklist
 
@@ -155,7 +154,7 @@ Discord’s slash picker may take a few seconds to refresh; type `/daily_ub` to 
    - `Ensuring UnbelievaBoat (ub_*) + Tatsu (tatsu_*) tables…` → `… tables ready`
    - `Bot startup banner` with `processType: "deployment"` and `willLogin: true`
    - `Dex N Cards bot ready` (or your `BRAND_NAME`) with a guild count
-   - `Slash registration payload` / `Guild slash commands registered` (incl. `*_ub`)
+   - `Slash registration payload` / `Guild slash commands registered`
    - `Boot migrations applied` (not failed)
    - `Session store: Postgres`
 6. **Turn off** any other process that uses the **same** bot token (old Replit deployment, local `FORCE_DISCORD_LOGIN=1`, etc.). One token = one gateway.

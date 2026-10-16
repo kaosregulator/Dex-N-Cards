@@ -5,7 +5,7 @@ showcase, and the answer to *"what has this player accomplished?"* Cards stay th
 centerpiece — the HQ is where you **display** them. Purely additive: its own
 tables (`player_hq`, `hq_unlocks`, `hq_displays`, `hq_placements`,
 `hq_defenders`, `hq_base_state`, `hq_base_attacks`, `hq_base_reigns`,
-`hq_world_nodes`, `hq_terrain`) and the `/hq`, `/hqbuild` and `/hqadmin`
+`hq_world_nodes`, `hq_terrain`) and the `/hq` and `/hqadmin`
 commands. HQ progression is **derived** from the systems you already play
 (collection, battles, raids, achievements, daily streak), so nothing is
 duplicated and existing players are back-filled the first time they open `/hq`.
@@ -52,8 +52,6 @@ provisions them with no manual push.
     [The world map](#the-world-map-hq--️-world-map).
   - **🛠️ Build** — the world editor. See [Build mode](#build-mode-the-world-editor).
 - `/hq user:@member` — visit another member's HQ, read-only.
-- `/hqbuild <sub>` — the typed half of the world editor
-  (`place` · `remove` · `clear` · `list` · `wallpaper` · `materials` · `view`).
 
 ## Build mode (the world editor)
 
@@ -62,19 +60,14 @@ landscaping — you cannot see where anything is going, and a pond is not a slot
 Build mode adds **areas**: rectangles of ground stamped onto the isometric
 lattice, indoors or on the grounds.
 
-**Two front ends, one editor.** They share the cursor
+The visual editor in **`/hq → 🛠️ Build`** is the front end. It shares the cursor
 (`player_hq.stats.build`), the rows (`hq_terrain`) and the validation
-(`bot/hq/terrain.ts`), so a shape can be lined up with the arrow buttons and
-then fine-tuned by typing, or the other way round.
+(`bot/hq/terrain.ts`).
 
 - **`/hq → 🛠️ Build`** renders the canvas with **X/Y rulers** and a live neon
   **cursor**, and drives it with buttons: ⬅️⬆️⬇️➡️ to move, `W`/`H` to cycle the
   brush size, `Lift` for height, then **Place** / **Remove** / **Clear all**.
   Selects choose the material and which space to build on.
-- **`/hqbuild place material:Pond x:3 y:4 width:3 height:2`** does the same at
-  exact coordinates — the ones printed on the rulers. Every `/hqbuild` reply
-  re-renders the canvas, so a build is never done blind. `/hqbuild list` prints
-  ids for `/hqbuild remove id:<n>`.
 
 **Materials** (`bot/hq/defs/surfaces.ts`) are generic: a `kind` decides how
 `render-terrain.ts` paints the rectangle, so the renderer never hardcodes what
@@ -341,8 +334,8 @@ retiring one never breaks a server.
 
 Scout another player with `/hq user:@member` — the visit shows their **exterior
 base** and stationed defenders — then **⚔️ Attack** it. The attacker's strongest
-cards storm the stationed defenders in a **real battle** and must knock out every
-one to **capture** the base (its banner flips red and it's **shielded** for an
+cards fight the stationed defenders in a **Siege Battle** and must drain the
+commander's **life points** to **capture** the base (its banner flips red and it's **shielded** for an
 hour so it can't be farmed); if the assault is broken, the walls hold.
 
 **Combat runs the actual battle engine.** `bot/hq/siege-battle.ts`
@@ -364,7 +357,7 @@ shield expires.
 
 A siege is a **real battle**, not a summary. It runs the same combat engine, the
 same move set, the same per-turn attack frames and the same timers as `/battle`
-— so anyone who has fought a battle already knows how to storm a castle — with a
+— so anyone who has fought a battle already knows the Siege Battle loop — with a
 siege layer on top. `bot/hq/siege-runtime.ts` owns it.
 
 **Both sides take turns.** You pick a move, the board re-renders, the garrison

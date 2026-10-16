@@ -410,7 +410,7 @@ export async function startSiege(
       session.message = await channel.send({
         embeds: [new EmbedBuilder().setColor(session.accent)
           .setTitle(`🏰 Siege Battle — ${session.targetName}`)
-          .setDescription(`**${session.attackerName}** storms **${session.targetName}**. Resolving the Siege Battle…`)],
+          .setDescription(`**${session.attackerName}** lays siege to **${session.targetName}**. Resolving the Siege Battle…`)],
         components: [],
       }).then((m) => m as Message).catch(() => undefined);
       if (session.message) {
@@ -700,7 +700,7 @@ async function handleColumnOpen(interaction: ButtonInteraction, s: SiegeSession)
       default: chosen.has(c.cardId),
     })));
   await interaction.reply({
-    content: `🎴 **Pick your team** — the order you pick is the order they charge the gate. You may bring up to **${s.columnSize}** (one per garrison rank).`,
+    content: `🎴 **Pick your team** — the order you pick is the order they fight. You may bring up to **${s.columnSize}** (one per garrison rank).`,
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)], ...EPHEMERAL,
   }).catch(() => {});
 }
@@ -774,7 +774,7 @@ async function handleSkip(interaction: ButtonInteraction, s: SiegeSession): Prom
   if (s.message) {
     await s.message.edit({
       embeds: [new EmbedBuilder().setColor(s.accent).setTitle("📨 Column deployed")
-        .setDescription(`Your captains are storming **${s.targetName}**. You'll be pinged the moment it's decided.`)],
+        .setDescription(`Your captains are fighting the Siege Battle at **${s.targetName}**. You'll be pinged the moment it's decided.`)],
       components: [], files: [],
     }).catch(() => {});
   }
@@ -794,9 +794,9 @@ async function handleBegin(interaction: ButtonInteraction, s: SiegeSession): Pro
   const lead = s.battle.teams[0].slots.find(sl => sl.unit)?.unit;
   const garrison = s.battle.teams[1].slots.find(sl => sl.unit)?.unit;
   pushLog(s, [
-    `⚔️ **${s.attackerName}** throws the column at the walls of **${s.targetName}**.`,
+    `⚔️ **${s.attackerName}** opens the Siege Battle at **${s.targetName}**.`,
     firstSide === 0 ? "🎯 Your column seizes the initiative — you move first." : "🛡️ The garrison reacts first.",
-    lead && garrison ? `🔹 **${lead.cardName}** meets **${garrison.cardName}** at the gate.` : "",
+    lead && garrison ? `🔹 **${lead.cardName}** meets **${garrison.cardName}** on the front line.` : "",
   ]);
   // Start the assault IMMEDIATELY — do not wait on a castle render here (that
   // 8s stack after the coin toss is exactly what made the fight look frozen).
@@ -841,7 +841,7 @@ async function playCoinToss(s: SiegeSession): Promise<0 | 1> {
     .setColor(firstSide === 0 ? 0x4fd06a : s.accent)
     .setTitle(`🪙 ${landed}`)
     .setDescription(firstSide === 0
-      ? `You **won the toss** — your column storms the gate first.`
+      ? `You **won the toss** — your column moves first.`
       : `The toss goes to the defenders — the garrison moves first.`);
   await s.message.edit({ content: null, embeds: [resultEmbed], files: [], components: [] }).catch((err) => {
     logger.warn({ err, siege: s.id }, "siege coin result edit failed");

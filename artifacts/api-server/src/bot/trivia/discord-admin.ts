@@ -594,7 +594,7 @@ export async function handleTriviaAdminComponent(
           .setTitle("🏅 Winner badges")
           .setDescription(
             lines.join("\n") +
-            "\n\nWinners earn **permanent badges** (no Discord roles). Customize in the dashboard, award extras with `/badge give`, view with `/badges`.",
+            "\n\nWinners earn **permanent badges** (no Discord roles). Customize in the dashboard, award extras from `/badges` → Give, view with `/badges`.",
           ),
       ],
       components: hubRows(),

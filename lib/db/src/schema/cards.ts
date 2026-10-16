@@ -195,7 +195,8 @@ export const guildSettingsTable = pgTable("guild_settings", {
   tradeChannelId: text("trade_channel_id"),
   // Opt-in "collector" ping role: when set, spawns @mention this role so
   // subscribed members get pinged on every spawn. Members self-toggle it with
-  // /cards collector; admins set it with /admin collectorrole.
+  // Wishlist spawn ping role. Admins set it with /wishlist_role; members
+  // opt in from /user-hub → Wishlist. Column name kept (no migration).
   collectorRoleId: text("collector_role_id"),
   spawnIntervalSeconds: integer("spawn_interval_seconds").notNull().default(3600),
   spawnIntervalMin: integer("spawn_interval_min"),

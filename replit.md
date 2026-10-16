@@ -69,7 +69,7 @@ DN Cards is DarkNight's collectible military trading card game for the Roblox + 
 - HQ world campaign: `hq/world.ts` (seeds `hq_world_nodes` from the `defs/world.ts` blueprint, capture/tribute, AI garrisons synthesised from the guild card pool as real `OwnedBattleCard`s). Six AI factions hold twelve tiered territories per guild; members take them and hold them for tribute.
 - HQ sieges: `hq/siege-runtime.ts` — the turn-for-turn assault. Mirrors the `/battle` turn loop (startOfTurn → wind-up frame → resolveMove → attack visual → hand over → turn clock) and reuses its move set, `combatantField`, coin toss (`renderCoinFlip`) and animation pipeline. The **muster** (prep) board lets the commander: call the **heads/tails toss** (win it and your column strikes first — decided in `playCoinToss` at Begin Assault, same flow as `/battle`), **hand-pick the column** from a strongest-first roster (`attackerPool`, capped `SIEGE_COLUMN_POOL`), equip an item, then either **Begin Assault** (drive it turn-by-turn) or **Send them in** (a headless auto-resolve — `s.headless` no-ops every render/pace so the same engine + break-rank + finish/commit path runs instantly, then DMs the commander the result, "soldiers back from the siege"). A KO breaks ONE RANK instead of ending the fight; progress is Clash-style destruction (high-water) with stars at 50% / capture / clean capture. Two embeds: castle scene + scoreboard + log on top, the battle underneath. Siege pressure (escalating shield-ignoring chip on a stalling rank) stops a bracing AI garrison being unkillable. Headless resolvers stay in `hq/siege-battle.ts` (real engine) and `hq/siege.ts` (power fallback).
 - HQ siege config: `lib/db/src/schema/headquarters.ts` `hq_settings` + `hq/settings.ts` — ONE siege style per guild, set by an admin in `/hqadmin` (no user option), never asked of the attacker. Styles: `turn` (default) · `cinematic` · `classic` · `live` · `static`.
-- HQ world editor: `hq/terrain.ts` (rectangle validation + CRUD), `hq/build-state.ts` (the cursor in `player_hq.stats.build`), `hq/build-options.ts` (slash choices — a leaf module so `register.ts` doesn't pull the hub into startup). Visual editor is `/hq → 🛠️ Build`; the typed half is `/hqbuild` (`artifacts/api-server/src/bot/commands/hq-build.ts`).
+- HQ world editor: `hq/terrain.ts` (rectangle validation + CRUD), `hq/build-state.ts` (the cursor in `player_hq.stats.build`), `hq/build-options.ts`. Visual editor is `/hq → 🛠️ Build`.
 - HQ tooling: `pnpm --filter @workspace/scripts run hq:preview` renders every HQ canvas to files; `validate:hq` asserts the registry/blueprint/cursor invariants; `smoke:hq` builds every `/hq` section plus the `/hqadmin` server panel and checks them against Discord's payload limits (needs `DATABASE_URL`); `drive:siege` plays a whole turn-for-turn assault headlessly against fake Discord interactions; `hq:manifest` regenerates the art manifest from disk.
 
 ### Website vs Discord responsibilities
@@ -265,7 +265,7 @@ those tables now happen through Discord slash commands — see
 
 - Bot runs inside the same Express server process (startBot() called from index.ts) — keeps infra simple, one workflow to manage.
 - **Command split:** Setup/config commands use `!` prefix (text commands). Quick admin actions + all user commands use slash commands.
-- **Flat slash commands + hubs:** commands register as standalone top-level names (`/burn`, `/setup`, `/user-hub`, `/battle`, `/trade`, `/vaultvalue`, `/cardadmin`, `/secret`, …) — NOT nested under `/cards …` / `/admin …`. `register.ts` `buildCommands()` flattens + applies `COMMAND_RENAMES`, then drops `HUB_REPLACED_COMMANDS` (daily/collection/wishlist/quests/market/squad, trade flats, vaultvalue flats, the cardadmin actions that buttons can do, whisper/staff, vacation/loa, …) whose handlers remain for hub buttons / thin routers. `/drop`, `/mass_drop`, `/add_card`, `/create_card_from_mttv`, and `/edit_image` are registered again. `index.ts` routes via `USER_HUB_COMMANDS` / `ADMIN_HUB_COMMANDS` plus explicit branches (battle, quiet, giveaway, pet, casino, vaultvalue, cardadmin, secret, trade, …). Prefer `/help` for the player-facing map. Stay under Discord's 100/guild slash cap.
+- **Flat slash commands + hubs:** commands register as standalone top-level names (`/burn`, `/setup`, `/user-hub`, `/battle`, `/trade`, `/vaultvalue`, `/cardadmin`, `/secret`, …) — NOT nested under `/cards …` / `/admin …`. `register.ts` `buildCommands()` flattens + applies `COMMAND_RENAMES`, then drops `HUB_REPLACED_COMMANDS` (daily/collection/wishlist/quests/market/squad, trade flats, vaultvalue flats, the cardadmin actions that buttons can do, whisper/staff, vacation/loa, …) whose handlers remain for hub buttons / thin routers. `/drop`, `/mass_drop`, `/add_card`, `/create_card_from_mttv`, and `/edit_image` are registered again. Folded/retired: `/funfact`, `/hqbuild`, `/badge`, casino `*_ub` shortcuts (use `/casino`; prefix still posts as UnbelievaBoat). `/progression` is one hub (was `/progression_default` + `/progression_card`). `index.ts` routes via `USER_HUB_COMMANDS` / `ADMIN_HUB_COMMANDS` plus explicit branches (battle, quiet, giveaway, pet, casino, vaultvalue, cardadmin, secret, trade, …). Prefer `/help` for the player-facing map. Stay under Discord's 100/guild slash cap.
 - Weighted random card drops: each card has a `dropWeight`; guild-specific rarity weights override per-rarity (stored as nullable ints in guild_settings).
 - Multi-card spawns: `cardsPerSpawn` (1/3/5/-1=random) fires N independent spawn events with 5s gaps. `activeSpawns` is `Map<guildId, Map<spawnId, ActiveSpawn>>` to support multiple simultaneous spawns.
 - Catch detection: any non-`!` message is checked against ALL active spawns for the guild (case-insensitive).
@@ -294,7 +294,7 @@ those tables now happen through Discord slash commands — see
 - **Admin giveaways**: `/cardadmin` → Give (user + card name) — direct award (no shiny roll); activity giveaways via `/giveaway`
 - **Trading**: `/trade user:@User offer:<card>|shards want:<card>|shards` (shows ⚠️ if value ratio > 3:1)
 - **Card Fusion**: `/card_recycle` — burn/fuse path (public name for internal `tradein`)
-- **Wishlists**: `/user-hub` → Wishlist (hub-backed; not a top-level `/wishlist` slash)
+- **Wishlists**: `/user-hub` → Wishlist (hub-backed; not a top-level `/wishlist` slash). Admins set `/wishlist_role`; members press **Ping me** in the hub. When a wishlisted card spawns, that role is pinged.
 - **Shinies ✨**: every random/pack/tradein acquisition has a flat 0.5% chance to mint a shiny. Shiny copies count at 2× worth/burn, are tracked separately, and are **not tradeable** in v1.
 
 ### Card System
@@ -404,25 +404,26 @@ Slash names below match `register.ts` `buildCommands()` (after renames + hub fil
 | `/pack_stats` | Pack costs, weekly caps, cooldown |
 | `/card_recycle` | Card Fusion / star-rank recycle |
 | `/trade` | Trade hub — propose, pending, history, accept, decline, gift |
-| `/lock` · `/level` · `/collector` | Lock cards · battle level · spawn ping role |
+| `/lock` · `/level` | Lock cards · battle level |
 | `/begin` | Onboarding |
-| `/funfact` | Fun facts |
 | `/vaultvalue` | Vault Values prices + calculator ([valuevaultx.com](https://valuevaultx.com)) |
 | `/secret` | Encrypted Echo — whisper / staff |
 | `/casino` | UnbelievaBoat casino hub |
+| `/badges` | Badge hub — catalogue, collection, Show; Give / Take are admin-gated |
+| `/artshow` | Art Show hub |
 
 ### Battles, HQ, giveaways, sanctuary
 | Command | Description |
 |---|---|
 | `/battle` | Fights, raids, sieges, profile — includes **`/battle phaser`** (Discord Activity) |
 | `/raid` | Co-op raid entry |
-| `/hq` · `/hqbuild` | Personal Headquarters |
+| `/hq` | Personal Headquarters |
 | `/giveaway` | Giveaway hub (browse + admin tools) |
 | `/quiet` | Sanctuary (`mode:quiet|vacation|loa|stepaway` — run again to leave) |
 | `/afk` · `/echo` | AFK Secretary / Echo-Whisper config |
 | `/pet` | Tamagotchi pets (when enabled) |
 
-> **Hub-only (handlers kept, not top-level slash):** daily, collection, calendar, frame, rank, achievements, market, squad, quests, wishlist, rep, search — use `/user-hub` (and `/top` for leaderboard). Also folded: trade flats → `/trade`; vaultvalue flats → `/vaultvalue`; card give/take/shards/Kitsu/library/delete → `/cardadmin`; whisper/staff → `/secret`; vacation/loa → `/quiet mode:…`. Restored card-admin slashes: `/drop`, `/mass_drop`, `/add_card`, `/create_card_from_mttv`, `/edit_image`.
+> **Hub-only (handlers kept, not top-level slash):** daily, collection, calendar, frame, rank, achievements, market, squad, quests, wishlist, rep, search, collector, funfact — use `/user-hub` (and `/top` for leaderboard). Also folded: trade flats → `/trade`; vaultvalue flats → `/vaultvalue`; card give/take/shards/Kitsu/library/delete → `/cardadmin`; whisper/staff → `/secret`; vacation/loa → `/quiet mode:…`; casino `*_ub` shortcuts → `/casino`. Restored card-admin slashes: `/drop`, `/mass_drop`, `/add_card`, `/create_card_from_mttv`, `/edit_image`.
 >
 > **Removed from live registration:** Bob (`/bob`, `/bob_*`, `/bob_admin`). Schema/boot leftovers may remain.
 
@@ -444,8 +445,8 @@ Slash names below match `register.ts` `buildCommands()` (after renames + hub fil
 | `/quiet_setup` · `/afk_setup` | Sanctuary / AFK setup |
 | `/quiet user:@Member` | Place into sanctuary or force out |
 | `/minigames` | Wild Mini-Games admin panel (not Bob) |
-| `/collector_role` · `/mass_role` | Roles |
-| `/progression_default` · `/progression_card` | Arrival star/level defaults |
+| `/wishlist_role` · `/mass_role` | Wishlist spawn ping role · mass role |
+| `/progression` | Arrival star/level hub (spawn / pack / drop + card overrides) |
 | `/echo` | Echo-Whisper config |
 | `/vaultvalue postcalc` | Post persistent Vault Values calculator hub |
 | `/petadmin` | Pet admin (when pets enabled) |

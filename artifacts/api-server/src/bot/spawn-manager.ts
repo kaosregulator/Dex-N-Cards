@@ -532,32 +532,20 @@ async function doSingleSpawn(guildId: string, forcedCardId?: number, isForced = 
     return;
   }
 
-  // ── Wishlist ping: notify users who have this card on their wishlist ──────
-  // Chunk into batches so a popular card doesn't blast a 100-mention message
-  // (Discord rate-limits + spam filters).
+  // ── Wishlist role ping: only when this card is on someone's wishlist.
+  // Members join/leave the role from /user-hub → Wishlist. The tease never
+  // names the card (typing it is the catch).
   try {
     const wishers = await getCardWishlisters(guildId, card.id);
-    const CHUNK = 20;
-    for (let i = 0; i < wishers.length; i += CHUNK) {
-      const slice = wishers.slice(i, i + CHUNK);
-      const mentions = slice.map(u => `<@${u}>`).join(" ");
-      // Random tease that never reveals the card name (typing it is the catch).
+    if (wishers.length > 0 && settings.collectorRoleId) {
       const tease = WISHLIST_TEASES[Math.floor(Math.random() * WISHLIST_TEASES.length)]!;
       await channel.send({
-        content: `${mentions} ${tease}`,
-        allowedMentions: { users: slice },
-      }).catch(() => { /* permissions / rate limit — ignore */ });
+        content: `<@&${settings.collectorRoleId}> ${tease}`,
+        allowedMentions: { roles: [settings.collectorRoleId] },
+      }).catch(() => { /* role deleted / permissions — ignore */ });
     }
   } catch (err) {
     logger.warn({ err }, "Wishlist ping failed");
-  }
-
-  // ── Collector role ping: opt-in role that gets @mentioned on every spawn ──
-  if (settings.collectorRoleId) {
-    await channel.send({
-      content: `🔔 <@&${settings.collectorRoleId}> a wild **${card.name}** appeared!`,
-      allowedMentions: { roles: [settings.collectorRoleId] },
-    }).catch(() => { /* role deleted / permissions — ignore */ });
   }
 
   const spawn: ActiveSpawn = {

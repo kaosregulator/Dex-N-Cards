@@ -1,10 +1,10 @@
 /**
  * Community Art Show — simple loop:
  *
- *  1. Staff: `/artshow setup` → creates board + gallery, posts Submit station
+ *  1. Staff: `/artshow` → Setup creates board + gallery, posts Submit station
  *  2. Members: tap Submit → popup (title, description, photo)
  *  3. Piece posts to gallery with original photo + ▲ / Remove / Bump
- *  4. Staff: `/artshow crown` → winner announced on the BOARD with emblem
+ *  4. Staff: `/artshow` → Crown — winner announced on the BOARD with emblem
  *  5. New week → more submits → repeat
  */
 
@@ -40,6 +40,7 @@ import { loadArtBuffer } from "../animations/effects.js";
 import { ARTSHOW_STAFF_PERMS } from "./definition.js";
 
 const EPHEMERAL = { ephemeral: true } as const;
+const ARTSHOW_NEED_ADMIN = "❌ You need to be an admin to use this.";
 const BRAND = 0xc4a574;
 /** Discord file-upload + practical attach limit */
 const MAX_PHOTOS = 10;
@@ -891,7 +892,7 @@ async function tryAutoCrown(
 }
 
 async function resolveOrCreateChannel(
-  interaction: ChatInputCommandInteraction,
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
   opts: {
     existing: { id: string } | null;
     createName: string;
@@ -926,23 +927,30 @@ async function resolveOrCreateChannel(
   return created as TextChannel;
 }
 
-async function runSetup(interaction: ChatInputCommandInteraction): Promise<void> {
+async function runSetup(
+  interaction: ChatInputCommandInteraction | ModalSubmitInteraction,
+  names?: { boardName?: string; galleryName?: string },
+): Promise<void> {
   if (!isStaff(interaction)) {
-    await interaction.reply({ content: "Staff only (`Manage Server`).", ...EPHEMERAL });
+    await interaction.reply({ content: ARTSHOW_NEED_ADMIN, ...EPHEMERAL });
     return;
   }
-  await interaction.deferReply({ ephemeral: true });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: true });
+  }
 
-  const staffRole = interaction.options.getRole("staff_role");
-  const championRole = interaction.options.getRole("champion_role");
   const prior = await getOrCreateArtshowSettings(interaction.guildId!);
-  const staffRoleId = staffRole?.id ?? prior.staffRoleId ?? null;
-  const championRoleId = championRole?.id ?? prior.championRoleId ?? null;
+  const staffRoleId = (interaction.isChatInputCommand() ? interaction.options.getRole("staff_role")?.id : null) ?? prior.staffRoleId ?? null;
+  const championRoleId = (interaction.isChatInputCommand() ? interaction.options.getRole("champion_role")?.id : null) ?? prior.championRoleId ?? null;
 
-  const boardOpt = interaction.options.getChannel("board");
-  const galleryOpt = interaction.options.getChannel("gallery");
-  const boardName = interaction.options.getString("board_name")?.trim() || "art-show";
-  const galleryName = interaction.options.getString("gallery_name")?.trim() || "art-gallery";
+  const boardOpt = interaction.isChatInputCommand() ? interaction.options.getChannel("board") : null;
+  const galleryOpt = interaction.isChatInputCommand() ? interaction.options.getChannel("gallery") : null;
+  const boardName = names?.boardName
+    || (interaction.isChatInputCommand() ? interaction.options.getString("board_name")?.trim() : undefined)
+    || "art-show";
+  const galleryName = names?.galleryName
+    || (interaction.isChatInputCommand() ? interaction.options.getString("gallery_name")?.trim() : undefined)
+    || "art-gallery";
 
   const board = await resolveOrCreateChannel(interaction, {
     existing: boardOpt ? { id: boardOpt.id } : null,
@@ -988,16 +996,16 @@ async function runSetup(interaction: ChatInputCommandInteraction): Promise<void>
     `· **Board** <#${board.id}> — people tap **Submit** here`,
     `· **Gallery** <#${gallery.id}> — photos + ▲ votes (read-only)`,
     championRoleId
-      ? `· **Champion role** <@&${championRoleId}> — given on \`/artshow crown\` (kept if still undefeated)`
-      : "· **Champion role** — not set (pass `champion_role` on setup to use your existing winner role)",
+      ? `· **Champion role** <@&${championRoleId}> — given on **Crown** (kept if still undefeated)`
+      : "· **Champion role** — not set (set one in the dashboard, or re-run Setup after assigning it)",
     "",
-    "Members just tap **Submit**. Staff: `/artshow crown` ends the week.",
+    "Members just tap **Submit**. Staff: **Crown** on `/artshow` ends the week.",
   ].join("\n"));
 }
 
-async function runFix(interaction: ChatInputCommandInteraction): Promise<void> {
+async function runFix(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   if (!isStaff(interaction)) {
-    await interaction.reply({ content: "Staff only.", ...EPHEMERAL });
+    await interaction.reply({ content: ARTSHOW_NEED_ADMIN, ...EPHEMERAL });
     return;
   }
   await interaction.deferReply({ ephemeral: true });
@@ -1073,13 +1081,13 @@ async function runFix(interaction: ChatInputCommandInteraction): Promise<void> {
     `Emblem unlocks granted: **${unlocks}** (board notices clean up in ~40s)`,
     gallery
       ? `Missing gallery posts forced: **${reposted}**${repostFailed ? ` · failed: **${repostFailed}**` : ""}`
-      : "Gallery channel missing — run `/artshow setup`.",
+      : "Gallery channel missing — press **Setup** on `/artshow`.",
   ].join("\n"));
 }
 
-async function runCrown(interaction: ChatInputCommandInteraction): Promise<void> {
+async function runCrown(interaction: ChatInputCommandInteraction | ButtonInteraction): Promise<void> {
   if (!isStaff(interaction)) {
-    await interaction.reply({ content: "Staff only.", ...EPHEMERAL });
+    await interaction.reply({ content: ARTSHOW_NEED_ADMIN, ...EPHEMERAL });
     return;
   }
   await interaction.deferReply({ ephemeral: true });
@@ -1095,13 +1103,13 @@ async function runCrown(interaction: ChatInputCommandInteraction): Promise<void>
   const { boardId, galleryId } = channelIds(settings);
   const board = await fetchTextChannel(interaction.client, boardId);
   if (!board) {
-    await interaction.editReply("Board channel missing — run `/artshow setup` first.");
+    await interaction.editReply("Board channel missing — press **Setup** on `/artshow` first.");
     return;
   }
   const gallery = await fetchTextChannel(interaction.client, galleryId);
   const lastFame = (await listFame(guildId, 1))[0] ?? null;
 
-  const pieceId = interaction.options.getInteger("piece_id");
+  const pieceId = interaction.isChatInputCommand() ? interaction.options.getInteger("piece_id") : null;
   let piece = pieceId != null ? await getPiece(pieceId) : null;
   if (!piece) {
     const top = await topPieces(guildId, { weekKey: week, limit: 1 });
@@ -1172,23 +1180,30 @@ export async function handleArtShowCommand(interaction: ChatInputCommandInteract
     await interaction.reply({ content: "Server only.", ...EPHEMERAL });
     return;
   }
-  const sub = interaction.options.getSubcommand();
-  if (sub === "setup" || sub === "post") {
-    await runSetup(interaction);
-    return;
-  }
-  if (sub === "crown") {
-    await runCrown(interaction);
-    return;
-  }
-  if (sub === "fix") {
-    await runFix(interaction);
-    return;
-  }
-  await interaction.reply({
-    content: "Use `/artshow setup`, `/artshow crown`, or `/artshow fix`. Members just tap **Submit** on the board.",
-    ...EPHEMERAL,
-  });
+  await interaction.reply({ ...(await buildArtShowHub(interaction.guildId)), ...EPHEMERAL });
+}
+
+async function buildArtShowHub(guildId: string) {
+  const settings = await getOrCreateArtshowSettings(guildId);
+  const { boardId, galleryId } = channelIds(settings);
+  const embed = new EmbedBuilder()
+    .setColor(0xe67e22)
+    .setTitle("🖼️ Art Show")
+    .setDescription(
+      [
+        "Members tap **Submit** on the board — no slash needed.",
+        boardId ? `Board: <#${boardId}>` : "Board: not set yet.",
+        galleryId ? `Gallery: <#${galleryId}>` : "Gallery: not set yet.",
+        "",
+        "Staff: **Setup** creates the channels, **Crown** ends the week, **Fix** repairs missing posts.",
+      ].join("\n"),
+    );
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("artshow:hubsetup").setLabel("Setup").setEmoji("🛠️").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("artshow:hubcrown").setLabel("Crown").setEmoji("👑").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("artshow:hubfix").setLabel("Fix").setEmoji("🔧").setStyle(ButtonStyle.Secondary),
+  );
+  return { embeds: [embed], components: [row] };
 }
 
 // ── Buttons ──────────────────────────────────────────────────────────────────
@@ -1199,6 +1214,43 @@ export async function handleArtShowButton(interaction: ButtonInteraction): Promi
     return;
   }
   const id = interaction.customId;
+
+  if (id === "artshow:hubsetup") {
+    if (!isStaff(interaction)) {
+      await interaction.reply({ content: ARTSHOW_NEED_ADMIN, ...EPHEMERAL });
+      return;
+    }
+    await interaction.showModal(
+      new ModalBuilder()
+        .setCustomId("artshow:hub_setup_modal")
+        .setTitle("Set up Art Show")
+        .addComponents(
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder().setCustomId("board_name").setLabel("Board channel name").setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder("art-show").setMaxLength(90),
+          ),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            new TextInputBuilder().setCustomId("gallery_name").setLabel("Gallery channel name").setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder("art-gallery").setMaxLength(90),
+          ),
+        ),
+    );
+    return;
+  }
+  if (id === "artshow:hubcrown") {
+    if (!isStaff(interaction)) {
+      await interaction.reply({ content: ARTSHOW_NEED_ADMIN, ...EPHEMERAL });
+      return;
+    }
+    await runCrown(interaction);
+    return;
+  }
+  if (id === "artshow:hubfix") {
+    if (!isStaff(interaction)) {
+      await interaction.reply({ content: ARTSHOW_NEED_ADMIN, ...EPHEMERAL });
+      return;
+    }
+    await runFix(interaction);
+    return;
+  }
 
   if (id === "artshow:submit") {
     try {
@@ -1359,7 +1411,7 @@ export async function handleArtShowButton(interaction: ButtonInteraction): Promi
     || id.startsWith("artshow:draft_")
   ) {
     await interaction.reply({
-      content: "That control was removed. Tap **Submit** on the board, or ask staff to `/artshow setup` again.",
+      content: "That control was removed. Tap **Submit** on the board, or ask staff to press **Setup** on `/artshow`.",
       ...EPHEMERAL,
     });
   }
@@ -1370,7 +1422,14 @@ export async function handleArtShowSelect(_interaction: StringSelectMenuInteract
 }
 
 export async function handleArtShowModal(interaction: ModalSubmitInteraction): Promise<void> {
-  if (!interaction.guildId || interaction.customId !== "artshow:submit_modal") return;
+  if (!interaction.guildId) return;
+  if (interaction.customId === "artshow:hub_setup_modal") {
+    const boardName = interaction.fields.getTextInputValue("board_name").trim() || undefined;
+    const galleryName = interaction.fields.getTextInputValue("gallery_name").trim() || undefined;
+    await runSetup(interaction, { boardName, galleryName });
+    return;
+  }
+  if (interaction.customId !== "artshow:submit_modal") return;
 
   const title = (interaction.fields.getTextInputValue("title") ?? "").trim();
   const description = (interaction.fields.getTextInputValue("description") ?? "").trim();
@@ -1399,7 +1458,7 @@ export async function handleArtShowModal(interaction: ModalSubmitInteraction): P
     const { galleryId, boardId } = channelIds(settings);
     const gallery = await fetchTextChannel(interaction.client, galleryId);
     if (!gallery) {
-      await interaction.editReply("Gallery isn’t set — staff should `/artshow setup`.");
+      await interaction.editReply("Gallery isn’t set — staff should press **Setup** on `/artshow`.");
       return;
     }
     const board = await fetchTextChannel(interaction.client, boardId);

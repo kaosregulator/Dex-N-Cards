@@ -1,49 +1,51 @@
-// Collector ping role — an opt-in role members can self-assign to get pinged on
-// every card spawn (a lighter-touch alternative to per-card wishlist DMs).
+// Wishlist ping role — members opt in from /user-hub → Wishlist. When a
+// wishlisted card spawns, this role is pinged (instead of every wishlister).
 
-import type { ChatInputCommandInteraction } from "discord.js";
-import { PermissionFlagsBits, MessageFlags, type GuildMember } from "discord.js";
+import type { ChatInputCommandInteraction, Guild, GuildMember } from "discord.js";
+import { PermissionFlagsBits, MessageFlags } from "discord.js";
 import { getOrCreateGuildSettings, updateGuildSettings } from "../db.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 
-// ── /collector — member self-toggles the ping role ─────────────────────
-export async function handleCollectorToggle(interaction: ChatInputCommandInteraction): Promise<void> {
-  if (!interaction.guild) return;
-  const guildId = interaction.guild.id;
-  const settings = await getOrCreateGuildSettings(guildId);
+export async function toggleWishlistPingRole(guild: Guild, member: GuildMember): Promise<string> {
+  const settings = await getOrCreateGuildSettings(guild.id);
   if (!settings.collectorRoleId) {
-    await interaction.editReply("🔕 This server hasn't set up a collector ping role yet. An admin can create one with `/collector_role role:@Collectors`.");
-    return;
+    return "🔕 This server hasn't set a wishlist ping role yet. An admin can set one with `/wishlist_role`.";
   }
-  const role = interaction.guild.roles.cache.get(settings.collectorRoleId)
-    ?? await interaction.guild.roles.fetch(settings.collectorRoleId).catch(() => null);
+  const role = guild.roles.cache.get(settings.collectorRoleId)
+    ?? await guild.roles.fetch(settings.collectorRoleId).catch(() => null);
   if (!role) {
-    await interaction.editReply("⚠️ The configured collector role no longer exists. Ask an admin to set a new one with `/collector_role`.");
-    return;
+    return "⚠️ The wishlist role no longer exists. Ask an admin to set a new one with `/wishlist_role`.";
   }
-
-  const member = interaction.member as GuildMember | null
-    ?? await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-  if (!member) { await interaction.editReply("❌ Couldn't load your server membership. Try again."); return; }
-
   const has = member.roles.cache.has(role.id);
   try {
     if (has) {
-      await member.roles.remove(role.id, "Opted out of spawn pings");
-      await interaction.editReply(`🔕 You'll no longer be pinged on spawns. Run this again to opt back in.`);
-    } else {
-      await member.roles.add(role.id, "Opted in to spawn pings");
-      await interaction.editReply(`🔔 You'll now be pinged when a card spawns! Run this again to opt out.`);
+      await member.roles.remove(role.id, "Opted out of wishlist spawn pings");
+      return "🔕 Wishlist pings off. You won't be pinged when a wishlisted card spawns. Press **Ping me** again to opt back in.";
     }
+    await member.roles.add(role.id, "Opted in to wishlist spawn pings");
+    return "🔔 Wishlist pings on. You'll get the wishlist role ping when a card on someone's wishlist (including yours) spawns.";
   } catch {
-    await interaction.editReply(
-      "❌ I couldn't change your roles — I need the **Manage Roles** permission and my role must sit **above** the collector role in Server Settings → Roles.",
-    );
+    return "❌ I couldn't change your roles — I need **Manage Roles** and my role must sit **above** the wishlist role in Server Settings → Roles.";
   }
 }
 
-// ── /collector_role — admin sets/clears the ping role ───────────────────
+export async function memberHasWishlistPingRole(guild: Guild, member: GuildMember): Promise<boolean> {
+  const settings = await getOrCreateGuildSettings(guild.id);
+  if (!settings.collectorRoleId) return false;
+  return member.roles.cache.has(settings.collectorRoleId);
+}
+
+// ── /collector (folded into /user-hub → Wishlist) ────────────────────────
+export async function handleCollectorToggle(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.guild) return;
+  const member = interaction.member as GuildMember | null
+    ?? await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) { await interaction.editReply("❌ Couldn't load your server membership. Try again."); return; }
+  await interaction.editReply(await toggleWishlistPingRole(interaction.guild, member));
+}
+
+// ── /wishlist_role — admin sets/clears the ping role ─────────────────────
 export async function handleSetCollectorRole(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.guild) return;
   const guildId = interaction.guild.id;
@@ -51,19 +53,17 @@ export async function handleSetCollectorRole(interaction: ChatInputCommandIntera
 
   if (!role) {
     await updateGuildSettings(guildId, { collectorRoleId: null });
-    await interaction.editReply("✅ Collector ping role cleared — spawns will no longer ping a role.");
+    await interaction.editReply("✅ Wishlist ping role cleared — wishlisted spawns will no longer ping a role.");
     return;
   }
 
   await updateGuildSettings(guildId, { collectorRoleId: role.id });
 
-  // Best-effort hierarchy check so admins learn now (not at spawn time) if the
-  // bot can't manage the role for self-assignment.
   const me = interaction.guild.members.me;
   const canManage = me?.permissions.has(PermissionFlagsBits.ManageRoles)
     && me.roles.highest.comparePositionTo(role.id) > 0;
   await interaction.editReply(
-    `✅ Collector ping role set to <@&${role.id}>. Members opt in with \`/collector\`.` +
-    (canManage ? "" : "\n\n⚠️ Heads up: I currently **can't manage this role** for self-assignment. Give me **Manage Roles** and drag my role **above** it in Server Settings → Roles."),
+    `✅ Wishlist ping role set to <@&${role.id}>. Members opt in from \`/user-hub\` → **Wishlist** → **Ping me**.` +
+    (canManage ? "" : "\n\n⚠️ I currently **can't manage this role** for self-assignment. Give me **Manage Roles** and drag my role **above** it in Server Settings → Roles."),
   );
 }

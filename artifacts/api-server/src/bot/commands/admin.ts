@@ -6,10 +6,6 @@ import {
 } from "../db.js";
 import { isHomeGuild, GLOBAL_ONLY_MSG } from "../home-guild.js";
 import { spawnCard, scheduleNextSpawn } from "../spawn-manager.js";
-import {
-  setGuildAcquisitionConfig, setCardAcquisitionOverride, deleteCardAcquisitionOverride,
-} from "../cards/progression.js";
-import type { AcquisitionSource } from "@workspace/db";
 import { RARITY_EMOJI, RARITY_LABELS, type Rarity, rarityLabel, rarityEmoji } from "../cards-data.js";
 import { getRarityDisplayOverrides } from "../db.js";
 import { logger } from "../../lib/logger.js";
@@ -83,6 +79,11 @@ export async function handleAdminCommand(
     await handleDeleteAllCardsCommand(interaction);
     return;
   }
+  if (cmd === "progression") {
+    const { handleProgressionHubCommand } = await import("./progression-hub.js");
+    await handleProgressionHubCommand(interaction);
+    return;
+  }
   // /delete_card — permanently removes a card from the global roster.
   if (cmd === "deletecard") {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -101,7 +102,7 @@ export async function handleAdminCommand(
     await interaction.editReply(`🗑️ **${card.name}** (${card.rarity}) has been permanently deleted.`);
     return;
   }
-  // /collector_role — set/clear the opt-in spawn ping role.
+  // /wishlist_role — set/clear the wishlist spawn ping role.
   if (cmd === "collectorrole") {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (!(await checkAdmin(interaction))) { await interaction.editReply("❌ Admins only."); return; }
@@ -381,57 +382,6 @@ export async function handleAdminCommand(
     await spawnCard(guildId, forcedCardId, true, forcedProgression);
     await interaction.editReply((forcedCardId ? `✅ Force-dropped **${cardName}**!` : "✅ Dropped a random card!") + progressionNote);
     scheduleNextSpawn(guildId);
-    return;
-  }
-
-  // ── /progression_default — guild-wide default Star/Level on acquisition ──────
-  if (cmd === "progression_default") {
-    const source = (opts.getString("source") ?? "*") as AcquisitionSource | "*";
-    const enabled = opts.getBoolean("enabled", true);
-    const starMin = opts.getInteger("star_min") ?? 0;
-    const starMax = opts.getInteger("star_max") ?? starMin;
-    const levelMin = opts.getInteger("level_min") ?? 1;
-    const levelMax = opts.getInteger("level_max") ?? levelMin;
-    await setGuildAcquisitionConfig(guildId, source, { enabled, starMin, starMax, levelMin, levelMax }, interaction.user.id);
-    const label = source === "*" ? "all sources" : source;
-    const sLo = Math.min(starMin, starMax), sHi = Math.max(starMin, starMax);
-    const lLo = Math.min(levelMin, levelMax), lHi = Math.max(levelMin, levelMax);
-    await interaction.editReply(
-      enabled
-        ? `✅ Default progression for **${label}**: cards arrive at **★ ${sLo}–${sHi}** · **Lv ${lLo}–${lHi}** (rolled per card). Use \`/progression_card\` to override specific cards.`
-        : `✅ Variable progression **disabled** for **${label}** — cards arrive at 0★ / Lv 1.`,
-    );
-    return;
-  }
-
-  // ── /progression_card — per-card override (the overrides hub) ────────────────
-  if (cmd === "progression_card") {
-    const cardName = opts.getString("name", true);
-    const cards = await getAllCards(guildId);
-    const card = cards.find(c => c.name.toLowerCase() === cardName.toLowerCase());
-    if (!card) { await interaction.editReply(`❌ Card "**${cardName}**" not found. Try \`/list\`.`); return; }
-    const source = (opts.getString("source") ?? "*") as AcquisitionSource | "*";
-    const label = source === "*" ? "all sources" : source;
-    if (opts.getBoolean("clear")) {
-      const removed = await deleteCardAcquisitionOverride(guildId, card.id, source);
-      await interaction.editReply(removed
-        ? `🗑️ Cleared **${card.name}**'s progression override (${label}).`
-        : `ℹ️ No progression override existed for **${card.name}** (${label}).`);
-      return;
-    }
-    const enabled = opts.getBoolean("enabled") ?? true;
-    const starMin = opts.getInteger("star_min") ?? 0;
-    const starMax = opts.getInteger("star_max") ?? starMin;
-    const levelMin = opts.getInteger("level_min") ?? 1;
-    const levelMax = opts.getInteger("level_max") ?? levelMin;
-    await setCardAcquisitionOverride(guildId, card.id, source, { enabled, starMin, starMax, levelMin, levelMax }, interaction.user.id);
-    const sLo = Math.min(starMin, starMax), sHi = Math.max(starMin, starMax);
-    const lLo = Math.min(levelMin, levelMax), lHi = Math.max(levelMin, levelMax);
-    await interaction.editReply(
-      enabled
-        ? `✅ **${card.name}** override (${label}): arrives at **★ ${sLo}–${sHi}** · **Lv ${lLo}–${lHi}**.`
-        : `✅ **${card.name}** override (${label}) set to **disabled** — arrives at 0★ / Lv 1.`,
-    );
     return;
   }
 

@@ -74,4 +74,22 @@ describe("restored card-admin slash commands", () => {
     expect(image?.type).toBe(11);
     expect(image?.required).toBeFalsy();
   });
+
+  it("drops unused slashes and registers the new hubs", async () => {
+    const { chat, HUB_REPLACED_COMMANDS } = await registered();
+    const names = new Set(chat.map((c) => c.name));
+    for (const gone of [
+      "funfact", "hqbuild", "badge", "daily_ub", "slots_ub", "blackjack_ub",
+      "progression_default", "progression_card", "collector_role", "collector",
+    ]) {
+      expect(names.has(gone), gone).toBe(false);
+    }
+    expect(HUB_REPLACED_COMMANDS.has("funfact")).toBe(true);
+    for (const keep of [
+      "progression", "wishlist_role", "artshow", "badges", "casino", "hq", "delete_all_cards",
+    ]) {
+      expect(names.has(keep), keep).toBe(true);
+    }
+    expect(chat.length).toBeLessThanOrEqual(100);
+  });
 });

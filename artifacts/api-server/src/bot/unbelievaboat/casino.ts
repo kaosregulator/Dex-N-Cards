@@ -101,7 +101,6 @@ function hubEmbed(balLine: string): EmbedBuilder {
       "",
       "**Wallet** — balance · deposit · withdraw · daily · collect",
       "**Tables** — slots · blackjack · roulette · UNO · more",
-      "**Quick slash** — `/daily_ub` `/slots_ub` `/blackjack_ub` … (same games, ends with `_ub`)",
       "**Hustle** — work · crime · beg · rob · russian",
       "**Board** — leaderboard · store · **lottery** · games menu",
     ].join("\n"),

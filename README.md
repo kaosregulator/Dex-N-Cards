@@ -30,7 +30,7 @@ Collect, trade, battle, and build — with a User Hub for daily profile flow, co
 - **`/raid`** · **`/battle_admin`** · **`/raid_admin`** — co-op bosses and admin tools
 
 ### 🏠 Headquarters
-- **`/hq`** · **`/hqbuild`** — personal base canvas; **`/hqadmin`** for staff
+- **`/hq`** — personal base canvas (World Map, Trophy Hall, Build); **`/hqadmin`** for staff
 
 ### 🌙 Sanctuary (Quiet / Vacation / LOA)
 - One-channel isolation via quarantine roles — disappear without leaving the server
@@ -41,8 +41,7 @@ Collect, trade, battle, and build — with a User Hub for daily profile flow, co
 ### 💵 Casino (UnbelievaBoat)
 - **`/casino`** — button floor: wallet, mega slots, interactive blackjack, roulette, UNO, collect, store, leaderboard
 - **Interactive blackjack** — shuffle intro → one-shot poker deal → Hit / Stand / Double (no looping card flips)
-- **Short slash aliases** — `/daily_ub`, `/blackjack_ub`, `/slots_ub`, `/collect_ub`, …
-- **Prefix games** (default `.`) — `.bj 50`, `.slots 100`, `.dep` / `.with`, `.col`, `.work` / `.crime`, `.rr @user 50`, `.rr ai @user 50`
+- **Prefix games** (default `.`) still work and post as UnbelievaBoat — run `/casino` for the floor
 - **`/unbelievaboat`** — admin cooldowns, payouts, per-role collect, store icons (Discord emoji / Tenor GIF pick), rob immunity, logs
 - See [`docs/unbelievaboat.md`](./docs/unbelievaboat.md)
 
@@ -157,7 +156,7 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/info` · `/top` | Card details · leaderboards |
 | `/battle` | Fights, raids, sieges, profile — includes **`/battle phaser`** (live Activity) |
 | `/raid` | Co-op raid entry |
-| `/hq` · `/hqbuild` | Personal Headquarters |
+| `/hq` | Personal Headquarters — World Map, Trophy Hall, Build |
 | `/giveaway` | Giveaway hub |
 | `/quiet` | Sanctuary modes (`mode:quiet|vacation|loa|stepaway` — run again to leave) |
 | `/begin` | Onboarding |
@@ -166,7 +165,8 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/vaultvalue` | Vault Values prices + calculator ([valuevaultx.com](https://valuevaultx.com)) |
 | `/pet` | Pets (when enabled) |
 | `/casino` | UnbelievaBoat casino hub — deposit/withdraw, daily, collect, games, UNO, leaderboard, store |
-| `*_ub` shortcuts | `/daily_ub`, `/blackjack_ub`, `/slots_ub`, `/collect_ub`, … (same actions as `/casino`) |
+| `/badges` | Badge hub — catalogue, collection, Show; Give / Take are admin-gated |
+| `/artshow` | Art Show hub — board, gallery, staff Setup / Crown / Fix |
 | `/unbelievaboat` | Admin Discord dashboard (cooldowns, cash, store icons, logs, rob immunity) |
 | `/tatsu` | Staff Tatsu dashboard (leaderboard, points/score, spam watch) |
 | `/trivia` | Staff community trivia host (flash, QOTD, picture rounds) |
@@ -185,6 +185,8 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/quiet_setup` | Sanctuary rooms, quarantine roles, renames, audio |
 | `/quiet user:@Member` | Place into sanctuary **or force out** |
 | `/hqadmin` | HQ staff tools |
+| `/wishlist_role` | Role pinged when a wishlisted card spawns |
+| `/progression` | Arrival Star/Level hub (spawn / pack / drop + card overrides) |
 | `/echo` | Echo-Whisper config (viewer roles, override, stats) |
 
 ### Prefix helpers (also available)
@@ -196,7 +198,7 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `.bj 50` · `.slots 100` | Casino tables (guild `gamesPrefix`, default `.`) |
 | `.dep` / `.with` / `.col` / `.daily` | Wallet · collect · Cash Check-In |
 | `.rr @user 50` · `.hl 50` · `.rb 50 red` | Russian · Higher/Lower · Red/Black |
-| `.help` | Casino prefix cheat-sheet |
+| `.help` | Points to `/casino` (prefix still works) |
 
 > **Moved into hubs (no longer standalone slash):** many older one-offs. Prefer **`/help`** for the live map.
 >
