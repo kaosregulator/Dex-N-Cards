@@ -74,7 +74,7 @@ const SECTIONS: SectionMeta[] = [
   { id: "quests",              label: "Quests",              emoji: "🎯", description: "Your daily & weekly objectives" },
   { id: "calendar",            label: "Calendar",            emoji: "🗓️", description: "Your login streak calendar" },
   { id: "frames",              label: "Frames",              emoji: "🖼️", description: "Equip a cosmetic frame on a card" },
-  { id: "wishlist",            label: "Wishlist",            emoji: "⭐", description: "Cards you want — get pinged when they spawn" },
+  { id: "wishlist",            label: "Wishlist",            emoji: "⭐", description: "Cards you want — opt into the wishlist ping role" },
   { id: "reputation",          label: "Reputation",          emoji: "🤝", description: "Give rep & see the rep leaderboard" },
   { id: "search",              label: "Search",              emoji: "🔎", description: "Find any card by name across the roster" },
 ];
@@ -132,6 +132,24 @@ export async function handleUserHubComponent(
   }
 
   // Wishlist add / Search: open a modal for free-text input.
+  if (action === "wishlist-ping" && interaction.isButton()) {
+    if (!interaction.guild) return;
+    const member = interaction.member as import("discord.js").GuildMember | null
+      ?? await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!member) {
+      await interaction.reply({ content: "❌ Couldn't load your membership.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      return;
+    }
+    const { toggleWishlistPingRole } = await import("../cards/collector.js");
+    const notice = await toggleWishlistPingRole(interaction.guild, member);
+    const view = await buildView(interaction, "wishlist");
+    const embed = view.embeds[0] as EmbedBuilder;
+    embed.setFooter({ text: notice.replace(/[*_~`]/g, "").slice(0, 200) });
+    await interaction.update(view).catch(() => {});
+    await interaction.followUp({ content: notice, flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+
   if (action === "wishlist-add" && interaction.isButton()) {
     await interaction.showModal(
       new ModalBuilder().setCustomId("user-hub:modal:wishlist-add").setTitle("Add to Wishlist")
@@ -222,7 +240,7 @@ export async function handleUserHubModal(interaction: ModalSubmitInteraction): P
     if (card.isArchived) { await interaction.editReply(`❌ **${card.name}** is archived and can't be wishlisted.`); return; }
     const added = await addWishlist(guildId, interaction.user.id, card.id);
     await interaction.editReply(added
-      ? `⭐ Added **${card.name}** to your wishlist — you'll be pinged when it spawns.`
+      ? `⭐ Added **${card.name}** to your wishlist. Turn on **Ping me** in this hub to get the wishlist role ping when it spawns.`
       : `**${card.name}** is already on your wishlist.`);
     return;
   }
@@ -315,7 +333,7 @@ async function buildView(interaction: AnyInteraction, section: Section) {
       embeds = [await buildQuestsEmbed(guildId, userId, username)];
       break;
     case "wishlist": {
-      const view = await buildWishlistSection(guildId, userId, username);
+      const view = await buildWishlistSection(interaction, guildId, userId, username);
       embeds = [view.embed];
       rows.push(...view.rows);
       break;
@@ -351,15 +369,23 @@ function buildSearchPromptEmbed(): EmbedBuilder {
 }
 
 async function buildWishlistSection(
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ButtonInteraction | UserSelectMenuInteraction,
   guildId: string, userId: string, username: string,
 ): Promise<{ embed: EmbedBuilder; rows: ActionRowBuilder<any>[] }> {
   const items = await getUserWishlist(guildId, userId);
+  const settings = await getOrCreateGuildSettings(guildId);
+  const member = interaction.member as import("discord.js").GuildMember | null;
+  const pingOn = !!(settings.collectorRoleId && member?.roles.cache.has(settings.collectorRoleId));
   const embed = new EmbedBuilder().setColor(0xf1c40f).setTitle(`⭐ ${username}'s Wishlist (${items.length})`);
+  const pingLine = settings.collectorRoleId
+    ? (pingOn
+      ? "Wishlist pings are **on** — you'll get the role ping when a wishlisted card spawns."
+      : "Wishlist pings are **off**. Press **Ping me** to join the wishlist role.")
+    : "An admin hasn't set a wishlist role yet (`/wishlist_role`). You can still save cards here.";
   if (items.length === 0) {
-    embed.setDescription("Your wishlist is empty. Press **Add Card** — you'll be pinged when a wished card spawns.");
+    embed.setDescription(`Your wishlist is empty. Press **Add Card** to save a hunt.\n\n${pingLine}`);
   } else {
-    embed.setDescription(items.map(i => `• **${i.name}**`).join("\n").slice(0, 4000))
-      .setFooter({ text: "Wished cards ping you when they spawn." });
+    embed.setDescription(`${items.map(i => `• **${i.name}**`).join("\n").slice(0, 3500)}\n\n${pingLine}`);
   }
   const rows: ActionRowBuilder<any>[] = [];
   if (items.length > 0) {
@@ -370,6 +396,12 @@ async function buildWishlistSection(
   }
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("user-hub:wishlist-add").setLabel("Add Card").setEmoji("➕").setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("user-hub:wishlist-ping")
+      .setLabel(pingOn ? "Stop pings" : "Ping me")
+      .setEmoji("🔔")
+      .setStyle(pingOn ? ButtonStyle.Secondary : ButtonStyle.Primary)
+      .setDisabled(!settings.collectorRoleId),
   ));
   return { embed, rows };
 }

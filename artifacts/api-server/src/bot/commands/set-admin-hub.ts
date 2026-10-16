@@ -7,7 +7,7 @@ import {
 } from "discord.js";
 import {
   isAdmin, listSetsV2, getCardsInSet, getSetById, createSet, renameSet,
-  deleteSetById, setActiveSet, clearActiveSet, getActiveSet,
+  deleteSetById, deleteAllSets, setActiveSet, clearActiveSet, getActiveSet,
   setSetAwardsCompletion, invalidateActiveSetCardsCache,
   patchSetRarityWeight, setSetRarityWeights,
   addCardToSet, removeCardFromSet,
@@ -193,6 +193,31 @@ function buildGlobalRow() {
       .setLabel("Import")
       .setEmoji("📥")
       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("setadminhub:deleteall")
+      .setLabel("Delete all sets")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
+async function reportSetDeleteFailure(interaction: ButtonInteraction, err: unknown): Promise<void> {
+  const reason = err instanceof Error ? err.message : "The database refused the delete.";
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xed4245)
+        .setTitle("Could not delete the set")
+        .setDescription(reason.slice(0, 500)),
+    ],
+    components: [],
+  }).catch(() => {});
+}
+
+function confirmRow(yesId: string, yesLabel: string, noId: string) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(yesId).setLabel(yesLabel).setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(noId).setLabel("Cancel").setStyle(ButtonStyle.Secondary),
   );
 }
 
@@ -615,6 +640,50 @@ export async function handleSetAdminHubButton(interaction: ButtonInteraction): P
     return;
   }
 
+  if (action === "deleteall") {
+    const sets = await listSetsV2(guildId);
+    const lines = sets.slice(0, 20).map(s => `• \`${s.set.name}\` — ${s.cardCount} card${s.cardCount === 1 ? "" : "s"}`).join("\n");
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle("Delete every set on this server?")
+          .setDescription(
+            [
+              `This removes **${sets.length}** set${sets.length === 1 ? "" : "s"} from this server, including legacy ones like Set 1 and Set 2.`,
+              "Their cards stay in the roster. `/delete_all_cards` is what erases the cards.",
+              "",
+              lines || "_No sets._",
+            ].join("\n"),
+          ),
+      ],
+      components: [confirmRow("setadminhub:deleteallyes", "Yes, delete all sets", "setadminhub:deleteallno")],
+    });
+    return;
+  }
+
+  if (action === "deleteallyes") {
+    try {
+      const { deletedSets, removedMemberships } = await deleteAllSets(guildId);
+      const payload = await buildPanelPayload(guildId);
+      await interaction.editReply(payload);
+      await interaction.followUp({
+        content: deletedSets === 0
+          ? "📭 No sets to delete on this server."
+          : `🗑️ Deleted **${deletedSets}** set${deletedSets === 1 ? "" : "s"} and unlinked **${removedMemberships}** card membership${removedMemberships === 1 ? "" : "s"}. The cards are still in the roster.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      await reportSetDeleteFailure(interaction, err);
+    }
+    return;
+  }
+
+  if (action === "deleteallno") {
+    await interaction.editReply(await buildPanelPayload(guildId));
+    return;
+  }
+
   // ── Buttons that require a setId ──────────────────────────────────────────
   if (setId === undefined) return;
 
@@ -643,21 +712,49 @@ export async function handleSetAdminHubButton(interaction: ButtonInteraction): P
     return;
   }
 
-  // ── Delete set ────────────────────────────────────────────────────────────
+  // ── Delete set (confirm, then unlink cards and remove the set row) ───────
   if (action === "delete") {
-
     const entry = (await listSetsV2(guildId)).find(s => s.set.id === setId);
     if (!entry) {
       await interaction.followUp({ content: "❌ Set not found.", flags: MessageFlags.Ephemeral });
       return;
     }
-    const { removedMemberships } = await deleteSetById(setId, guildId);
-    const payload = await buildPanelPayload(guildId);
-    await interaction.editReply(payload);
-    await interaction.followUp({
-      content: `🗑️ Deleted set \`${entry.set.name}\` — removed **${removedMemberships}** membership${removedMemberships === 1 ? "" : "s"}. Cards themselves are untouched.`,
-      flags: MessageFlags.Ephemeral,
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle(`Delete set “${entry.set.name}”?`)
+          .setDescription(
+            `This removes the set from this server and unlinks its **${entry.cardCount}** card${entry.cardCount === 1 ? "" : "s"}. The cards stay in the roster.\n\n` +
+            "Use `/delete_all_cards` if you also want the cards gone.",
+          ),
+      ],
+      components: [confirmRow(`setadminhub:deleteyes:${setId}`, "Yes, delete this set", `setadminhub:deleteno:${setId}`)],
     });
+    return;
+  }
+
+  if (action === "deleteyes") {
+    const entry = (await listSetsV2(guildId)).find(s => s.set.id === setId);
+    const name = entry?.set.name ?? "that set";
+    try {
+      const { removedMemberships } = await deleteSetById(setId, guildId);
+      const payload = await buildPanelPayload(guildId);
+      await interaction.editReply(payload);
+      await interaction.followUp({
+        content: removedMemberships === 0 && !entry
+          ? "❌ That set is already gone."
+          : `🗑️ Deleted \`${name}\` and unlinked **${removedMemberships}** card${removedMemberships === 1 ? "" : "s"}. The cards are still in the roster.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      await reportSetDeleteFailure(interaction, err);
+    }
+    return;
+  }
+
+  if (action === "deleteno") {
+    await interaction.editReply(await buildPanelPayload(guildId, setId));
     return;
   }
 

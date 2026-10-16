@@ -5,7 +5,7 @@ import {
   type ChatInputCommandInteraction, type ButtonInteraction,
   type StringSelectMenuInteraction, type ModalSubmitInteraction,
 } from "discord.js";
-import { isAdmin, listSetsV2, getCardsInSet, createSet, setActiveSet, clearActiveSet, getActiveSet, setSetAwardsCompletion, invalidateActiveSetCardsCache } from "../db.js";
+import { isAdmin, listSetsV2, getCardsInSet, createSet, setActiveSet, clearActiveSet, getActiveSet, setSetAwardsCompletion, invalidateActiveSetCardsCache, deleteSetById, deleteAllSets } from "../db.js";
 import { buildSingleSetPayload } from "./sets-admin.js";
 
 // ── Permission guard ──────────────────────────────────────────────────────────
@@ -101,6 +101,12 @@ function buildSetActionRow(setId: number | undefined, showcaseOn: boolean) {
       .setEmoji("✨")
       .setStyle(showcaseOn ? ButtonStyle.Primary : ButtonStyle.Secondary)
       .setDisabled(!has),
+    new ButtonBuilder()
+      .setCustomId(has ? `sets:delete:${setId}` : "sets:delete:0")
+      .setLabel("Delete")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(!has),
   );
 }
 
@@ -121,7 +127,32 @@ function buildGlobalRow() {
       .setLabel("Deactivate")
       .setEmoji("⛔")
       .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId("sets:deleteall")
+      .setLabel("Delete all sets")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger),
   );
+}
+
+function confirmRow(yesId: string, yesLabel: string, noId: string) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(yesId).setLabel(yesLabel).setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(noId).setLabel("Cancel").setStyle(ButtonStyle.Secondary),
+  );
+}
+
+async function reportSetDeleteFailure(interaction: ButtonInteraction, err: unknown): Promise<void> {
+  const reason = err instanceof Error ? err.message : "The database refused the delete.";
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xed4245)
+        .setTitle("Could not delete the set")
+        .setDescription(reason.slice(0, 500)),
+    ],
+    components: [],
+  }).catch(() => {});
 }
 
 async function buildPanelPayload(guildId: string, selectedSetId?: number) {
@@ -231,6 +262,49 @@ export async function handleSetsHubButton(interaction: ButtonInteraction): Promi
     return;
   }
 
+  if (action === "deleteall") {
+    const sets = await listSetsV2(guildId);
+    const lines = sets.slice(0, 20).map(s => `• \`${s.set.name}\` — ${s.cardCount} card${s.cardCount === 1 ? "" : "s"}`).join("\n");
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle("Delete every set on this server?")
+          .setDescription(
+            [
+              `This removes **${sets.length}** set${sets.length === 1 ? "" : "s"} from this server, including legacy ones like Set 1 and Set 2.`,
+              "Their cards stay in the roster. `/delete_all_cards` is what erases the cards.",
+              "",
+              lines || "_No sets._",
+            ].join("\n"),
+          ),
+      ],
+      components: [confirmRow("sets:deleteallyes", "Yes, delete all sets", "sets:deleteallno")],
+    });
+    return;
+  }
+
+  if (action === "deleteallyes") {
+    try {
+      const { deletedSets, removedMemberships } = await deleteAllSets(guildId);
+      await interaction.editReply(await buildPanelPayload(guildId));
+      await interaction.followUp({
+        content: deletedSets === 0
+          ? "📭 No sets to delete on this server."
+          : `🗑️ Deleted **${deletedSets}** set${deletedSets === 1 ? "" : "s"} and unlinked **${removedMemberships}** card membership${removedMemberships === 1 ? "" : "s"}. The cards are still in the roster.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      await reportSetDeleteFailure(interaction, err);
+    }
+    return;
+  }
+
+  if (action === "deleteallno") {
+    await interaction.editReply(await buildPanelPayload(guildId));
+    return;
+  }
+
   // ── Deactivate ────────────────────────────────────────────────────────────
   if (action === "deactivate") {
     await clearActiveSet(guildId);
@@ -295,6 +369,50 @@ export async function handleSetsHubButton(interaction: ButtonInteraction): Promi
       files: [file],
       flags: MessageFlags.Ephemeral,
     });
+    return;
+  }
+
+  if (action === "delete") {
+    const entry = (await listSetsV2(guildId)).find(s => s.set.id === argId);
+    if (!entry) {
+      await interaction.followUp({ content: "❌ Set not found.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xed4245)
+          .setTitle(`Delete set “${entry.set.name}”?`)
+          .setDescription(
+            `This removes the set from this server and unlinks its **${entry.cardCount}** card${entry.cardCount === 1 ? "" : "s"}. The cards stay in the roster.\n\n` +
+            "Use `/delete_all_cards` if you also want the cards gone.",
+          ),
+      ],
+      components: [confirmRow(`sets:deleteyes:${argId}`, "Yes, delete this set", `sets:deleteno:${argId}`)],
+    });
+    return;
+  }
+
+  if (action === "deleteyes") {
+    const entry = (await listSetsV2(guildId)).find(s => s.set.id === argId);
+    const name = entry?.set.name ?? "that set";
+    try {
+      const { removedMemberships } = await deleteSetById(argId, guildId);
+      await interaction.editReply(await buildPanelPayload(guildId));
+      await interaction.followUp({
+        content: removedMemberships === 0 && !entry
+          ? "❌ That set is already gone."
+          : `🗑️ Deleted \`${name}\` and unlinked **${removedMemberships}** card${removedMemberships === 1 ? "" : "s"}. The cards are still in the roster.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      await reportSetDeleteFailure(interaction, err);
+    }
+    return;
+  }
+
+  if (action === "deleteno") {
+    await interaction.editReply(await buildPanelPayload(guildId, argId));
     return;
   }
 

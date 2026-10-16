@@ -13,14 +13,10 @@ import { buildQuoteCommandJson, buildQuoteContextMenuJson } from "../quote/defin
 import { buildPetCommandJson, buildPetAdminCommandJson } from "../pets/command.js";
 import { buildUbAdminCommandJson } from "../unbelievaboat/discord-admin.js";
 import { buildCasinoCommandJson } from "../unbelievaboat/casino.js";
-import { buildUbSlashCommandJsons } from "../unbelievaboat/ub-slash.js";
 import { buildTatsuAdminCommandJson } from "../tatsu/discord-admin.js";
 import { buildTriviaAdminCommandJson } from "../trivia/discord-admin.js";
 import { buildMemberDateCommandJson } from "../memberdate/definition.js";
-import {
-  buildBadgesCommandJson,
-  buildBadgeCommandJson,
-} from "../badges/definition.js";
+import { buildBadgesCommandJson } from "../badges/definition.js";
 import { buildArtShowCommandJson } from "../artshow/definition.js";
 import {
   buildLotteryCommandJson,
@@ -31,21 +27,11 @@ import { buildTradeHubCommandJson } from "./trade-hub.js";
 import { buildCardAdminCommandJson } from "./cardadmin-hub.js";
 import { buildSecretCommandJson } from "./secret-hub.js";
 import { getRaidFrames } from "../cards/frames.js";
-import {
-  buildMaterialChoices, buildWallpaperChoices, buildCanvasChoices, BUILD_LIMITS,
-} from "../hq/build-options.js";
 
 type AnySlashBuilder = SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
 
 // Exclusive raid-reward frames, as slash-command choices (value = frame id).
 const RAID_FRAME_CHOICES = getRaidFrames().map(f => ({ name: `${f.emoji} ${f.name}`, value: f.id }));
-
-// /hqbuild choices, derived from the HQ registries so adding a material or a
-// wallpaper never needs a matching edit here.
-const HQ_MATERIAL_CHOICES = buildMaterialChoices();
-const HQ_WALLPAPER_CHOICES = buildWallpaperChoices();
-const HQ_CANVAS_CHOICES = buildCanvasChoices();
-const HQ_BUILD_LIMITS = BUILD_LIMITS;
 
 function cmd(name: string, desc: string, build: (s: SlashCommandBuilder) => AnySlashBuilder) {
   return build(
@@ -67,7 +53,6 @@ function adminCmd(name: string, desc: string, build: (s: SlashCommandBuilder) =>
 function buildLegacyCommands() {
   return [
     // ── User Commands ─────────────────────────────────────────────────────────
-    // ── User Commands ───────────────────────���────────────────────────────────[...]
     cmd("collection", "View your card collection", s => s
       .addUserOption(o => o.setName("user").setDescription("View another member's collection"))),
 
@@ -82,12 +67,10 @@ function buildLegacyCommands() {
     buildPetAdminCommandJson(),
     buildUbAdminCommandJson(),
     buildCasinoCommandJson(),
-    ...buildUbSlashCommandJsons(),
     buildTatsuAdminCommandJson(),
     buildTriviaAdminCommandJson(),
     buildMemberDateCommandJson(),
     buildBadgesCommandJson(),
-    buildBadgeCommandJson(),
     buildArtShowCommandJson(),
     buildLotteryCommandJson(),
     buildLotteryAdminCommandJson(),
@@ -128,40 +111,6 @@ function buildLegacyCommands() {
     cmd("hqadmin", "Admin: server siege settings, or edit one member's Headquarters", s => s
       .addUserOption(o => o.setName("user").setDescription("Edit this member's HQ (leave empty for server siege settings)"))),
 
-    // The typed half of the HQ world editor. Shares its cursor and its rules
-    // with /hq → 🛠️ Build, so a shape can be started with the arrow buttons and
-    // finished by typing exact coordinates (or the other way round).
-    cmd("hqbuild", "Build your HQ world — surfaces, water, hills & wallpaper", s => s
-      .addSubcommand(sc => sc.setName("view")
-        .setDescription("Show the build grid with rulers and your cursor")
-        .addStringOption(o => o.setName("where").setDescription("Which space to look at").addChoices(...HQ_CANVAS_CHOICES)))
-      .addSubcommand(sc => sc.setName("place")
-        .setDescription("Stamp a rectangle of ground — paving, water, a hill, a platform")
-        .addStringOption(o => o.setName("material").setDescription("What to paint").addChoices(...HQ_MATERIAL_CHOICES))
-        .addIntegerOption(o => o.setName("x").setDescription("Left edge (see the X ruler)").setMinValue(0).setMaxValue(HQ_BUILD_LIMITS.maxCoord))
-        .addIntegerOption(o => o.setName("y").setDescription("Top edge (see the Y ruler)").setMinValue(0).setMaxValue(HQ_BUILD_LIMITS.maxCoord))
-        .addIntegerOption(o => o.setName("width").setDescription("Tiles across").setMinValue(1).setMaxValue(HQ_BUILD_LIMITS.maxSpan))
-        .addIntegerOption(o => o.setName("height").setDescription("Tiles deep").setMinValue(1).setMaxValue(HQ_BUILD_LIMITS.maxSpan))
-        .addIntegerOption(o => o.setName("lift").setDescription("Height for hills/platforms, depth for water").setMinValue(0).setMaxValue(HQ_BUILD_LIMITS.maxLift))
-        .addStringOption(o => o.setName("where").setDescription("Which space to build on").addChoices(...HQ_CANVAS_CHOICES)))
-      .addSubcommand(sc => sc.setName("remove")
-        .setDescription("Remove the surface at a tile, or one by id")
-        .addIntegerOption(o => o.setName("x").setDescription("Tile X").setMinValue(0).setMaxValue(HQ_BUILD_LIMITS.maxCoord))
-        .addIntegerOption(o => o.setName("y").setDescription("Tile Y").setMinValue(0).setMaxValue(HQ_BUILD_LIMITS.maxCoord))
-        .addIntegerOption(o => o.setName("id").setDescription("Surface id from /hqbuild list").setMinValue(1))
-        .addStringOption(o => o.setName("where").setDescription("Which space").addChoices(...HQ_CANVAS_CHOICES)))
-      .addSubcommand(sc => sc.setName("clear")
-        .setDescription("Bulldoze every built surface in one space")
-        .addStringOption(o => o.setName("where").setDescription("Which space").addChoices(...HQ_CANVAS_CHOICES)))
-      .addSubcommand(sc => sc.setName("list")
-        .setDescription("List everything you've built, with ids")
-        .addStringOption(o => o.setName("where").setDescription("Which space").addChoices(...HQ_CANVAS_CHOICES)))
-      .addSubcommand(sc => sc.setName("wallpaper")
-        .setDescription("Hang a repeating wallpaper on your current room's walls")
-        .addStringOption(o => o.setName("style").setDescription("Which wallpaper").setRequired(true).addChoices(...HQ_WALLPAPER_CHOICES)))
-      .addSubcommand(sc => sc.setName("materials")
-        .setDescription("List every build material and what you've unlocked"))),
-
     cmd("collection_hub", "Browse your collection — filter by rarity, shinies, name & more", s => s
       .addStringOption(o => o.setName("name").setDescription("Jump straight to cards matching this name"))
       .addStringOption(o => o.setName("rarity").setDescription("Filter by rarity key (e.g. legendary, or a custom tier)"))
@@ -188,7 +137,6 @@ function buildLegacyCommands() {
     // Admin-only: /welcome posts a public, server-wide welcome message, so it is
     // hidden from non-admins in the slash menu (the bot also enforces this server-side).
     adminCmd("welcome", "Post the server welcome message (admin)", s => s),
-    cmd("funfact", "A random Military Tycoon fun fact from the wiki", s => s),
 
     // ── /begin (interactive onboarding adventure — one-time, real rewards) ─────
     cmd("begin", "Start your Dex N Cards adventure — a guided intro with real starter rewards", s => s),
@@ -262,35 +210,56 @@ function buildLegacyCommands() {
 
     adminCmd("set_admin", "Interactive set hub — full set management with buttons and dropdowns, no subcommands needed", s => s),
 
+    adminCmd("deleteallcards", "Delete every card on this server, then any sets left. Asks you to confirm", s => s),
+
     buildCardAdminCommandJson(),
 
-    // Variable card progression — set the DEFAULT Star/Level a card arrives with
-    // per acquisition source (guild-wide), then override specific cards below.
-    adminCmd("progression_default", "Set the default Star/Level cards arrive at when caught/pulled/dropped", s => s
-      .addBooleanOption(o => o.setName("enabled").setDescription("Turn variable progression on/off for this source").setRequired(true))
-      .addStringOption(o => o.setName("source").setDescription("Which acquisition source (default: all)")
-        .addChoices({ name: "All sources", value: "*" }, { name: "Spawn (random)", value: "spawn" }, { name: "Pack", value: "pack" }, { name: "Drop (admin)", value: "drop" }))
-      .addIntegerOption(o => o.setName("star_min").setDescription("Minimum Star Rank (0-5)").setMinValue(0).setMaxValue(5))
-      .addIntegerOption(o => o.setName("star_max").setDescription("Maximum Star Rank (0-5)").setMinValue(0).setMaxValue(5))
-      .addIntegerOption(o => o.setName("level_min").setDescription("Minimum Level (1-100)").setMinValue(1).setMaxValue(100))
-      .addIntegerOption(o => o.setName("level_max").setDescription("Maximum Level (1-100)").setMinValue(1).setMaxValue(100))),
+    // Restored from the card-admin hub (PR #161 / #163). Buttons can't attach a
+    // file or autocomplete a catalog, so these stay as real slash commands.
+    // Give / take / shards / delete / library / Kitsu stay on the /cardadmin panel.
+    adminCmd("drop", "Force-drop a card — for events and giveaways", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card name — leave empty for a random drop from the active set").setAutocomplete(true))
+      .addStringOption(o => o.setName("set").setDescription("Pick a specific set to drop from (ignores the active set)").setAutocomplete(true))
+      .addIntegerOption(o => o.setName("star").setDescription("Star Rank the caught card arrives at (0-5)").setMinValue(0).setMaxValue(5))
+      .addIntegerOption(o => o.setName("level").setDescription("Level the caught card arrives at (1-100)").setMinValue(1).setMaxValue(100))),
 
-    adminCmd("progression_card", "Override the Star/Level a SPECIFIC card arrives at (the overrides hub)", s => s
-      .addStringOption(o => o.setName("name").setDescription("Card to override").setRequired(true).setAutocomplete(true))
-      .addStringOption(o => o.setName("source").setDescription("Which acquisition source (default: all)")
-        .addChoices({ name: "All sources", value: "*" }, { name: "Spawn (random)", value: "spawn" }, { name: "Pack", value: "pack" }, { name: "Drop (admin)", value: "drop" }))
-      .addBooleanOption(o => o.setName("enabled").setDescription("Enable this override (default true)"))
-      .addIntegerOption(o => o.setName("star_min").setDescription("Minimum Star Rank (0-5)").setMinValue(0).setMaxValue(5))
-      .addIntegerOption(o => o.setName("star_max").setDescription("Maximum Star Rank (0-5)").setMinValue(0).setMaxValue(5))
-      .addIntegerOption(o => o.setName("level_min").setDescription("Minimum Level (1-100)").setMinValue(1).setMaxValue(100))
-      .addIntegerOption(o => o.setName("level_max").setDescription("Maximum Level (1-100)").setMinValue(1).setMaxValue(100))
-      .addBooleanOption(o => o.setName("clear").setDescription("Remove this card's override instead of setting it"))),
+    adminCmd("massdrop", "Drop a big batch of cards — mostly low tier with a few bangers", s => s
+      .addIntegerOption(o => o.setName("amount").setDescription("How many cards to drop (10-25, default 15)").setMinValue(10).setMaxValue(25))
+      .addStringOption(o => o.setName("set").setDescription("Pick a specific set to drop from (ignores the active set)").setAutocomplete(true))),
+
+    adminCmd("addcard", "Create a new card — upload an image/GIF from Discord", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card name").setRequired(true).setMaxLength(80))
+      .addStringOption(o => o.setName("rarity").setDescription("Built-in rarity tier — type to search").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("type").setDescription("Card type/tag — type to search existing types or enter a new one").setRequired(true).setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Upload card image/GIF with Discord's file picker"))
+      .addStringOption(o => o.setName("set").setDescription("Optional set to add this card to immediately").setAutocomplete(true))
+      .addStringOption(o => o.setName("description").setDescription("Card description (up to 500 chars)").setMaxLength(500))
+      .addBooleanOption(o => o.setName("limited").setDescription("Limited edition — capped copy count?"))
+      .addIntegerOption(o => o.setName("max_copies").setDescription("Max copies if limited (default 50)").setMinValue(1))
+      .addBooleanOption(o => o.setName("event_exclusive").setDescription("Event exclusive — never spawns randomly?"))),
+
+    adminCmd("createcardfrommttv", "Create a card from a Vault Values item — its image, or your upload, plus a DN rarity", s => s
+      .addStringOption(o => o.setName("item").setDescription("Vault Values item name — type to search").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("rarity").setDescription("DN rarity — type to search, or auto to use the Vault rarity").setRequired(true).setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Upload an image (overrides the Vault Values image)"))
+      .addStringOption(o => o.setName("type").setDescription("Card type/tag — blank uses the Vault category").setAutocomplete(true))
+      .addStringOption(o => o.setName("set").setDescription("Optional set to add this card to immediately").setAutocomplete(true))
+      .addStringOption(o => o.setName("description").setDescription("Override the card description (up to 500 chars)").setMaxLength(500))
+      .addBooleanOption(o => o.setName("limited").setDescription("Limited edition — capped copy count?"))
+      .addIntegerOption(o => o.setName("max_copies").setDescription("Max copies if limited (default 50)").setMinValue(1))
+      .addBooleanOption(o => o.setName("event_exclusive").setDescription("Event exclusive — never spawns randomly?"))),
+
+    adminCmd("editimage", "Update a card's image from Vault Values or an uploaded file", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card to edit").setRequired(true).setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Upload image/GIF (overrides the Vault Values search)"))),
+
+    adminCmd("progression", "Arrival Star/Level hub — see what spawn, pack, and drop grant, and override cards", s => s),
 
     adminCmd("battleforceend", "Force-cancel a member's stuck battle (e.g. the battle message got deleted)", s => s
       .addUserOption(o => o.setName("user").setDescription("Member whose battle should be cancelled").setRequired(true))),
 
-    adminCmd("collectorrole", "Set the opt-in role that gets pinged on every spawn", s => s
-      .addRoleOption(o => o.setName("role").setDescription("Role to ping on spawns (leave empty to clear)"))),
+    adminCmd("collectorrole", "Set the wishlist ping role — pinged when a wishlisted card spawns", s => s
+      .addRoleOption(o => o.setName("role").setDescription("Role to ping (leave empty to clear)"))),
 
     // ── Card Events (limited-time spawn boosts) ──────────────────────────────
     adminCmd("event", "Run limited-time card events — boost a card's spawn rate", s => s
@@ -585,7 +554,7 @@ export const COMMAND_RENAMES: Record<string, string> = {
   adminsecret: "admin_secret",
   afksetup: "afk_setup",
   quietsetup: "quiet_setup",
-  collectorrole: "collector_role",
+  collectorrole: "wishlist_role",
   addcard: "add_card",
   createcardfrommttv: "create_card_from_mttv",
   createcardfrom: "create_card_from",
@@ -597,6 +566,7 @@ export const COMMAND_RENAMES: Record<string, string> = {
   takeback: "take_back",
   battleforceend: "battle_force_end",
   massdrop: "mass_drop",
+  deleteallcards: "delete_all_cards",
   adminhub: "admin_hub",
   user_hub: "user-hub",
   show_shiny: "show-shiny",
@@ -652,7 +622,7 @@ export const HUB_REPLACED_COMMANDS = new Set<string>([
   "collection", "daily", "calendar", "frame", "rank", "achievements",
   "market", "squad",
   // Now added as interactive User-Hub sections (Quests / Wishlist / Reputation / Search).
-  "quests", "wishlist", "rep", "search",
+  "quests", "wishlist", "rep", "search", "collector", "funfact",
   // Folded into /casino (Discord 100 slash-command ceiling — was 101 before this hub).
   "cashcheck", "cashgames", "cashstore",
   "roulette", "blackjack", "higherlower", "redblack", "slots",
@@ -661,10 +631,12 @@ export const HUB_REPLACED_COMMANDS = new Set<string>([
   "gift", "trades", "tradehistory", "accept", "decline",
   // Folded into /vaultvalue hub (info / calc / list / help / postcalc).
   "info_mttv", "calc", "valuehelp", "valuelist", "postcalculator",
-  // Folded into /cardadmin hub (create / Kitsu / Vault Values / edit / give / drop…).
-  "addcard", "createcardfrom", "createcardfrommttv", "library",
-  "editcard", "editimage", "deletecard",
-  "give", "takeback", "giveall", "drop", "massdrop",
+  // Still on the /cardadmin panel (buttons/modals are enough — no file upload).
+  // Restored as slash (autocomplete or an image Discord modals can't take):
+  //   drop, massdrop, addcard, createcardfrommttv, editimage.
+  "createcardfrom", "library",
+  "editcard", "deletecard",
+  "give", "takeback", "giveall",
   "giveshards", "takeshards", "edituser",
   // Folded into /secret hub (whisper / staff). /echo stays as config.
   "whisper", "adminsecret",
@@ -710,15 +682,14 @@ export const USER_HUB_COMMANDS = new Set([
   "help", "user_hub", "daily", "quests", "pack", "packstats", "tradein", "achievements",
   "level", "frame", "lock", "search", "collector", "calendar", "wishlist",
   "rep", "thanks", "calc", "valuehelp", "valuelist", "info_mttv",
-  "funfact",
 ]);
 
 export const ADMIN_HUB_COMMANDS = new Set([
-  "setup", "config", "minigames", "adminhub", "sethub", "set_admin", "deletecard",
+  "setup", "config", "minigames", "adminhub", "sethub", "set_admin", "deletecard", "deleteallcards",
   "welcomeadmin", "adminhelp", "drop", "massdrop", "give", "giveshards",
   "takeback", "takeshards", "addcard", "createcardfrommttv", "createcardfrom", "library", "editcard", "editimage", "dashboard", "collectorrole",
   "battleforceend",
   "rarity", "embed", "event", "edituser", "giveall", "editpack",
   "postcalculator", "postboard", "massrole",
-  "progression_default", "progression_card",
+  "progression",
 ]);

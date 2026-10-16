@@ -375,7 +375,7 @@ export async function handleConfigButton(interaction: ButtonInteraction): Promis
         const allTypes = await getDistinctCardTypes(guildId);
         if (allTypes.length === 0) {
           await interaction.editReply({
-            content: `No card types exist yet in this server. Add a card with \`/cardadmin create\` first, then you can filter **${target.name}** by type.`,
+            content: `No card types exist yet in this server. Add a card with \`/add_card\` first, then you can filter **${target.name}** by type.`,
             embeds: [],
             components: buildCustomPacksComponents(await listCustomPacks(guildId, true)),
           });

@@ -10,7 +10,7 @@ const UB = "UnbelievaBoat";
 /** Append a visible “how to run this again” tip for floor webhook posts. */
 export function withUbSlashTip(embed: EmbedBuilder, slashName: string, example = ""): EmbedBuilder {
   const cmd = example ? `/${slashName} ${example}` : `/${slashName}`;
-  const tip = `_▶️ Run \`${cmd}\` · all tables: \`/casino\`_`;
+  const tip = "_▶️ `/casino`_";
   const desc = embed.data.description ?? "";
   if (desc.includes(`/${slashName}`)) return embed;
   embed.setDescription(desc ? `${desc}\n\n${tip}` : tip);

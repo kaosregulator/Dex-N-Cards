@@ -4,7 +4,7 @@ import { SlashCommandBuilder } from "discord.js";
 export function buildBadgesCommandJson() {
   return new SlashCommandBuilder()
     .setName("badges")
-    .setDescription("View a member's badge collection")
+    .setDescription("Badge hub — catalogue, collection, and staff Give / Take")
     .setDMPermission(false)
     .addUserOption(o => o
       .setName("member")

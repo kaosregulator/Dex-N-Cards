@@ -14,6 +14,9 @@ import { getBotClient } from "../client-holder.js";
 import { addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
 import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
+import { dnRarityFromVault, vaultItemImageUrl } from "./vault-image.js";
+
+export { dnRarityFromVault, vaultItemImageUrl } from "./vault-image.js";
 
 // Vault Values data source — a public, unauthenticated JSON endpoint that
 // backs vaultedvaluesx.com's Military Tycoon trade calculator/value list.
@@ -61,6 +64,8 @@ type VaultRawItem = {
   canBeTraded?: string;
   note?: string;
   imagelink?: string;
+  /** Wix media URI, e.g. wix:image://v1/<id>/<file>#originWidth=… */
+  image?: string;
 };
 
 // Extracts the numerator out of strings like "6/10" → 6. Returns null for
@@ -103,7 +108,7 @@ function parseVaultItem(raw: VaultRawItem, id: string): MTTVItem {
     functionality: parseFraction(raw.functionality),
     tags,
     description: raw.note ?? "",
-    image: raw.imagelink ?? null,
+    image: vaultItemImageUrl(raw.image, raw.imagelink),
   };
 }
 
@@ -309,29 +314,31 @@ function createCardRarityDefaults(rarity: Rarity): { worth: number; burn: number
   };
 }
 
+const VAULT_TAG_NOISE = new Set(["stable", "rising", "dropping", "special", "collector", "untradable"]);
+
+function defaultTypeFromVaultItem(item: MTTVItem): string {
+  const cat = item.tags.find((t) => !VAULT_TAG_NOISE.has(t.toLowerCase()));
+  const slug = (cat ?? "vault").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 40);
+  return slug || "vault";
+}
+
 export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInteraction): Promise<void> {
   // Caller (admin.ts) has already deferred the reply.
   const guildId = interaction.guildId!;
   const itemName = interaction.options.getString("item", true).trim();
-  const rarityInput = interaction.options.getString("rarity", true);
-  const type = interaction.options.getString("type", true).trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40);
+  const rarityRaw = (interaction.options.getString("rarity") ?? "auto").trim().toLowerCase();
+  const typeRaw = (interaction.options.getString("type") ?? "").trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40);
+  const uploaded = interaction.options.getAttachment("image");
   const setName = interaction.options.getString("set")?.trim();
   const descriptionOverride = interaction.options.getString("description") ?? "";
   const limited = interaction.options.getBoolean("limited") ?? false;
   const maxCopies = interaction.options.getInteger("max_copies") ?? undefined;
   const eventExclusive = interaction.options.getBoolean("event_exclusive") ?? false;
 
-  if (!type) {
-    await interaction.editReply("❌ Card type cannot be empty. Enter a type/tag such as `tank`, `aircraft`, or `nuke`.");
+  if (rarityRaw && rarityRaw !== "auto" && !CREATE_CARD_RARITIES.has(rarityRaw)) {
+    await interaction.editReply("❌ Pick one of the built-in rarities from autocomplete, or use `auto` to take the Vault Values rarity.");
     return;
   }
-
-  if (!CREATE_CARD_RARITIES.has(rarityInput)) {
-    await interaction.editReply("❌ Pick one of the built-in rarities from autocomplete.");
-    return;
-  }
-  const baseRarity = rarityInput as Rarity;
-  const defs = createCardRarityDefaults(baseRarity);
 
   let item: MTTVItem | undefined;
   try {
@@ -355,16 +362,42 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
     return;
   }
 
+  const explicitRarity = rarityRaw !== "" && rarityRaw !== "auto";
+  const mappedRarity = dnRarityFromVault(item.rarity[0]);
+  const baseRarity = (explicitRarity ? rarityRaw : mappedRarity) as Rarity | null;
+  if (!baseRarity || !CREATE_CARD_RARITIES.has(baseRarity)) {
+    await interaction.editReply(
+      `❌ Vault Values has no rarity we can use for **${item.name}**. Pass \`rarity:\` (common, uncommon, rare, epic, legendary, or mythic).`,
+    );
+    return;
+  }
+  const rarityNote = !explicitRarity && item.rarity[0] ? ` from Vault ${item.rarity[0]}` : "";
+  const type = typeRaw || defaultTypeFromVaultItem(item);
+  const defs = createCardRarityDefaults(baseRarity);
+
   const existing = await getCardByName(item.name, guildId);
   if (existing) {
     await interaction.editReply(
       `❌ A card named **${item.name}** already exists (ID #${existing.id}). ` +
-      `Use \`/edit_card\` to modify it.`,
+      `Use \`/edit_image\` or \`/edit_card\` to change it.`,
     );
     return;
   }
 
-  const imageUrl = item.image ? await persistBotImage(item.image) : undefined;
+  let imageUrl: string | undefined;
+  let imageNote = "";
+  if (uploaded) {
+    imageUrl = await persistBotImage(uploaded.url, uploaded.contentType ?? undefined);
+    imageNote = " · image from your upload";
+  } else if (item.image) {
+    imageUrl = await persistBotImage(item.image);
+    imageNote = " · image from Vault Values";
+  } else {
+    await interaction.editReply(
+      `❌ **${item.name}** has no image on Vault Values. Run \`/create_card_from_mttv\` again and attach one with the \`image\` option.`,
+    );
+    return;
+  }
 
   let card;
   try {
@@ -408,7 +441,12 @@ export async function handleCreateCardFromMTTV(interaction: ChatInputCommandInte
     }
   }
 
-  await renderPanel(interaction, card.id, false, `✅ Created **${card.name}** from Vault Values (${baseRarity})${setNote} — tweak any field below`);
+  await renderPanel(
+    interaction,
+    card.id,
+    false,
+    `✅ Created **${card.name}** from Vault Values (${baseRarity}${rarityNote})${imageNote}${setNote} — tweak any field below`,
+  );
 }
 
 export async function handleValueList(interaction: ChatInputCommandInteraction): Promise<void> {

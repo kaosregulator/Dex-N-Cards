@@ -220,7 +220,7 @@ export async function handleSetAdminCommand(interaction: ChatInputCommandInterac
   if (sub === "deactivate") {
     await clearActiveSet(guildId);
     await interaction.editReply(
-      `✅ Cleared active set. **Random spawns are now disabled** until you pick a new one with \`/set_admin active\`. Admin \`/cardadmin drop name:<Card>\` still works.`,
+      `✅ Cleared active set. **Random spawns are now disabled** until you pick a new one with \`/set_admin active\`. Admin \`/drop name:<Card>\` still works.`,
     );
     return;
   }

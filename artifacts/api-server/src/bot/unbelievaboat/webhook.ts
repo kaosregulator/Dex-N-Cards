@@ -349,12 +349,12 @@ export async function postAsUnbelievaBoat(
   const hook = await resolveWebhook(interaction.client, host);
   if (!hook) return null;
 
-  // Stamp slash tip on the first embed so bystanders know the slash shortcut too.
+  // Stamp a /casino tip on the first embed so bystanders know the hub.
   if (opts.slashHint && opts.embeds?.[0]) {
-    const tip = `_▶️ Or use \`${opts.slashHint}\` · all tables: \`/casino\`_`;
+    const tip = "_▶️ `/casino`_";
     const emb = opts.embeds[0];
     const desc = emb.data.description ?? "";
-    if (!desc.includes(opts.slashHint)) {
+    if (!desc.includes("`/casino`")) {
       emb.setDescription(desc ? `${desc}\n\n${tip}` : tip);
     }
   }

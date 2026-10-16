@@ -1,6 +1,7 @@
-// /cardadmin — true panel hub (ONE slash). Admin card create/edit/give/drop.
-// Image upload create works without an attachment option: create the card first,
-// then refine image via Edit Image / the edit panel.
+// /cardadmin — panel hub for the actions buttons can do (give, take, shards,
+// Kitsu, library, delete). Drop, mass drop, Vault Values create, image upload,
+// and image edit are real slash commands — Discord modals can't attach a file
+// or autocomplete a catalog.
 
 import type {
   ChatInputCommandInteraction,
@@ -40,15 +41,15 @@ function hubEmbed(): EmbedBuilder {
     .setTitle("🃏 Card Admin Hub")
     .setDescription(
       [
-        "Create and manage the roster from one panel — no slash subcommand sprawl.",
+        "Buttons cover give, take, shards, Kitsu, library, and delete.",
+        "File uploads and catalog search stay as slash commands:",
         "",
-        "**Create** — blank / Discord image later · **Kitsu** (kitsu.io) · **Vault Values**",
-        "**Edit / Delete / Library** — refine cards",
-        "**Give / Take / Drop** — distribute copies",
-        "**Shards / Edit user** — economy & profiles",
+        "`/drop` · `/mass_drop` — force a spawn (card and set autocomplete)",
+        "`/create_card_from_mttv` — Vault Values item, its image, and a DN rarity",
+        "`/add_card` — upload your own image · `/edit_image` — Vault image or a file",
       ].join("\n"),
     )
-    .setFooter({ text: "Administrator only · one slash command" });
+    .setFooter({ text: "Administrator only · slash commands above also have buttons here" });
 }
 
 function hubRows() {
