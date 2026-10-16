@@ -47,7 +47,10 @@ function postgresCredentials(): {
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
     database,
-    ...(useSsl ? { ssl: { rejectUnauthorized: false } satisfies ConnectionOptions } : {}),
+    // drizzle-kit treats a missing `ssl` key as `ssl: {}`, which turns TLS on
+    // and rejects Ubuntu's local self-signed Postgres cert. `false` keeps
+    // localhost plaintext; managed hosts still use rejectUnauthorized: false.
+    ssl: useSsl ? ({ rejectUnauthorized: false } satisfies ConnectionOptions) : false,
   };
 }
 
