@@ -149,7 +149,7 @@ export async function handleCreateCardFromRoblox(interaction: ChatInputCommandIn
   const existing = await getCardByName(cardNameFor(user), interaction.guild.id);
   if (existing) {
     await interaction.editReply(
-      `❌ A card named **${cardNameFor(user)}** already exists (ID #${existing.id}). Use \`/edit_image\` or \`/cardadmin\` Edit.`,
+      `❌ A card named **${cardNameFor(user)}** already exists (ID #${existing.id}). Use \`/edit_card\` or \`/edit_image\`.`,
     );
     return;
   }

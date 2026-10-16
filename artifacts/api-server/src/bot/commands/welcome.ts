@@ -259,9 +259,9 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
           "`/drop [name]` — single drop (bypasses active-set check)\n" +
           "`/mass_drop [amount]` — 10–25 cards in a batch (event use)\n" +
           "`/create_card_from_roblox` — Roblox username + full-body avatar (preview, then create)\n" +
-          "`/create_card_from_mttv` — one Vault item · `/create_cards_from_mttv` — bulk (tag 5, preview)\n" +
-          "`/add_card` · `/edit_image`\n" +
-          "`/cardadmin` — give · take · shards · give all · edit · delete",
+          "`/create_card_from_mttv` — one Vault item · `/create_cards_from_mttv` — bulk, then edit one card at a time\n" +
+          "`/add_card` · `/edit_card` · `/edit_image` · `/delete_card`\n" +
+          "`/give` · `/take_back` · `/give_shards` · `/take_shards` · `/give_all`",
         inline: false,
       },
       {

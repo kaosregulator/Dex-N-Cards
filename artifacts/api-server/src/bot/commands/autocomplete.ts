@@ -172,8 +172,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       (cmd === "createcardsfrommttv" && focused.name === "set") ||
       (cmd === "createcardfromroblox" && focused.name === "set") ||
       (cmd === "createcardfrom" && focused.name === "set") ||
-      (cmd === "cardadmin" && focused.name === "set" &&
-        ["create", "create_kitsu", "create_vault", "giveall", "drop", "mass_drop"].includes(sub ?? ""));
+      (cmd === "giveall" && focused.name === "set");
     if (isSetNameOption) {
       const sets = await getSetsCached(interaction.guildId);
       const q = query.toLowerCase().trim();
@@ -186,6 +185,37 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
           value: s.set.name.slice(0, 100),
         }));
       await interaction.respond(matches);
+      return;
+    }
+
+    // ── /take_back — prefer cards the target member actually owns ───────────
+    if (cmd === "takeback" && focused.name === "name" && interaction.guild) {
+      const targetId = interaction.options.get("user")?.user?.id;
+      if (targetId) {
+        const owned = await getUserCollectionCached(interaction.guild.id, targetId);
+        const pool = owned.map(o => ({ name: o.name, rarity: o.rarity }));
+        await interaction.respond(await suggestCardNames(query, interaction.guild.id, pool));
+        return;
+      }
+    }
+
+    // ── /give_all rarity — /rarity display names, built-in and custom ────────
+    if (cmd === "giveall" && focused.name === "rarity" && interaction.guild) {
+      const q = query.toLowerCase().trim();
+      const [ctx, settings, displayMap] = await Promise.all([
+        getRarityContext(interaction.guild.id),
+        getOrCreateGuildSettings(interaction.guild.id),
+        getRarityDisplayOverrides(interaction.guild.id),
+      ]);
+      const ladder = getDisplayRarities(ctx, settings, { rarestFirst: false, displayMap });
+      const options = ladder.map(tier => ({
+        name: `${tier.emoji} ${tier.label}`.slice(0, 100),
+        value: (tier.isCustom ? `custom:${tier.slug}` : tier.rarity!).slice(0, 100),
+      }));
+      const filtered = !q
+        ? options
+        : options.filter(o => o.name.toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
+      await interaction.respond(filtered.slice(0, MAX_CHOICES));
       return;
     }
 

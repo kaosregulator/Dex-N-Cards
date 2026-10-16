@@ -53,14 +53,31 @@ describe("restored card-admin slash commands", () => {
     expect(chat.length).toBeLessThanOrEqual(100);
   });
 
-  it("keeps give, take, leftover kitsu create, and library on the hub", async () => {
+  it("registers give, take, edit, delete, and library as autocomplete slashes", async () => {
     const { chat, HUB_REPLACED_COMMANDS } = await registered();
     const names = new Set(chat.map((c) => c.name));
-    for (const internal of ["give", "takeback", "createcardfrom", "library", "deletecard"]) {
-      expect(HUB_REPLACED_COMMANDS.has(internal)).toBe(true);
-      expect(names.has(internal)).toBe(false);
-    }
+    expect(names.has("cardadmin")).toBe(false);
+    expect(HUB_REPLACED_COMMANDS.has("createcardfrom")).toBe(true);
     expect(names.has("create_card_from")).toBe(false);
+    const restored = ["give", "take_back", "give_shards", "take_shards", "give_all", "edit_card", "delete_card", "edit_user", "library"];
+    for (const name of restored) {
+      expect(names.has(name), name).toBe(true);
+      expect(HUB_REPLACED_COMMANDS.has(name), name).toBe(false);
+    }
+    const autocompleteName = (publicName: string) => {
+      const cmd = chat.find((c) => c.name === publicName) as {
+        description?: string;
+        options?: Array<{ name: string; autocomplete?: boolean; required?: boolean }>;
+      };
+      expect((cmd.description?.length ?? 999), publicName).toBeLessThanOrEqual(100);
+      return cmd.options?.find((o) => o.name === "name" || o.name === "rarity");
+    };
+    expect(autocompleteName("give")?.autocomplete).toBe(true);
+    expect(autocompleteName("take_back")?.autocomplete).toBe(true);
+    expect(autocompleteName("edit_card")?.autocomplete).toBe(true);
+    expect(autocompleteName("delete_card")?.autocomplete).toBe(true);
+    expect(autocompleteName("give_all")?.autocomplete).toBe(true);
+    expect(chat.length).toBeLessThanOrEqual(100);
   });
 
   it("gives vault create an item, a rarity, and an image attachment", async () => {
@@ -111,19 +128,10 @@ describe("restored card-admin slash commands", () => {
     expect(cmd.options?.find((o) => o.name === "set")?.required).toBeFalsy();
   });
 
-  it("keeps slash-backed creates and drops off the cardadmin hub", async () => {
+  it("does not keep a cardadmin hub button row", async () => {
     process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
     const { CARD_ADMIN_HUB_BUTTON_IDS } = await import("../cardadmin-hub.js");
-    const ids = new Set<string>(CARD_ADMIN_HUB_BUTTON_IDS);
-    for (const gone of [
-      "cahub:create_roblox", "cahub:create_kitsu", "cahub:create_vault",
-      "cahub:create", "cahub:drop", "cahub:mass_drop", "cahub:edit_image",
-    ]) {
-      expect(ids.has(gone), gone).toBe(false);
-    }
-    for (const keep of ["cahub:give", "cahub:take", "cahub:giveall", "cahub:edit", "cahub:delete"]) {
-      expect(ids.has(keep), keep).toBe(true);
-    }
+    expect([...CARD_ADMIN_HUB_BUTTON_IDS]).toEqual([]);
   });
 
   it("registers Roblox create with username autocomplete and optional image", async () => {

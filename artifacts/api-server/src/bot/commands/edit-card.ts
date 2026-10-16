@@ -25,6 +25,7 @@ import {
   type ModalSubmitInteraction, type RepliableInteraction,
 } from "discord.js";
 import { randomUUID } from "crypto";
+import { editPanelExtraRows } from "./edit-panel-extras.js";
 import { logger } from "../../lib/logger.js";
 import {
   assignCardToCustomRarity,
@@ -142,6 +143,14 @@ async function buildPanel(cardId: number, guildId?: string | null): Promise<{ em
   return { embeds: [embed], components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)] };
 }
 
+function withPanelExtras(
+  interaction: { guildId?: string | null; user?: { id: string } | null },
+  rows: ActionRowBuilder<any>[],
+): ActionRowBuilder<any>[] {
+  const extra = editPanelExtraRows(interaction.guildId, interaction.user?.id);
+  return [...rows, ...extra].slice(0, 5);
+}
+
 export async function renderPanel(
   interaction: RepliableInteraction,
   cardId: number,
@@ -157,10 +166,11 @@ export async function renderPanel(
     }
     return;
   }
+  const components = withPanelExtras(interaction, panel.components);
   if (reply) {
-    await interaction.reply({ ...panel, content, flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: panel.embeds, components, content, flags: MessageFlags.Ephemeral });
   } else {
-    await interaction.editReply({ ...panel, content: content ?? "" });
+    await interaction.editReply({ embeds: panel.embeds, components, content: content ?? "" });
   }
 }
 
@@ -269,7 +279,7 @@ export async function handleEditCardSelect(interaction: StringSelectMenuInteract
       await interaction.update({
         content: "✨ Pick the new rarity:",
         embeds: [],
-        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+        components: withPanelExtras(interaction, [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)]),
       });
       return;
     }

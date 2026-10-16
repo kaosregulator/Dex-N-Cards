@@ -1,6 +1,6 @@
-// /cardadmin — panel hub for actions that are NOT their own slash:
-// give, take, shards, give-all, edit, delete, library, edit-user.
-// Creates, drops, and image uploads live only as slashes (autocomplete / files).
+// /cardadmin is retired. Give, take, shards, give-all, edit, delete, library,
+// and edit-user are slash commands again so they can autocomplete.
+// This file only answers leftover hub buttons and a stale /cardadmin invocation.
 
 import type {
   ChatInputCommandInteraction,
@@ -10,10 +10,7 @@ import type {
 } from "discord.js";
 import {
   SlashCommandBuilder,
-  EmbedBuilder,
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   UserSelectMenuBuilder,
   ModalBuilder,
   TextInputBuilder,
@@ -25,54 +22,42 @@ import { withOptionValues } from "./option-proxy.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 
+const MOVED_TO_SLASH: Record<string, string> = {
+  "cahub:give": "/give",
+  "cahub:take": "/take_back",
+  "cahub:give_shards": "/give_shards",
+  "cahub:take_shards": "/take_shards",
+  "cahub:edit": "/edit_card",
+  "cahub:delete": "/delete_card",
+  "cahub:library": "/library",
+  "cahub:edituser": "/edit_user",
+  "cahub:giveall": "/give_all",
+  "cahub:edit_image": "/edit_image",
+  "cahub:drop": "/drop",
+  "cahub:mass_drop": "/mass_drop",
+  "cahub:create": "/add_card",
+  "cahub:create_vault": "/create_card_from_mttv",
+  "cahub:create_roblox": "/create_card_from_roblox",
+  "cahub:create_kitsu": "/create_card_from_roblox",
+};
+
+const MOVED_BLURB = [
+  "The card admin hub is gone. These are slash commands now (they autocomplete):",
+  "`/give` · `/take_back` · `/give_shards` · `/take_shards` · `/give_all`",
+  "`/edit_card` · `/edit_image` · `/delete_card` · `/edit_user` · `/library`",
+].join("\n");
+
 export function buildCardAdminCommandJson() {
   return new SlashCommandBuilder()
     .setName("cardadmin")
-    .setDescription("Admin card hub — give, take, shards, edit, delete")
+    .setDescription("Retired — use /give, /edit_card, /delete_card, and the other card slashes")
     .setDMPermission(false)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON();
 }
 
-function hubEmbed(): EmbedBuilder {
-  return new EmbedBuilder()
-    .setColor(0xef4444)
-    .setTitle("🃏 Card Admin Hub")
-    .setDescription(
-      [
-        "Buttons are only for things with **no** slash: give, take, shards, give-all, edit, delete, library.",
-        "",
-        "Creates, drops, and image uploads are slash commands:",
-        "`/add_card` · `/create_card_from_roblox` · `/create_card_from_mttv` · `/create_cards_from_mttv`",
-        "`/drop` · `/mass_drop` · `/edit_image`",
-      ].join("\n"),
-    )
-    .setFooter({ text: "Administrator only · slashes are not duplicated as buttons" });
-}
-
-/** Live hub buttons — slash-backed creates/drops are listed in the embed, not here. */
-export const CARD_ADMIN_HUB_BUTTON_IDS = [
-  "cahub:give", "cahub:take", "cahub:give_shards", "cahub:take_shards",
-  "cahub:edit", "cahub:delete", "cahub:library", "cahub:edituser", "cahub:giveall",
-] as const;
-
-function hubRows() {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("cahub:give").setLabel("Give").setEmoji("🎁").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("cahub:take").setLabel("Take").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cahub:give_shards").setLabel("Give shards").setEmoji("💠").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("cahub:take_shards").setLabel("Take shards").setEmoji("💸").setStyle(ButtonStyle.Secondary),
-    ),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("cahub:edit").setLabel("Edit").setEmoji("✏️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cahub:delete").setLabel("Delete").setEmoji("🗑️").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("cahub:library").setLabel("Library").setEmoji("📚").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cahub:edituser").setLabel("Edit user").setEmoji("👤").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cahub:giveall").setLabel("Give all").setEmoji("📚").setStyle(ButtonStyle.Danger),
-    ),
-  ];
-}
+/** No live hub buttons. Old messages are redirected to the slash commands. */
+export const CARD_ADMIN_HUB_BUTTON_IDS = [] as const;
 
 function gated(interaction: ButtonInteraction | UserSelectMenuInteraction | ModalSubmitInteraction): boolean {
   return !!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
@@ -87,8 +72,7 @@ export async function handleCardAdminCommand(interaction: ChatInputCommandIntera
     await interaction.reply({ content: "Administrator only.", ...EPHEMERAL });
     return;
   }
-  await interaction.deferReply(EPHEMERAL);
-  await interaction.editReply({ embeds: [hubEmbed()], components: hubRows() });
+  await interaction.reply({ content: MOVED_BLURB, ...EPHEMERAL });
 }
 
 async function runAdmin(
@@ -110,6 +94,14 @@ export async function handleCardAdminHubComponent(
     return;
   }
   const id = interaction.customId;
+  const moved = MOVED_TO_SLASH[id];
+  if (moved && interaction.isButton()) {
+    await interaction.reply({
+      content: `Use \`${moved}\` — it autocompletes. The card admin hub is retired.\n${MOVED_BLURB}`,
+      ...EPHEMERAL,
+    });
+    return;
+  }
 
   const textModal = (
     customId: string,

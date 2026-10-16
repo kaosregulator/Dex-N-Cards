@@ -2494,6 +2494,7 @@ export async function updateCustomPack(
   patch: Partial<{
     name: string; slug: string; cost: number; size: number; weeklyLimit: number;
     rarityRates: Record<string, number>; cardTypes: string[]; isActive: boolean; description: string; emoji: string | null;
+    allowedRarities: string[] | null;
   }>,
 ): Promise<void> {
   const [existing] = await db.select({ guildId: customPacksTable.guildId })

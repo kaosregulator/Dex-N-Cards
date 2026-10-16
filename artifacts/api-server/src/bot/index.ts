@@ -1488,7 +1488,7 @@ async function registerCommands(appId: string, token: string, client: Client) {
     .filter((c: { type?: number; name: string }) => (c.type ?? 1) === 1)
     .map((c: { name: string }) => c.name)
     .sort();
-  const hubsPresent = ["trade", "vaultvalue", "cardadmin", "secret", "casino", "tatsu", "trivia", "help"]
+  const hubsPresent = ["trade", "vaultvalue", "secret", "casino", "tatsu", "trivia", "help"]
     .filter(n => chatNames.includes(n));
   const foldedStillRegistered = [...HUB_REPLACED_COMMANDS].filter(n => chatNames.includes(n));
 
