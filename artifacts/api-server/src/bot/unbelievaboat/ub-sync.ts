@@ -77,6 +77,10 @@ export async function syncUbStoreRoleLinks(
   }
 
   const rawItems = await fetchAllUbStoreItems(ubGuildId);
+  if (guild) {
+    const missingEmoji = rawItems.some(r => r.emoji_id && !guild.emojis.cache.has(r.emoji_id));
+    if (missingEmoji) await guild.emojis.fetch().catch(() => null);
+  }
   const links = await listRoleLinks(guildId);
   const byUb = new Map(links.filter(l => l.ubItemId).map(l => [l.ubItemId!, l]));
   const byRole = new Map(links.filter(l => l.discordRoleId).map(l => [l.discordRoleId!, l]));
@@ -134,13 +138,16 @@ export async function syncUbStoreRoleLinks(
     if (link.name !== norm.name.slice(0, 100)) patch.name = norm.name.slice(0, 100);
     if (link.price !== norm.price) patch.price = norm.price;
 
-    // Prefer guild-resolved emoji / unicode over placeholder `<:_:id>`.
-    const nextEmoji = norm.emoji.slice(0, 64);
-    const prev = link.emoji || "";
-    const nextIsPlaceholder = nextEmoji.includes(":_:") || nextEmoji.startsWith("<:_:");
-    const prevIsPlaceholder = prev.includes(":_:") || prev.startsWith("<:_:");
-    if (nextEmoji && nextEmoji !== prev && (!nextIsPlaceholder || !prev || prevIsPlaceholder)) {
-      patch.emoji = nextEmoji;
+    // Admin-picked icons stay put. Otherwise prefer a guild-resolved emoji
+    // over the placeholder `<:_:id>` we store when the emoji cache missed.
+    if (meta.iconLocked !== true) {
+      const nextEmoji = norm.emoji.slice(0, 64);
+      const prev = link.emoji || "";
+      const nextIsPlaceholder = nextEmoji.includes(":_:") || nextEmoji.startsWith("<:_:");
+      const prevIsPlaceholder = prev.includes(":_:") || prev.startsWith("<:_:");
+      if (nextEmoji && nextEmoji !== prev && (!nextIsPlaceholder || !prev || prevIsPlaceholder)) {
+        patch.emoji = nextEmoji;
+      }
     }
 
     // Keep shop listing in sync with UB (listed → enabled in our store).

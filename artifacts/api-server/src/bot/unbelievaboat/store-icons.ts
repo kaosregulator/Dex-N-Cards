@@ -109,6 +109,76 @@ export function titleSafeStoreEmoji(emoji: string | null | undefined, fallback =
   return emoji.trim();
 }
 
+export type StoreBoardImage = {
+  imageUrl?: string;
+  animated?: boolean;
+  /** Unix ms when an admin last set this icon. 0 = never customized here. */
+  iconUpdatedAt?: number;
+};
+
+/**
+ * One embed can play one GIF. Prefer the icon an admin changed most recently
+ * so the board image follows the latest pick instead of sticking on the first GIF.
+ * Falls back to the first animated image, then any image.
+ */
+export function pickStoreBoardImage<T extends StoreBoardImage>(rows: T[]): string | undefined {
+  const withImg = rows.filter((r): r is T & { imageUrl: string } => Boolean(r.imageUrl));
+  if (!withImg.length) return undefined;
+  const animated = withImg.filter(r => r.animated || isAnimatedStoreImage(r.imageUrl));
+  const pool = animated.length ? animated : withImg;
+  const ranked = [...pool].sort((a, b) => (b.iconUpdatedAt ?? 0) - (a.iconUpdatedAt ?? 0));
+  return ranked[0]!.imageUrl;
+}
+
+/** Mark a role link so sync won't clobber an admin-chosen emoji / GIF. */
+export function stampIconMeta(
+  meta: Record<string, unknown>,
+  icon?: { imageUrl?: string; animated?: boolean },
+): Record<string, unknown> {
+  const next: Record<string, unknown> = {
+    ...meta,
+    iconLocked: true,
+    iconUpdatedAt: Date.now(),
+  };
+  if (icon?.imageUrl) {
+    next.imageUrl = icon.imageUrl;
+    next.animated = Boolean(icon.animated) || isAnimatedStoreImage(icon.imageUrl);
+    delete next.iconGif;
+  }
+  return next;
+}
+
+export function iconStampFromMeta(meta: Record<string, unknown> | null | undefined): {
+  iconLocked: boolean;
+  iconUpdatedAt: number;
+  imageUrl?: string;
+  animated: boolean;
+} {
+  const m = meta ?? {};
+  const imageUrl = typeof m.imageUrl === "string" && m.imageUrl
+    ? m.imageUrl
+    : typeof m.iconGif === "string" && m.iconGif
+      ? m.iconGif
+      : undefined;
+  return {
+    iconLocked: m.iconLocked === true,
+    iconUpdatedAt: typeof m.iconUpdatedAt === "number" ? m.iconUpdatedAt : 0,
+    imageUrl,
+    animated: m.animated === true || isAnimatedStoreImage(imageUrl),
+  };
+}
+
+/**
+ * Keep a real custom/unicode emoji when a GIF is uploaded.
+ * Generic film/picture marks are only a fallback when the role has no icon yet.
+ */
+export function emojiKeptAfterUpload(prev: string | null | undefined, animated: boolean): string {
+  const t = (prev ?? "").trim();
+  if (parseDiscordEmoji(t)) return t;
+  if (t && t !== "🎞️" && t !== "🖼️" && /\p{Extended_Pictographic}/u.test(t)) return t;
+  return animated ? "🎞️" : "🖼️";
+}
+
 /** True when Discord should play the image as an animated GIF on embeds. */
 export function isAnimatedStoreImage(url: string | null | undefined): boolean {
   if (!url) return false;

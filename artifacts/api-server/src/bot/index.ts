@@ -15,7 +15,7 @@ import { handleEditCardSelect, handleEditCardModal } from "./commands/edit-card.
 import { handleEditImageButton, handleEditImageModal, handleEditImagePick } from "./commands/edit-image.js";
 import { handleTradeButton } from "./commands/trading.js";
 import { initSpawnManager, initAllGuilds, handleCatchAttempt, handleClaimButtonClick, scheduleNextSpawn, buildPostDecisionEmbed, buildDisabledDecisionRow, markDecisionMade } from "./spawn-manager.js";
-import { handleConfigButton, handleConfigSelect, handleRatesSelect, handlePacksSelect, handlePacksCostModal, handleRatesCustomModal, handleExperienceSelect } from "./commands/config-panel.js";
+import { handleConfigButton, handleConfigSelect, handleRatesSelect, handlePacksSelect, handlePacksCostModal, handlePacksNamesModal, handlePacksDescModal, handleRatesCustomModal, handleExperienceSelect } from "./commands/config-panel.js";
 import { LAUNCH_PREFIX, handleExperienceLaunch } from "./experience.js";
 import { handleSetsHubButton, handleSetsHubSelect, handleSetsHubModal } from "./commands/sets-panel.js";
 import { handleSetAdminHubButton, handleSetAdminHubSelect, handleSetAdminHubWeightSelect, handleSetAdminHubModal } from "./commands/set-admin-hub.js";
@@ -694,6 +694,10 @@ export async function startBot() {
           await handleRatesCustomModal(interaction);
         } else if (interaction.customId.startsWith("packs_cost_modal:")) {
           await handlePacksCostModal(interaction);
+        } else if (interaction.customId === "packs_names_modal") {
+          await handlePacksNamesModal(interaction);
+        } else if (interaction.customId === "packs_desc_modal") {
+          await handlePacksDescModal(interaction);
         } else if (interaction.customId.startsWith("sets:modal:")) {
           await handleSetsHubModal(interaction);
         } else if (interaction.customId.startsWith("setadminhub:modal:")) {

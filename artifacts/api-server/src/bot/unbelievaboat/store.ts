@@ -23,7 +23,8 @@ import {
   CashError, spendFunds, fmtCash, requireEconomy, formatSpendNote, getCashBalance,
 } from "./cash.js";
 import { replyThenPostAsUnbelievaBoat } from "./webhook.js";
-import { isAnimatedStoreImage, resolveSelectEmoji, titleSafeStoreEmoji } from "./store-icons.js";
+import { iconStampFromMeta, isAnimatedStoreImage, pickStoreBoardImage, resolveSelectEmoji, titleSafeStoreEmoji } from "./store-icons.js";
+import { formatShopBoard, type BoardRole } from "./ub-board.js";
 import {
   applyUbBuyActions,
   checkUbRequirements,
@@ -51,6 +52,7 @@ type StashRow = {
   roleIds: string[];
   imageUrl?: string;
   animated?: boolean;
+  iconUpdatedAt?: number;
   ubItem?: NormalizedUbItem;
   localLinkId?: number;
 };
@@ -105,6 +107,11 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
           }
           seenUb.add(item.id);
           const owned = roleIds.some(id => ownedRoleIds.has(id));
+          const link = synced.links.find(l =>
+            l.ubItemId === item.id || (l.discordRoleId != null && roleIds.includes(l.discordRoleId)),
+          );
+          const stamp = iconStampFromMeta((link?.meta as Record<string, unknown> | null) ?? {});
+          const imageUrl = stamp.imageUrl || item.imageUrl;
           rows.push({
             key: `ub:${item.id}`,
             source: "ub",
@@ -113,10 +120,11 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
               ? "Already owned — use Collect for income"
               : item.description,
             price: item.price,
-            emoji: item.emoji,
+            emoji: stamp.iconLocked && link?.emoji ? link.emoji : item.emoji,
             roleIds,
-            imageUrl: item.imageUrl,
-            animated: item.animated,
+            imageUrl,
+            animated: stamp.animated || item.animated || isAnimatedStoreImage(imageUrl),
+            iconUpdatedAt: stamp.iconUpdatedAt,
             ubItem: item,
           });
         }
@@ -136,8 +144,7 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
       if (seenRoles.has(r.discordRoleId)) continue;
       seenRoles.add(r.discordRoleId);
       const m = (r.meta ?? {}) as Record<string, unknown>;
-      const imageUrl = typeof m.imageUrl === "string" ? m.imageUrl
-        : typeof m.iconGif === "string" ? m.iconGif : undefined;
+      const stamp = iconStampFromMeta(m);
       const owned = ownedRoleIds.has(r.discordRoleId);
       rows.push({
         key: `role:${r.id}`,
@@ -149,9 +156,10 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
         price: r.price,
         emoji: r.emoji || "✨",
         roleIds: [r.discordRoleId],
-        imageUrl,
+        imageUrl: stamp.imageUrl,
         // Prefer persisted capture flag (Tenor/Giphy), else URL sniff.
-        animated: m.animated === true || isAnimatedStoreImage(imageUrl),
+        animated: stamp.animated,
+        iconUpdatedAt: stamp.iconUpdatedAt,
         localLinkId: r.id,
       });
     }
@@ -163,35 +171,34 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
       return;
     }
 
-    const lines = rows.slice(0, 12).map(r => {
+    const shown = rows.slice(0, 25);
+    const boardRows: BoardRole[] = shown.map(r => {
       const owned = r.roleIds.some(id => ownedRoleIds.has(id));
-      return `${r.emoji} **${r.name}** — **${fmtCash(r.price)}** cash` +
-        (r.imageUrl ? (r.animated ? " · 🎞️" : " · 🖼️") : "") +
-        (owned ? " · ✅ **owned**" : "") +
-        `\n_${r.description.slice(0, 120)}_`;
-    }).join("\n\n");
+      return {
+        emoji: r.emoji,
+        name: r.name,
+        roleId: r.roleIds[0] ?? null,
+        detail: `**${fmtCash(r.price)}** cash${owned ? " · ✅ owned" : ""}`,
+      };
+    });
+    const extra = rows.length > shown.length ? `\n…and ${rows.length - shown.length} more in the menu.` : "";
 
     const embed = new EmbedBuilder()
       .setColor(UNBELIEVABOAT_COLOR)
-      .setAuthor(UNBELIEVABOAT_AUTHOR)
-      .setTitle("Role Store")
-      .setDescription(
-        [
-          "UnbelievaBoat store roles — prices in **cash**. No categories, just the roles.",
-          "Already own one? Use **`/casino` → Collect** for income.",
-          "",
-          lines,
-          rows.length > 12 ? `\n_…and ${rows.length - 12} more in the menu._` : "",
-        ].filter(Boolean).join("\n"),
-      )
-      .setFooter({ text: "Pick a role below · GIFs animate on the board" });
+      .setAuthor({
+        name: (member?.displayName || interaction.user.globalName || interaction.user.username).slice(0, 256),
+        iconURL: interaction.user.displayAvatarURL({ size: 128 }),
+      })
+      .setDescription(formatShopBoard(boardRows) + extra)
+      .setFooter({ text: "Pick a role below · GIFs play on the board" });
 
-    const animated = rows.find(r => r.imageUrl && r.animated)?.imageUrl
-      ?? rows.find(r => r.imageUrl && isAnimatedStoreImage(r.imageUrl))?.imageUrl;
-    const firstImage = animated ?? rows.find(r => r.imageUrl)?.imageUrl;
-    if (firstImage) {
-      if (isAnimatedStoreImage(firstImage) || animated) embed.setImage(firstImage);
-      else embed.setThumbnail(firstImage);
+    const boardImage = pickStoreBoardImage(rows);
+    if (boardImage) {
+      if (isAnimatedStoreImage(boardImage) || rows.some(r => r.imageUrl === boardImage && r.animated)) {
+        embed.setImage(boardImage);
+      } else {
+        embed.setThumbnail(boardImage);
+      }
     }
 
     const menu = new StringSelectMenuBuilder()
@@ -213,10 +220,14 @@ export async function handleCashStore(interaction: ChatInputCommandInteraction):
 
     stashStore(interaction.guildId, interaction.user.id, rows);
 
-    await interaction.editReply({
-      embeds: [embed],
-      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
-    });
+    await replyThenPostAsUnbelievaBoat(
+      interaction,
+      {
+        embeds: [embed],
+        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+      },
+      "✅ Store posted as **UnbelievaBoat**.",
+    );
   } catch (err) {
     await interaction.editReply(err instanceof CashError ? err.message : `Failed: ${err instanceof Error ? err.message : err}`);
   }

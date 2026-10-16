@@ -48,6 +48,23 @@ describe("ub-items actions/requirements", () => {
     expect(item.imageUrl).toContain("999.png");
     expect(item.listed).toBe(true);
   });
+
+  it("uses an animated guild emoji as a playing GIF", () => {
+    const item = normalizeUbItem(
+      {
+        id: "item2",
+        name: "Simp",
+        price: 100,
+        emoji_id: "555",
+        actions: [{ type: 2, ids: ["roleB"] }],
+        requirements: [],
+      },
+      { guildEmoji: { id: "555", name: "simp", animated: true } },
+    );
+    expect(item.emoji).toBe("<a:simp:555>");
+    expect(item.imageUrl).toContain("555.gif");
+    expect(item.animated).toBe(true);
+  });
 });
 
 describe("collectableOwnedRoles", () => {

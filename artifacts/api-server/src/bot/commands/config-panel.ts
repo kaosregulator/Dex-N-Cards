@@ -2092,25 +2092,41 @@ function buildPacksNamesComponents(): ActionRowBuilder<ButtonBuilder>[] {
   ];
 }
 
+/** Discord rejects a modal whose text-input label is longer than 45 characters. */
+export function clipDiscordLabel(label: string, max = 45): string {
+  if (label.length <= max) return label;
+  let end = max;
+  const cu = label.charCodeAt(end - 1);
+  if (cu >= 0xd800 && cu <= 0xdbff) end -= 1;
+  return label.slice(0, Math.max(0, end));
+}
+
+function packFieldLabel(tier: PackTier, kind: "display name" | "description"): string {
+  const meta = PACK_TIER_META[tier];
+  // Built-in tier name, not the custom override — a long rename must not
+  // blow the 45-char label limit and make the modal fail to open.
+  return clipDiscordLabel(`${meta.emoji} ${meta.label} ${kind}`);
+}
+
 function buildPacksDescModal(s: GuildSettings): ModalBuilder {
-  const input = (tier: PackTier, label: string, current: string | null | undefined) =>
+  const input = (tier: PackTier, current: string | null | undefined) =>
     new ActionRowBuilder<TextInputBuilder>().addComponents(
       new TextInputBuilder()
         .setCustomId(`desc_${tier}`)
-        .setLabel(label)
+        .setLabel(packFieldLabel(tier, "description"))
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
         .setMaxLength(100)
-        .setValue(current ?? "")
+        .setValue((current ?? "").slice(0, 100))
         .setPlaceholder("Leave blank to remove"),
     );
   return new ModalBuilder()
     .setCustomId("packs_desc_modal")
     .setTitle("Edit Pack Descriptions")
     .addComponents(
-      input("basic",     `🥉 ${tierLabel(s, "basic")} description`,     s.packBasicDesc),
-      input("premium",   `🥈 ${tierLabel(s, "premium")} description`,   s.packPremiumDesc),
-      input("legendary", `🥇 ${tierLabel(s, "legendary")} description`, s.packLegendaryDesc),
+      input("basic", s.packBasicDesc),
+      input("premium", s.packPremiumDesc),
+      input("legendary", s.packLegendaryDesc),
     );
 }
 
@@ -2149,14 +2165,14 @@ export async function handlePacksDescModal(interaction: ModalSubmitInteraction):
 }
 
 function buildPacksNamesModal(s: GuildSettings): ModalBuilder {
-  const input = (tier: PackTier, label: string) => new ActionRowBuilder<TextInputBuilder>().addComponents(
+  const input = (tier: PackTier) => new ActionRowBuilder<TextInputBuilder>().addComponents(
     new TextInputBuilder()
       .setCustomId(`name_${tier}`)
-      .setLabel(label)
+      .setLabel(packFieldLabel(tier, "display name"))
       .setStyle(TextInputStyle.Short)
       .setRequired(false)
       .setMaxLength(30)
-      .setValue(tierLabel(s, tier))
+      .setValue(tierLabel(s, tier).slice(0, 30))
       // Placeholder intentionally shows the immutable default name so clearing
       // the field reverts to the original label.
       .setPlaceholder(PACK_TIER_META[tier].label),
@@ -2165,9 +2181,9 @@ function buildPacksNamesModal(s: GuildSettings): ModalBuilder {
     .setCustomId("packs_names_modal")
     .setTitle("Rename Pack Tiers")
     .addComponents(
-      input("basic", `🥉 ${tierLabel(s, "basic")} display name`),
-      input("premium", `🥈 ${tierLabel(s, "premium")} display name`),
-      input("legendary", `🥇 ${tierLabel(s, "legendary")} display name`),
+      input("basic"),
+      input("premium"),
+      input("legendary"),
     );
 }
 
