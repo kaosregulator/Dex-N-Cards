@@ -100,7 +100,14 @@ export async function handleAdminCommand(
       return;
     }
     await removeCard(card.name, interaction.guild.id);
-    await interaction.editReply(`🗑️ **${card.name}** (${card.rarity}) has been permanently deleted.`);
+    const { getRarityContext, getOrCreateGuildSettings, getRarityDisplayOverrides, getCardDisplayRarity } = await import("../db.js");
+    const [ctx, settings, displayMap] = await Promise.all([
+      getRarityContext(interaction.guild.id),
+      getOrCreateGuildSettings(interaction.guild.id),
+      getRarityDisplayOverrides(interaction.guild.id),
+    ]);
+    const display = getCardDisplayRarity(card, ctx, settings, displayMap);
+    await interaction.editReply(`🗑️ **${card.name}** (${display.emoji} ${display.label}) has been permanently deleted.`);
     return;
   }
   // /wishlist_role — set/clear the wishlist spawn ping role.

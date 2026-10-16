@@ -9,19 +9,11 @@
 import {
   type ChatInputCommandInteraction,
 } from "discord.js";
-import { addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
+import { addCard, addCardToSet, builtinRarityEconomy, getCardByName, getSetByName } from "../db.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
-import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
+import type { Rarity } from "../cards-data.js";
 
 const BUILTIN_RARITIES = new Set<string>(["common", "uncommon", "rare", "epic", "legendary", "mythic"]);
-
-function builtInDefaults(rarity: Rarity): { worth: number; burn: number; weight: number } {
-  return {
-    worth: RARITY_WORTH[rarity],
-    burn: RARITY_BURN[rarity],
-    weight: RARITY_WEIGHTS[rarity],
-  };
-}
 
 export async function handleAddCardCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const opts        = interaction.options;
@@ -54,7 +46,8 @@ export async function handleAddCardCommand(interaction: ChatInputCommandInteract
     return;
   }
   const baseRarity = rarityInput as Rarity;
-  const defs = builtInDefaults(baseRarity);
+  const econ = await builtinRarityEconomy(guildId, baseRarity);
+  const defs = { worth: econ.worthValue, burn: econ.burnValue, weight: econ.dropWeight };
   const worth = defs.worth;
   const burn = defs.burn;
   const weight = defs.weight;

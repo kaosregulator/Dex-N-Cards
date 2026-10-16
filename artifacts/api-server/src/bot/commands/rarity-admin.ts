@@ -29,6 +29,7 @@ import {
   RARITY_EMOJI, RARITY_LABELS, RARITY_COLORS, selectMenuEmoji, type Rarity, type RarityDisplayMap,
   rarityLabel, rarityEmoji, rarityColor, getRarityOrder, BUILTIN_RARITIES,
 } from "../cards-data.js";
+import { effectiveBuiltinEconomy } from "../rarity-runtime.js";
 
 export { RARITY_COLORS, BUILTIN_RARITIES };
 
@@ -46,9 +47,9 @@ function hex(n: number): string {
   return "#" + n.toString(16).padStart(6, "0");
 }
 
-function fmtVal(v: number | null | undefined, suffix = ""): string {
-  if (v === null || v === undefined) return "*(default)*";
-  return `${v.toLocaleString()}${suffix}`;
+function fmtEconomy(override: number | null | undefined, fallback: number, suffix = ""): string {
+  if (override === null || override === undefined) return `${fallback.toLocaleString()}${suffix} *(default)*`;
+  return `${override.toLocaleString()}${suffix}`;
 }
 
 type ProfileRow = { rarity: string; worthValue: number | null; burnValue: number | null; dropWeight: number | null };
@@ -150,17 +151,18 @@ function buildSettingsPanel(
     .setColor(0x5865f2)
     .setDescription(
       "Pick a built-in rarity to edit its display, spawn chance, worth, and burn for this server. " +
-      "Cards keep their internal rarity identity; these settings only change server behavior and presentation.\n​",
+      "Saving worth, burn, or spawn updates every card on that rarity. Names and emojis update everywhere they are shown.\n​",
     );
 
   const order = getRarityOrder(settings);
   for (const r of order) {
     const display = getEffectiveDisplay(r, displayMap, settings);
     const profile = byRarity.get(r);
+    const econ = effectiveBuiltinEconomy(r, profile);
     const values = [
-      `Spawn: ${fmtVal(profile?.dropWeight, "%")}`,
-      `Worth: ${fmtVal(profile?.worthValue, " 💠")}`,
-      `Burn: ${fmtVal(profile?.burnValue, " 💠")}`,
+      `Spawn: ${fmtEconomy(profile?.dropWeight, econ.dropWeight, "%")}`,
+      `Worth: ${fmtEconomy(profile?.worthValue, econ.worthValue, " 💠")}`,
+      `Burn: ${fmtEconomy(profile?.burnValue, econ.burnValue, " 💠")}`,
     ].join(" · ");
     embed.addFields({ name: `${display.emoji} ${display.label}`, value: values, inline: false });
   }
@@ -195,20 +197,21 @@ function buildSettingsTierPanel(
   profile: ProfileRow | undefined,
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
   const display = getEffectiveDisplay(r, displayMap, settings);
+  const econ = effectiveBuiltinEconomy(r, profile);
   const embed = new EmbedBuilder()
     .setTitle(`🎛️ ${display.emoji} ${display.label}`)
     .setColor(display.color)
     .setDescription(
       `Internal rarity: \`${r}\` — stable for inventories and compatibility.\n` +
-      "Edit what admins and players see: display, spawn chance, worth, and burn.\n​",
+      "Saving worth, burn, or spawn writes those values onto every card on this rarity.\n​",
     )
     .addFields(
       { name: "Display", value: `${display.emoji} **${display.label}** · ${hex(display.color)}`, inline: false },
-      { name: "Spawn Chance", value: fmtVal(profile?.dropWeight, "%"), inline: true },
-      { name: "Worth", value: fmtVal(profile?.worthValue, " 💠"), inline: true },
-      { name: "Burn", value: fmtVal(profile?.burnValue, " 💠"), inline: true },
+      { name: "Spawn Chance", value: fmtEconomy(profile?.dropWeight, econ.dropWeight, "%"), inline: true },
+      { name: "Worth", value: fmtEconomy(profile?.worthValue, econ.worthValue, " 💠"), inline: true },
+      { name: "Burn", value: fmtEconomy(profile?.burnValue, econ.burnValue, " 💠"), inline: true },
     )
-    .setFooter({ text: "Blank/default values fall back to card defaults and the shared rarity runtime." });
+    .setFooter({ text: "Values marked default are the built-in rarity numbers. Overrides replace them on every card." });
 
   const displayRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`rarity_edit:name:${r}`).setLabel("Name").setStyle(ButtonStyle.Primary),
@@ -243,14 +246,12 @@ function buildEconomyPanel(
   const order = getRarityOrder(settings);
   for (const r of order) {
     const row = byRarity.get(r);
-    const hasAny = row && (row.worthValue !== null || row.burnValue !== null || row.dropWeight !== null);
+    const econ = effectiveBuiltinEconomy(r, row);
     const dispLabel = rarityLabel(r, settings, displayMap);
     const dispEmoji = rarityEmoji(r, settings, displayMap);
     embed.addFields({
       name: `${dispEmoji} ${dispLabel}`,
-      value: hasAny
-        ? `Worth: ${fmtVal(row?.worthValue, " 💠")} · Burn: ${fmtVal(row?.burnValue, " 💠")} · Spawn %: ${fmtVal(row?.dropWeight)}`
-        : "*(using card defaults)*",
+      value: `Worth: ${fmtEconomy(row?.worthValue, econ.worthValue, " 💠")} · Burn: ${fmtEconomy(row?.burnValue, econ.burnValue, " 💠")} · Spawn %: ${fmtEconomy(row?.dropWeight, econ.dropWeight)}`,
       inline: false,
     });
   }
@@ -288,16 +289,16 @@ function buildEconomyTierPanel(
 ) {
   const label = rarityLabel(rarity, settings, displayMap);
   const emoji = rarityEmoji(rarity, settings, displayMap);
-  const hasOverride = profile && (profile.worthValue !== null || profile.burnValue !== null || profile.dropWeight !== null);
+  const econ = effectiveBuiltinEconomy(rarity, profile);
   const embed = new EmbedBuilder()
     .setTitle(`📊 ${emoji} ${label} — Economy`)
     .setColor(rarityColor(rarity, settings, displayMap))
+    .setDescription("Saving here updates worth, burn, and spawn on every card of this rarity.\n\u200b")
     .addFields(
-      { name: "Worth", value: fmtVal(profile?.worthValue, " 💠"), inline: true },
-      { name: "Burn", value: fmtVal(profile?.burnValue, " 💠"), inline: true },
-      { name: "Spawn Chance", value: fmtVal(profile?.dropWeight, "%"), inline: true },
+      { name: "Worth", value: fmtEconomy(profile?.worthValue, econ.worthValue, " 💠"), inline: true },
+      { name: "Burn", value: fmtEconomy(profile?.burnValue, econ.burnValue, " 💠"), inline: true },
+      { name: "Spawn Chance", value: fmtEconomy(profile?.dropWeight, econ.dropWeight, "%"), inline: true },
     );
-  if (!hasOverride) embed.setDescription("*No overrides — cards in this tier use their own values.*\n\u200b");
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`rarity_hub:economy:set:${rarity}`).setLabel("✏️ Edit Values").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`rarity_hub:economy:reset:${rarity}`).setLabel("🔄 Reset").setStyle(ButtonStyle.Danger),

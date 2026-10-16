@@ -1,11 +1,9 @@
 import type { Message } from "discord.js";
-import { addCard, getCardByName, updateCard } from "../db.js";
+import { addCard, builtinRarityEconomy, getCardByName, getRarityDisplayOverrides, updateCard } from "../db.js";
 import {
-  RARITY_WEIGHTS, RARITY_WORTH, RARITY_BURN,
   TYPE_EMOJI, getTypeEmoji,
   type Rarity, rarityLabel, rarityEmoji,
 } from "../cards-data.js";
-import { getRarityDisplayOverrides } from "../db.js";
 import { persistBotImage } from "./edit-card.js";
 import type { Card } from "@workspace/db";
 
@@ -127,10 +125,12 @@ async function processStep(
       session.data.description = input.toLowerCase() === "skip" ? "" : input.slice(0, 256).trim();
       session.step = "card_rarity";
 
-      const displayMap = await getRarityDisplayOverrides(msg.guild!.id);
-      const rarityLines = RARITY_CHOICES.map((r, i) =>
-        `**${i + 1}️⃣ ${rarityEmoji(r, null, displayMap)} ${rarityLabel(r, null, displayMap)}** — 💠 ${RARITY_WORTH[r].toLocaleString()} worth · 🔥 ${RARITY_BURN[r].toLocaleString()} burn`,
-      ).join("\n");
+      const guildId = msg.guild!.id;
+      const displayMap = await getRarityDisplayOverrides(guildId);
+      const rarityLines = (await Promise.all(RARITY_CHOICES.map(async (r, i) => {
+        const econ = await builtinRarityEconomy(guildId, r);
+        return `**${i + 1}️⃣ ${rarityEmoji(r, null, displayMap)} ${rarityLabel(r, null, displayMap)}** — 💠 ${econ.worthValue.toLocaleString()} worth · 🔥 ${econ.burnValue.toLocaleString()} burn`;
+      }))).join("\n");
 
       await msg.reply(
         `✅ Description set.\n\n**Step 3 — Rarity**\nChoose a rarity:\n\n${rarityLines}\n\nType **1–5**:`,
@@ -250,8 +250,9 @@ async function showConfirmation(msg: Message, session: CardWizardSession) {
   const d = session.data;
   const r = d.rarity!;
   const mult = session.kind === "limited" ? 4 : session.kind === "event" ? 3 : 1;
-  const worth = RARITY_WORTH[r] * mult;
-  const burn = RARITY_BURN[r] * mult;
+  const econ = await builtinRarityEconomy(msg.guild?.id ?? session.guildId, r);
+  const worth = econ.worthValue * mult;
+  const burn = econ.burnValue * mult;
 
   const guildId = msg.guild?.id;
   const displayMap = guildId ? await getRarityDisplayOverrides(guildId) : null;
@@ -386,11 +387,17 @@ async function processEditStep(msg: Message, session: EditSession, k: string, in
         await msg.reply("❌ Type **1–5**:"); return true;
       }
       const newRarity = RARITY_CHOICES[idx];
-      await updateCard(session.cardId, { rarity: newRarity, dropWeight: RARITY_WEIGHTS[newRarity] });
+      const econ = await builtinRarityEconomy(msg.guild!.id, newRarity);
+      await updateCard(session.cardId, {
+        rarity: newRarity,
+        worthValue: econ.worthValue,
+        burnValue: econ.burnValue,
+        dropWeight: econ.dropWeight,
+      });
       const displayMap = await getRarityDisplayOverrides(msg.guild!.id);
       const rLabel = rarityLabel(newRarity, null, displayMap);
       const rEmoji = rarityEmoji(newRarity, null, displayMap);
-      await msg.reply(`✅ Rarity → ${rEmoji} **${rLabel}** (spawn % source reset to ${RARITY_WEIGHTS[newRarity]}).`);
+      await msg.reply(`✅ Rarity → ${rEmoji} **${rLabel}** (worth 💠 ${econ.worthValue.toLocaleString()}, burn 🔥 ${econ.burnValue.toLocaleString()}, spawn ${econ.dropWeight}).`);
       return await backToMenu(msg, session);
     }
 
@@ -462,8 +469,12 @@ async function processEditStep(msg: Message, session: EditSession, k: string, in
 async function promptForField(msg: Message, step: EditStep) {
   switch (step) {
     case "edit_rarity": {
-      const displayMap = await getRarityDisplayOverrides(msg.guild!.id);
-      const lines = RARITY_CHOICES.map((r, i) => `**${i + 1}.** ${rarityEmoji(r, null, displayMap)} ${rarityLabel(r, null, displayMap)} — 💠 ${RARITY_WORTH[r]} / 🔥 ${RARITY_BURN[r]} default`).join("\n");
+      const guildId = msg.guild!.id;
+      const displayMap = await getRarityDisplayOverrides(guildId);
+      const lines = (await Promise.all(RARITY_CHOICES.map(async (r, i) => {
+        const econ = await builtinRarityEconomy(guildId, r);
+        return `**${i + 1}.** ${rarityEmoji(r, null, displayMap)} ${rarityLabel(r, null, displayMap)} — 💠 ${econ.worthValue.toLocaleString()} / 🔥 ${econ.burnValue.toLocaleString()}`;
+      }))).join("\n");
       await msg.reply(`**Choose new rarity:**\n${lines}\n\nType **1–5**:`);
       return;
     }
@@ -500,6 +511,7 @@ async function createCard(msg: Message, session: CardWizardSession) {
   const d = session.data;
   const r = d.rarity!;
   const mult = session.kind === "limited" ? 4 : session.kind === "event" ? 3 : 1;
+  const econ = await builtinRarityEconomy(msg.guild?.id ?? session.guildId, r);
 
   try {
     const card = await addCard({
@@ -507,9 +519,9 @@ async function createCard(msg: Message, session: CardWizardSession) {
       description: d.description ?? "",
       rarity: r,
       cardType: d.cardType!,
-      dropWeight: session.kind === "event" ? 0 : RARITY_WEIGHTS[r],
-      worthValue: RARITY_WORTH[r] * mult,
-      burnValue: RARITY_BURN[r] * mult,
+      dropWeight: session.kind === "event" ? 0 : econ.dropWeight,
+      worthValue: econ.worthValue * mult,
+      burnValue: econ.burnValue * mult,
       isLimitedEdition: session.kind === "limited",
       isEventExclusive: session.kind === "event",
       maxCopies: session.kind === "limited" ? d.maxCopies : undefined,

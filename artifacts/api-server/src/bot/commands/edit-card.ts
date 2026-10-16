@@ -29,10 +29,12 @@ import { editPanelExtraRows } from "./edit-panel-extras.js";
 import { logger } from "../../lib/logger.js";
 import {
   assignCardToCustomRarity,
+  applyBuiltinEconomyToCard,
   getCardByName,
   getCardById,
   getCardDisplayRarity,
   getDisplayRarities,
+  applyRarityContext,
   getOrCreateGuildSettings,
   getRarityContext,
   getRarityDisplayOverrides,
@@ -104,6 +106,7 @@ async function buildPanel(cardId: number, guildId?: string | null): Promise<{ em
     ? await Promise.all([getOrCreateGuildSettings(guildId), getRarityDisplayOverrides(guildId), getRarityContext(guildId)])
     : [null, null, null] as const;
   const displayRarity = getCardDisplayRarity(card, ctx, settings, displayMap);
+  const live = ctx ? applyRarityContext(card, ctx) : card;
   const embed = new EmbedBuilder()
     .setTitle(`✏️ Edit: ${card.name}`)
     .setColor(displayRarity.color)
@@ -111,8 +114,8 @@ async function buildPanel(cardId: number, guildId?: string | null): Promise<{ em
     .addFields(
       { name: "Rarity", value: `${displayRarity.emoji} ${displayRarity.label}`, inline: true },
       { name: "Type", value: card.cardType, inline: true },
-      { name: "Worth", value: `💠 ${card.worthValue.toLocaleString()}`, inline: true },
-      { name: "Burn", value: `💠 ${card.burnValue.toLocaleString()}`, inline: true },
+      { name: "Worth", value: `💠 ${live.worthValue.toLocaleString()}`, inline: true },
+      { name: "Burn", value: `💠 ${live.burnValue.toLocaleString()}`, inline: true },
       { name: "In Packs", value: card.inPacks ? "✅ Yes" : "❌ No", inline: true },
       { name: "Droppable", value: card.droppable ? "✅ Yes" : "❌ No", inline: true },
       { name: "Archived", value: card.isArchived ? "🗄️ Yes" : "❌ No", inline: true },
@@ -130,8 +133,8 @@ async function buildPanel(cardId: number, guildId?: string | null): Promise<{ em
       { label: "Name", value: "name", emoji: "🏷️" },
       { label: "Description", value: "description", emoji: "📝" },
       { label: "Type", value: "type", emoji: "🎯", description: `Currently ${card.cardType}` },
-      { label: "Worth value", value: "worthValue", emoji: "💠", description: `Currently ${card.worthValue.toLocaleString()}` },
-      { label: "Burn value", value: "burnValue", emoji: "🔥", description: `Currently ${card.burnValue.toLocaleString()}` },
+      { label: "Worth value", value: "worthValue", emoji: "💠", description: `Currently ${live.worthValue.toLocaleString()}` },
+      { label: "Burn value", value: "burnValue", emoji: "🔥", description: `Currently ${live.burnValue.toLocaleString()}` },
       { label: `Max copies ${card.maxCopies ?? "∞"}`, value: "maxCopies", emoji: "🔢", description: card.isLimitedEdition ? `Limited (${card.totalMinted}/${card.maxCopies ?? "?"})` : "Not limited" },
       { label: `Total minted ${card.totalMinted.toLocaleString()}`, value: "totalMinted", emoji: "🏭", description: "How many copies currently exist" },
       { label: card.inPacks ? "Toggle: remove from packs" : "Toggle: add to packs", value: "toggle:inPacks", emoji: "📦" },
@@ -318,6 +321,7 @@ export async function handleEditCardSelect(interaction: StringSelectMenuInteract
       if (!RARITIES.includes(rarity as Rarity)) return;
       await updateCard(cardId, { rarity });
       await unassignCardCustomRarity(interaction.guildId, cardId);
+      await applyBuiltinEconomyToCard(interaction.guildId, cardId, rarity as Rarity);
     }
     await renderPanel(interaction, cardId, false);
     return;

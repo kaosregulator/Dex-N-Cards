@@ -9,7 +9,8 @@ import {
   type ButtonInteraction, type ChatInputCommandInteraction,
   type GuildMember, type StringSelectMenuInteraction,
 } from "discord.js";
-import { isAdmin, getAllCards } from "../db.js";
+import { isAdmin, getAllCards, getOrCreateGuildSettings, getRarityDisplayOverrides } from "../db.js";
+import { rarityEmoji as dnRarityEmoji, rarityLabel, type Rarity } from "../cards-data.js";
 import {
   fetchMTTVItems, createCardFromVaultItem, rarityEmoji,
   type MTTVItem,
@@ -490,13 +491,20 @@ async function showBatchDone(interaction: ButtonInteraction, s: Session): Promis
   setEditPanelExtras(s.guildId, s.userId, null);
   const left = s.queue.length;
   sessions.delete(sessionKey(s.guildId, s.userId));
+  const [settings, displayMap] = await Promise.all([
+    getOrCreateGuildSettings(s.guildId),
+    getRarityDisplayOverrides(s.guildId),
+  ]);
   const embed = new EmbedBuilder()
     .setColor(s.created.length ? 0x2ecc71 : 0xe74c3c)
     .setTitle("📦 Vault batch")
     .setDescription(
       [
         s.created.length
-          ? `**Created ${s.created.length}**\n${s.created.map(c => `• **${c.name}** (${c.rarity})`).join("\n")}`
+          ? `**Created ${s.created.length}**\n${s.created.map(c => {
+              const rarity = c.rarity as Rarity;
+              return `• **${c.name}** (${dnRarityEmoji(rarity, settings, displayMap)} ${rarityLabel(rarity, settings, displayMap)})`;
+            }).join("\n")}`
           : "",
         s.skipped.length ? `**Skipped ${s.skipped.length}**\n${s.skipped.map(l => `• ${l}`).join("\n")}` : "",
         left ? `**Stopped early** — ${left} tagged item${left === 1 ? "" : "s"} not created.` : "",
