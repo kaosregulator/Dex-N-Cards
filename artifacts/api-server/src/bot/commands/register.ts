@@ -216,8 +216,8 @@ function buildLegacyCommands() {
 
     // Restored from the card-admin hub (PR #161 / #163). Buttons can't attach a
     // file or autocomplete a catalog, so these stay as real slash commands.
-    // Give / take / shards / delete / library stay on the /cardadmin panel.
-    // Roblox create is a real slash (username autocomplete + full-body preview).
+    // Give / take / shards / give-all / delete / library stay on the /cardadmin panel.
+    // Creates, drops, and image edits are slashes only (no duplicate hub buttons).
     adminCmd("drop", "Force-drop a card — for events and giveaways", s => s
       .addStringOption(o => o.setName("name").setDescription("Card name — leave empty for a random drop from the active set").setAutocomplete(true))
       .addStringOption(o => o.setName("set").setDescription("Pick a specific set to drop from (ignores the active set)").setAutocomplete(true))
@@ -649,11 +649,10 @@ export const HUB_REPLACED_COMMANDS = new Set<string>([
   "gift", "trades", "tradehistory", "accept", "decline",
   // Folded into /vaultvalue hub (info / calc / list / help / postcalc).
   "info_mttv", "calc", "valuehelp", "valuelist", "postcalculator",
-  // Still on the /cardadmin panel (buttons/modals are enough — no file upload).
-  // Restored as slash (autocomplete or an image Discord modals can't take):
-  //   drop, massdrop, addcard, createcardfrommttv, createcardsfrommttv,
-  //   createcardfromroblox, editimage.
-  // Kitsu create stays hub-replaced (retired). Library preview stays on /cardadmin.
+  // Hub-only on /cardadmin (no duplicate slash): give/take/shards/giveall/edit/delete/library.
+  // Restored as slash only (no hub button): drop, massdrop, addcard,
+  //   createcardfrommttv, createcardsfrommttv, createcardfromroblox, editimage.
+  // Kitsu create stays hub-replaced (retired).
   "createcardfrom", "library",
   "editcard", "deletecard",
   "give", "takeback", "giveall",

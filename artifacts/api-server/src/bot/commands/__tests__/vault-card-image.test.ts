@@ -111,6 +111,21 @@ describe("restored card-admin slash commands", () => {
     expect(cmd.options?.find((o) => o.name === "set")?.required).toBeFalsy();
   });
 
+  it("keeps slash-backed creates and drops off the cardadmin hub", async () => {
+    process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
+    const { CARD_ADMIN_HUB_BUTTON_IDS } = await import("../cardadmin-hub.js");
+    const ids = new Set<string>(CARD_ADMIN_HUB_BUTTON_IDS);
+    for (const gone of [
+      "cahub:create_roblox", "cahub:create_kitsu", "cahub:create_vault",
+      "cahub:create", "cahub:drop", "cahub:mass_drop", "cahub:edit_image",
+    ]) {
+      expect(ids.has(gone), gone).toBe(false);
+    }
+    for (const keep of ["cahub:give", "cahub:take", "cahub:giveall", "cahub:edit", "cahub:delete"]) {
+      expect(ids.has(keep), keep).toBe(true);
+    }
+  });
+
   it("registers Roblox create with username autocomplete and optional image", async () => {
     const { chat, internalCommandName, ADMIN_HUB_COMMANDS } = await registered();
     const cmd = chat.find((c) => c.name === "create_card_from_roblox") as {

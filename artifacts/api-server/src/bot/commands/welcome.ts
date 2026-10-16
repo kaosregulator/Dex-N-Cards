@@ -261,7 +261,7 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
           "`/create_card_from_roblox` — Roblox username + full-body avatar (preview, then create)\n" +
           "`/create_card_from_mttv` — one Vault item · `/create_cards_from_mttv` — bulk (tag 5, preview)\n" +
           "`/add_card` · `/edit_image`\n" +
-          "`/cardadmin` — give · take · give shards · take shards",
+          "`/cardadmin` — give · take · shards · give all · edit · delete",
         inline: false,
       },
       {
