@@ -1,6 +1,6 @@
 import type { CustomRarity, GuildSettings, RarityProfile } from "@workspace/db";
 import {
-  RARITY_WEIGHTS, BUILTIN_RARITIES, getRarityOrder, rarityRank,
+  RARITY_WEIGHTS, RARITY_WORTH, RARITY_BURN, BUILTIN_RARITIES, getRarityOrder, rarityRank,
   rarityLabel as builtinRarityLabel,
   rarityEmoji as builtinRarityEmoji,
   rarityColor as builtinRarityColor,
@@ -61,6 +61,29 @@ export function rarityLadderRank(key: string, ctx?: RarityContext | null): numbe
 }
 
 type EconCard = { rarity: string; worthValue: number; burnValue: number; dropWeight: number };
+
+export type RarityEconomy = { worthValue: number; burnValue: number; dropWeight: number };
+
+/** Built-in rarity economy. A server override wins per field; everything else is the default. */
+export function effectiveBuiltinEconomy(
+  rarity: Rarity,
+  profile?: { worthValue?: number | null; burnValue?: number | null; dropWeight?: number | null } | null,
+): RarityEconomy {
+  return {
+    worthValue: profile?.worthValue ?? RARITY_WORTH[rarity],
+    burnValue: profile?.burnValue ?? RARITY_BURN[rarity],
+    dropWeight: profile?.dropWeight ?? RARITY_WEIGHTS[rarity],
+  };
+}
+
+/** 1-based slot of a built-in rarity in the guild's /rarity order. */
+export function builtinDisplayPosition(rarity: Rarity, order?: readonly Rarity[] | null): number {
+  if (order && order.length) {
+    const index = order.indexOf(rarity);
+    if (index >= 0) return index + 1;
+  }
+  return BUILTIN_POSITIONS[rarity];
+}
 
 export type DisplayRarity = {
   key: string;
@@ -153,7 +176,7 @@ export function getCardDisplayRarity(
     label: builtinRarityLabel(rarity, settings, displayMap),
     emoji: builtinRarityEmoji(rarity, settings, displayMap),
     color: builtinRarityColor(rarity, settings, displayMap),
-    position: BUILTIN_POSITIONS[rarity],
+    position: builtinDisplayPosition(rarity, ctx?.order),
     isCustom: false,
     rarity,
   };
@@ -166,12 +189,13 @@ export function getDisplayRarities(
 ): DisplayRarity[] {
   const rarestFirst = opts?.rarestFirst ?? true;
   const displayMap = opts?.displayMap ?? null;
-  const builtins: DisplayRarity[] = (Object.keys(BUILTIN_POSITIONS) as Rarity[]).map(r => ({
+  const order = ctx.order?.length ? ctx.order : (Object.keys(BUILTIN_POSITIONS) as Rarity[]);
+  const builtins: DisplayRarity[] = order.map(r => ({
     key: r,
     label: builtinRarityLabel(r, settings, displayMap),
     emoji: builtinRarityEmoji(r, settings, displayMap),
     color: builtinRarityColor(r, settings, displayMap),
-    position: BUILTIN_POSITIONS[r],
+    position: builtinDisplayPosition(r, order),
     isCustom: false,
     rarity: r,
   }));

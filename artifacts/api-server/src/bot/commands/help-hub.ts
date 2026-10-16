@@ -345,7 +345,7 @@ const PAGES: Record<HelpSection, PageFn> = {
         { name: "🎁 Drops, Gives & Events", value:
           "`/drop [name] [set] [star] [level]` — force one card (blank name = random)\n" +
           "`/mass_drop [amount] [set]` — 10–25 cards in a batch\n" +
-          "`/cardadmin` panel — Give · Take · Shards · Give all\n" +
+          "`/give` · `/take_back` · `/give_shards` · `/take_shards` · `/give_all`\n" +
           "*star/level make the card arrive pre-fused/levelled (battle-ready).*\n" +
           "`/event start|list|stop` — limited-time spawn boosts" },
         { name: "✨ Reveals & Card Progression", value:
@@ -354,9 +354,10 @@ const PAGES: Record<HelpSection, PageFn> = {
         { name: "🗂️ Cards & Sets", value:
           "`/create_card_from_roblox username: rarity:` — Roblox search, full-body preview, create\n" +
           "`/create_card_from_mttv item: rarity: [image:]` — Vault Values art + DN rarity\n" +
-          "`/create_cards_from_mttv` — bulk: filter by website rarity, tag 5, preview images, create\n" +
+          "`/create_cards_from_mttv` — bulk: filter by website rarity, tag 5, preview, then edit one card at a time\n" +
           "`/add_card` — upload your own image · `/edit_image` — Vault image or a file\n" +
-          "`/cardadmin` panel — Give · Take · Shards · Give all · Edit · Delete · Library\n" +
+          "`/edit_card` · `/delete_card` · `/edit_user` · `/library` — autocomplete slashes\n" +
+          "`/config` → Packs → **✨ Rarities** — lock a pack to rarities from `/rarity`\n" +
           "`/set_hub` · `/set_admin` — **Delete** one set, or **Delete all sets** (cards stay)\n" +
           "`/delete_all_cards` — asks first, then erases every card and any sets left\n" +
           "`/rarity` — names, colors, worth, burn, weights, order" },

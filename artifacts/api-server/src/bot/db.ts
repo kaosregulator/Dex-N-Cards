@@ -12,7 +12,7 @@ import {
   calculatorMessagesTable, showcaseBackgroundsTable,
   battleBackgroundsTable,
 } from "@workspace/db";
-import { eq, and, or, sql, desc, inArray, isNull, type SQL } from "drizzle-orm";
+import { eq, and, or, sql, desc, inArray, notInArray, isNull, type SQL } from "drizzle-orm";
 import { fuzzyFindCard, bumpCardsSearchVersion } from "./search/fuse-service.js";
 import { detectAnimatedImage } from "./image-url.js";
 import type { Card, CardEvent, CardSet, CalculatorMessage, CustomPack, CustomPackCard, CustomRarity, GuildSettings, RarityProfile, Trade } from "@workspace/db";
@@ -26,6 +26,7 @@ import {
   applyRarityContext,
   applyRarityContextAll,
   effectiveRarityKey,
+  effectiveBuiltinEconomy,
   getCardDisplayRarity,
   getDisplayRarities,
   getGuildRarityWeights,
@@ -2288,6 +2289,7 @@ export async function upsertRarityProfile(
   invalidateRarityProfileCache(guildId);
   invalidateRarityContextCache(guildId);
   invalidateCardCache();
+  await syncCardsToBuiltinRarity(guildId, rarity);
   return row;
 }
 
@@ -2298,7 +2300,49 @@ export async function deleteRarityProfile(guildId: string, rarity: Rarity): Prom
   invalidateRarityProfileCache(guildId);
   invalidateRarityContextCache(guildId);
   invalidateCardCache();
+  await syncCardsToBuiltinRarity(guildId, rarity);
   return res.length > 0;
+}
+
+/** Push a built-in rarity's effective worth, burn, and spawn onto every card on that tier. */
+export async function syncCardsToBuiltinRarity(guildId: string, rarity: Rarity): Promise<number> {
+  const profile = await getRarityProfile(guildId);
+  const econ = effectiveBuiltinEconomy(rarity, profile.get(rarity));
+  const overridden = await db.select({ cardId: cardRarityOverridesTable.cardId })
+    .from(cardRarityOverridesTable)
+    .where(eq(cardRarityOverridesTable.guildId, guildId));
+  const skip = overridden.map(row => row.cardId);
+  const filters: SQL[] = [eq(cardsTable.guildId, guildId), eq(cardsTable.rarity, rarity)];
+  if (skip.length > 0) filters.push(notInArray(cardsTable.id, skip));
+  const rows = await db.update(cardsTable)
+    .set({ worthValue: econ.worthValue, burnValue: econ.burnValue, dropWeight: econ.dropWeight })
+    .where(and(...filters))
+    .returning({ id: cardsTable.id });
+  if (rows.length > 0) {
+    invalidateCardCache();
+    invalidateActiveSetCardsCache();
+  }
+  return rows.length;
+}
+
+export async function builtinRarityEconomy(guildId: string, rarity: Rarity) {
+  const profile = await getRarityProfile(guildId);
+  return effectiveBuiltinEconomy(rarity, profile.get(rarity));
+}
+
+export async function applyBuiltinEconomyToCard(guildId: string, cardId: number, rarity: Rarity): Promise<void> {
+  await writeBuiltinEconomy(guildId, rarity, [cardId]);
+}
+
+async function writeBuiltinEconomy(guildId: string, rarity: Rarity, cardIds: number[]): Promise<void> {
+  if (cardIds.length === 0) return;
+  const profile = await getRarityProfile(guildId);
+  const econ = effectiveBuiltinEconomy(rarity, profile.get(rarity));
+  await db.update(cardsTable)
+    .set({ worthValue: econ.worthValue, burnValue: econ.burnValue, dropWeight: econ.dropWeight })
+    .where(and(eq(cardsTable.guildId, guildId), inArray(cardsTable.id, cardIds)));
+  invalidateCardCache();
+  invalidateActiveSetCardsCache();
 }
 
 export async function listRarityProfiles(guildId: string): Promise<RarityProfile[]> {
@@ -2352,10 +2396,19 @@ export async function updateCustomRarity(
     .returning();
   invalidateRarityContextCache(guildId);
   invalidateCardCache();
+  if (row && (patch.worthValue !== undefined || patch.burnValue !== undefined || patch.dropWeight !== undefined)) {
+    await syncCardsToCustomRarity(guildId, slug);
+  }
   return row ?? null;
 }
 
 export async function deleteCustomRarity(guildId: string, slug: string): Promise<{ removed: boolean; clearedAssignments: number }> {
+  const assigned = await db.select({
+    cardId: cardRarityOverridesTable.cardId,
+    rarity: cardsTable.rarity,
+  }).from(cardRarityOverridesTable)
+    .innerJoin(cardsTable, eq(cardsTable.id, cardRarityOverridesTable.cardId))
+    .where(and(eq(cardRarityOverridesTable.guildId, guildId), eq(cardRarityOverridesTable.customRaritySlug, slug)));
   const cleared = await db.delete(cardRarityOverridesTable)
     .where(and(eq(cardRarityOverridesTable.guildId, guildId), eq(cardRarityOverridesTable.customRaritySlug, slug)))
     .returning({ id: cardRarityOverridesTable.id });
@@ -2364,7 +2417,32 @@ export async function deleteCustomRarity(guildId: string, slug: string): Promise
     .returning({ id: customRaritiesTable.id });
   invalidateRarityContextCache(guildId);
   invalidateCardCache();
+  const byRarity = new Map<Rarity, number[]>();
+  for (const row of assigned) {
+    const rarity = row.rarity as Rarity;
+    const list = byRarity.get(rarity) ?? [];
+    list.push(row.cardId);
+    byRarity.set(rarity, list);
+  }
+  for (const [rarity, ids] of byRarity) {
+    await writeBuiltinEconomy(guildId, rarity, ids);
+  }
   return { removed: res.length > 0, clearedAssignments: cleared.length };
+}
+
+async function syncCardsToCustomRarity(guildId: string, slug: string): Promise<void> {
+  const tier = await getCustomRarityBySlug(guildId, slug);
+  if (!tier) return;
+  const assigned = await db.select({ cardId: cardRarityOverridesTable.cardId })
+    .from(cardRarityOverridesTable)
+    .where(and(eq(cardRarityOverridesTable.guildId, guildId), eq(cardRarityOverridesTable.customRaritySlug, slug)));
+  const ids = assigned.map(row => row.cardId);
+  if (ids.length === 0) return;
+  await db.update(cardsTable)
+    .set({ worthValue: tier.worthValue, burnValue: tier.burnValue, dropWeight: tier.dropWeight })
+    .where(and(eq(cardsTable.guildId, guildId), inArray(cardsTable.id, ids)));
+  invalidateCardCache();
+  invalidateActiveSetCardsCache();
 }
 
 export async function listCustomRarities(guildId: string): Promise<CustomRarity[]> {
@@ -2387,6 +2465,7 @@ export async function assignCardToCustomRarity(guildId: string, cardId: number, 
     });
   invalidateRarityContextCache(guildId);
   invalidateCardCache();
+  await syncCardsToCustomRarity(guildId, slug);
 }
 
 export async function unassignCardCustomRarity(guildId: string, cardId: number): Promise<boolean> {
@@ -2395,6 +2474,12 @@ export async function unassignCardCustomRarity(guildId: string, cardId: number):
     .returning({ id: cardRarityOverridesTable.id });
   invalidateRarityContextCache(guildId);
   invalidateCardCache();
+  if (res.length > 0) {
+    const [card] = await db.select({ rarity: cardsTable.rarity })
+      .from(cardsTable)
+      .where(and(eq(cardsTable.id, cardId), eq(cardsTable.guildId, guildId)));
+    if (card) await writeBuiltinEconomy(guildId, card.rarity as Rarity, [cardId]);
+  }
   return res.length > 0;
 }
 
@@ -2494,6 +2579,7 @@ export async function updateCustomPack(
   patch: Partial<{
     name: string; slug: string; cost: number; size: number; weeklyLimit: number;
     rarityRates: Record<string, number>; cardTypes: string[]; isActive: boolean; description: string; emoji: string | null;
+    allowedRarities: string[] | null;
   }>,
 ): Promise<void> {
   const [existing] = await db.select({ guildId: customPacksTable.guildId })

@@ -253,6 +253,12 @@ export const guildSettingsTable = pgTable("guild_settings", {
   packBasicDesc: text("pack_basic_desc"),
   packPremiumDesc: text("pack_premium_desc"),
   packLegendaryDesc: text("pack_legendary_desc"),
+  // Rarity allow-lists for built-in packs. Null/empty = built-in TIER_RATES
+  // (including spill into a nearby rarity when a bucket is empty).
+  // A list is effective rarity keys from /rarity: "common" or "custom:<slug>".
+  packBasicRarities: text("pack_basic_rarities").array(),
+  packPremiumRarities: text("pack_premium_rarities").array(),
+  packLegendaryRarities: text("pack_legendary_rarities").array(),
   // ── Animation system toggles ───────────────────────────────────────────────
   // Master switches and pacing for the @napi-rs/canvas + gifencoder animation
   // system. Defaults keep the old instant embed behavior for low-powered setups.
@@ -708,6 +714,9 @@ export const customPacksTable = pgTable("custom_packs", {
   rarityRates: jsonb("rarity_rates").$type<Record<string, number>>().notNull(),
   // Card types this pack draws from. Empty array = all types.
   cardTypes: text("card_types").array().notNull().default([]),
+  // Rarity allow-list. Null/empty = this pack's rarityRates (with spill).
+  // Keys match /rarity: built-in ids or "custom:<slug>".
+  allowedRarities: text("allowed_rarities").array(),
   // Optional admin-set description shown when this pack is opened.
   description: text("description").notNull().default(""),
   // Optional emoji prefix shown in pack autocomplete and open embeds.

@@ -22,6 +22,9 @@ async function runBootMigrations() {
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_basic_name text`);
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_premium_name text`);
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_legendary_name text`);
+  await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_basic_rarities text[]`);
+  await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_premium_rarities text[]`);
+  await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_legendary_rarities text[]`);
 
 
   // Per-guild ownership of cards and sets. Backfill existing rows to the home
@@ -505,6 +508,7 @@ async function runBootMigrations() {
   );
   await pool.query(`ALTER TABLE custom_packs ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`);
   await pool.query(`ALTER TABLE custom_packs ADD COLUMN IF NOT EXISTS emoji text`);
+  await pool.query(`ALTER TABLE custom_packs ADD COLUMN IF NOT EXISTS allowed_rarities text[]`);
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_basic_desc TEXT`);
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_premium_desc TEXT`);
   await pool.query(`ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS pack_legendary_desc TEXT`);

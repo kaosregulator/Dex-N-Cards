@@ -11,9 +11,9 @@ import {
 import { renderCalcResultsCanvas, CALC_RESULTS_FILE } from "./calc-results-canvas.js";
 import { logger } from "../../lib/logger.js";
 import { getBotClient } from "../client-holder.js";
-import { addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
+import { addCard, addCardToSet, builtinRarityEconomy, getCardByName, getSetByName } from "../db.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
-import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
+import { type Rarity } from "../cards-data.js";
 import { dnRarityFromVault, vaultItemImageUrl } from "./vault-image.js";
 
 export { dnRarityFromVault, vaultItemImageUrl } from "./vault-image.js";
@@ -306,12 +306,9 @@ export async function handleInfoMTTV(interaction: ChatInputCommandInteraction): 
 
 const CREATE_CARD_RARITIES = new Set<string>(["common", "uncommon", "rare", "epic", "legendary", "mythic"]);
 
-function createCardRarityDefaults(rarity: Rarity): { worth: number; burn: number; weight: number } {
-  return {
-    worth: RARITY_WORTH[rarity],
-    burn: RARITY_BURN[rarity],
-    weight: RARITY_WEIGHTS[rarity],
-  };
+async function createCardRarityDefaults(guildId: string, rarity: Rarity): Promise<{ worth: number; burn: number; weight: number }> {
+  const econ = await builtinRarityEconomy(guildId, rarity);
+  return { worth: econ.worthValue, burn: econ.burnValue, weight: econ.dropWeight };
 }
 
 const VAULT_TAG_NOISE = new Set(["stable", "rising", "dropping", "special", "collector", "untradable"]);
@@ -363,7 +360,7 @@ export async function createCardFromVaultItem(input: VaultCreateInput): Promise<
   }
   const rarityNote = !explicitRarity && input.item.rarity[0] ? ` from Vault ${input.item.rarity[0]}` : "";
   const type = (input.typeRaw ?? "").trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40) || defaultTypeFromVaultItem(input.item);
-  const defs = createCardRarityDefaults(baseRarity);
+  const defs = await createCardRarityDefaults(input.guildId, baseRarity);
 
   const existing = await getCardByName(input.item.name, input.guildId);
   if (existing) {

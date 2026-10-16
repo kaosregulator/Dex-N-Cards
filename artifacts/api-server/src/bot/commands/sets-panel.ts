@@ -5,7 +5,7 @@ import {
   type ChatInputCommandInteraction, type ButtonInteraction,
   type StringSelectMenuInteraction, type ModalSubmitInteraction,
 } from "discord.js";
-import { isAdmin, listSetsV2, getCardsInSet, createSet, setActiveSet, clearActiveSet, getActiveSet, setSetAwardsCompletion, invalidateActiveSetCardsCache, deleteSetById, deleteAllSets } from "../db.js";
+import { isAdmin, listSetsV2, getCardsInSet, createSet, setActiveSet, clearActiveSet, getActiveSet, setSetAwardsCompletion, invalidateActiveSetCardsCache, deleteSetById, deleteAllSets, getRarityContext, getOrCreateGuildSettings, getRarityDisplayOverrides, getCardDisplayRarity } from "../db.js";
 import { buildSingleSetPayload } from "./sets-admin.js";
 
 // ── Permission guard ──────────────────────────────────────────────────────────
@@ -337,7 +337,15 @@ export async function handleSetsHubButton(interaction: ButtonInteraction): Promi
       await interaction.followUp({ content: "📭 No cards in this set yet. Add some with `/set_admin add`.", flags: MessageFlags.Ephemeral });
       return;
     }
-    const lines = cards.map(c => `• **${c.name}** — ${c.rarity}`);
+    const [ctx, settings, displayMap] = await Promise.all([
+      getRarityContext(guildId),
+      getOrCreateGuildSettings(guildId),
+      getRarityDisplayOverrides(guildId),
+    ]);
+    const lines = cards.map(c => {
+      const d = getCardDisplayRarity(c, ctx, settings, displayMap);
+      return `• **${c.name}** — ${d.emoji} ${d.label}`;
+    });
     const chunks: string[] = [];
     let cur = "";
     for (const l of lines) {

@@ -3,9 +3,9 @@ import type {
   AutocompleteInteraction,
 } from "discord.js";
 import { MessageFlags, EmbedBuilder } from "discord.js";
-import { addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
+import { addCard, addCardToSet, builtinRarityEconomy, getCardByName, getSetByName } from "../db.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
-import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
+import { type Rarity } from "../cards-data.js";
 import { logger } from "../../lib/logger.js";
 
 // ── Kitsu.io card source ───────────────────────────────────────────────────
@@ -188,12 +188,9 @@ async function resolveKitsuItem(category: KitsuCategory, value: string): Promise
 
 const CREATE_CARD_RARITIES = new Set<string>(["common", "uncommon", "rare", "epic", "legendary", "mythic"]);
 
-function createCardRarityDefaults(rarity: Rarity): { worth: number; burn: number; weight: number } {
-  return {
-    worth: RARITY_WORTH[rarity],
-    burn: RARITY_BURN[rarity],
-    weight: RARITY_WEIGHTS[rarity],
-  };
+async function createCardRarityDefaults(guildId: string, rarity: Rarity): Promise<{ worth: number; burn: number; weight: number }> {
+  const econ = await builtinRarityEconomy(guildId, rarity);
+  return { worth: econ.worthValue, burn: econ.burnValue, weight: econ.dropWeight };
 }
 
 function matchScore(item: KitsuItem, query: string): number {
@@ -309,7 +306,7 @@ export async function handleCreateCardFromKitsu(interaction: ChatInputCommandInt
     return;
   }
   const baseRarity = rarityInput as Rarity;
-  const defs = createCardRarityDefaults(baseRarity);
+  const defs = await createCardRarityDefaults(guildId, baseRarity);
 
   let item: KitsuItem | undefined;
   try {

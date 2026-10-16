@@ -1,8 +1,10 @@
 import type { AutocompleteInteraction } from "discord.js";
 import Fuse from "fuse.js";
 import { internalCommandName } from "./register.js";
-import { getAllCards, listSetsV2, getUserCollection, getUserWishlist, listCustomRarities, getRarityContext, getOrCreateGuildSettings, getRarityDisplayOverrides, getDisplayRarities, getDistinctCardTypes, listCustomPacks } from "../db.js";
-import { RARITY_EMOJI, rarityEmoji, rarityLabel, type Rarity } from "../cards-data.js";
+import { getAllCards, listSetsV2, getUserCollection, getUserWishlist, listCustomRarities, getRarityContext, getOrCreateGuildSettings, getRarityDisplayOverrides, getDisplayRarities, getCardDisplayRarity, getDistinctCardTypes, listCustomPacks } from "../db.js";
+import { RARITY_EMOJI, rarityEmoji, rarityLabel, type Rarity, type RarityDisplayMap } from "../cards-data.js";
+import type { GuildSettings } from "@workspace/db";
+import type { RarityContext } from "../rarity-runtime.js";
 import { tierLabel, PACK_TIER_META, PACK_TIERS } from "./pack.js";
 
 const MAX_CHOICES = 25;
@@ -11,16 +13,17 @@ const MAX_CHOICES = 25;
 // ⚠️ REPLIT SAFETY REVIEW ⚠️ Keyed PER GUILD — a shared cache would let one
 // server's roster autocomplete into another server. Callers MUST pass the
 // viewer's guildId; without one we return [] (never another server's cards).
-const cardCache = new Map<string, { at: number; cards: Array<{ name: string; rarity: string }> }>();
+type SlimCard = { id: number; name: string; rarity: string };
+const cardCache = new Map<string, { at: number; cards: SlimCard[] }>();
 const CACHE_MS = 15_000;
 
-async function getCardsCached(guildId: string | null | undefined): Promise<Array<{ name: string; rarity: string }>> {
+async function getCardsCached(guildId: string | null | undefined): Promise<SlimCard[]> {
   if (!guildId) return [];
   const now = Date.now();
   const cached = cardCache.get(guildId);
   if (cached && now - cached.at < CACHE_MS) return cached.cards;
   const cards = await getAllCards(guildId);
-  const slim = cards.map(c => ({ name: c.name, rarity: c.rarity }));
+  const slim = cards.map(c => ({ id: c.id, name: c.name, rarity: c.rarity }));
   cardCache.set(guildId, { at: now, cards: slim });
   return slim;
 }
@@ -80,16 +83,30 @@ function acronym(name: string): string {
     .join("");
 }
 
-function formatCardChoice(c: { name: string; rarity: string }) {
-  const emoji = rarityEmoji(c.rarity as Rarity, null, null) ?? "🃏";
-  const display = `${emoji} ${c.name}`.slice(0, 100);
-  return { name: display, value: c.name.slice(0, 100) };
+function formatCardChoice(
+  c: SlimCard,
+  ctx: RarityContext | null,
+  settings: GuildSettings | null,
+  displayMap: RarityDisplayMap | null,
+) {
+  const display = getCardDisplayRarity(c, ctx, settings, displayMap);
+  return { name: `${display.emoji} ${c.name}`.slice(0, 100), value: c.name.slice(0, 100) };
 }
 
-async function suggestCardNames(query: string, guildId: string | null | undefined, pool?: Array<{ name: string; rarity: string }>) {
+async function suggestCardNames(query: string, guildId: string | null | undefined, pool?: Array<{ id?: number; name: string; rarity: string }>) {
   const q = query.toLowerCase().trim();
-  const cards = pool ?? await getCardsCached(guildId);
-  if (!q) return cards.slice(0, MAX_CHOICES).map(formatCardChoice);
+  const [ctx, settings, displayMap] = guildId
+    ? await Promise.all([
+        getRarityContext(guildId),
+        getOrCreateGuildSettings(guildId),
+        getRarityDisplayOverrides(guildId),
+      ])
+    : [null, null, null];
+  const cards: SlimCard[] = pool
+    ? pool.map(c => ({ id: c.id ?? -1, name: c.name, rarity: c.rarity }))
+    : await getCardsCached(guildId);
+  const format = (c: SlimCard) => formatCardChoice(c, ctx, settings, displayMap);
+  if (!q) return cards.slice(0, MAX_CHOICES).map(format);
 
   const fuse = new Fuse(cards, {
     keys: ["name"],
@@ -107,7 +124,7 @@ async function suggestCardNames(query: string, guildId: string | null | undefine
   const seen = new Set(exactAndAcronym.map(c => c.name));
   const fuseHits = fuse.search(q).map(r => r.item).filter(c => !seen.has(c.name));
 
-  return [...exactAndAcronym, ...fuseHits].slice(0, MAX_CHOICES).map(formatCardChoice);
+  return [...exactAndAcronym, ...fuseHits].slice(0, MAX_CHOICES).map(format);
 }
 
 export async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
@@ -172,8 +189,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       (cmd === "createcardsfrommttv" && focused.name === "set") ||
       (cmd === "createcardfromroblox" && focused.name === "set") ||
       (cmd === "createcardfrom" && focused.name === "set") ||
-      (cmd === "cardadmin" && focused.name === "set" &&
-        ["create", "create_kitsu", "create_vault", "giveall", "drop", "mass_drop"].includes(sub ?? ""));
+      (cmd === "giveall" && focused.name === "set");
     if (isSetNameOption) {
       const sets = await getSetsCached(interaction.guildId);
       const q = query.toLowerCase().trim();
@@ -189,10 +205,41 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       return;
     }
 
+    // ── /take_back — prefer cards the target member actually owns ───────────
+    if (cmd === "takeback" && focused.name === "name" && interaction.guild) {
+      const targetId = interaction.options.get("user")?.user?.id;
+      if (targetId) {
+        const owned = await getUserCollectionCached(interaction.guild.id, targetId);
+        const pool = owned.map(o => ({ id: o.cardId, name: o.name, rarity: o.rarity }));
+        await interaction.respond(await suggestCardNames(query, interaction.guild.id, pool));
+        return;
+      }
+    }
+
+    // ── /give_all rarity — /rarity display names, built-in and custom ────────
+    if (cmd === "giveall" && focused.name === "rarity" && interaction.guild) {
+      const q = query.toLowerCase().trim();
+      const [ctx, settings, displayMap] = await Promise.all([
+        getRarityContext(interaction.guild.id),
+        getOrCreateGuildSettings(interaction.guild.id),
+        getRarityDisplayOverrides(interaction.guild.id),
+      ]);
+      const ladder = getDisplayRarities(ctx, settings, { rarestFirst: false, displayMap });
+      const options = ladder.map(tier => ({
+        name: `${tier.emoji} ${tier.label}`.slice(0, 100),
+        value: (tier.isCustom ? `custom:${tier.slug}` : tier.rarity!).slice(0, 100),
+      }));
+      const filtered = !q
+        ? options
+        : options.filter(o => o.name.toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
+      await interaction.respond(filtered.slice(0, MAX_CHOICES));
+      return;
+    }
+
     // ── /burn, /level, /frame, /lock, /market sell — suggest owned cards ────
     if ((cmd === "burn" || cmd === "level" || cmd === "frame" || cmd === "lock" || cmd === "market" || cmd === "tradein") && focused.name === "name" && interaction.guild) {
       const owned = await getUserCollectionCached(interaction.guild.id, interaction.user.id);
-      const pool = owned.map(o => ({ name: o.name, rarity: o.rarity }));
+      const pool = owned.map(o => ({ id: o.cardId, name: o.name, rarity: o.rarity }));
       await interaction.respond(await suggestCardNames(query, interaction.guild.id, pool));
       return;
     }
@@ -200,7 +247,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
     // ── /trade offer — only cards the user owns ─────────────────────────────
     if (cmd === "trade" && focused.name === "offer" && interaction.guild) {
       const owned = await getUserCollectionCached(interaction.guild.id, interaction.user.id);
-      const pool = owned.map(o => ({ name: o.name, rarity: o.rarity }));
+      const pool = owned.map(o => ({ id: o.cardId, name: o.name, rarity: o.rarity }));
       await interaction.respond(await suggestCardNames(query, interaction.guild.id, pool));
       return;
     }
@@ -215,7 +262,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
           await interaction.respond([{ name: `⚠️ ${targetOpt?.user?.username ?? "They"} have no cards yet`, value: "" }]);
           return;
         }
-        const pool = targetOwned.map(o => ({ name: o.name, rarity: o.rarity }));
+        const pool = targetOwned.map(o => ({ id: o.cardId, name: o.name, rarity: o.rarity }));
         await interaction.respond(await suggestCardNames(query, interaction.guild.id, pool));
         return;
       }
@@ -227,7 +274,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       const sub = interaction.options.getSubcommand(false);
       if (sub === "remove") {
         const wished = await getUserWishlistCached(interaction.guild.id, interaction.user.id);
-        const pool = wished.map(w => ({ name: w.name, rarity: w.rarity }));
+        const pool = wished.map(w => ({ id: w.cardId, name: w.name, rarity: w.rarity }));
         await interaction.respond(await suggestCardNames(query, interaction.guild.id, pool));
         return;
       }

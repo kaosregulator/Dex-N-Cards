@@ -49,9 +49,10 @@ Collect, trade, battle, and build — with a User Hub for daily profile flow, co
 - **`/setup`** (and `!setup`) — guided configuration
 - **`/config`** — visual toggles, intervals, rates, pack settings
 - Sets, rarity, embeds, giveaways — `/set_hub`, `/rarity`, `/embed`, `/giveaway`
-- **`/cardadmin`** — give, take, shards, give-all, edit, delete (creates/drops are their own slashes)
+- **`/give`** · **`/take_back`** · **`/give_shards`** · **`/take_shards`** · **`/give_all`** · **`/edit_card`** · **`/delete_card`** — autocomplete slashes (the card admin hub is retired)
 - **`/create_card_from_roblox`** — search a Roblox user, preview the full-body avatar, create
-- **`/create_cards_from_mttv`** — bulk Vault Values: filter by website rarity, tag up to 5, preview images, create
+- **`/create_cards_from_mttv`** — bulk Vault Values: filter by website rarity, tag up to 5, preview images, then customize one card at a time
+- **`/config` → Packs → Rarities** — lock a built-in or custom pack to rarities from `/rarity`
 - **`/admin_hub`** — staff toolbox · **`/help` → Admin** for the full reference
 
 ---
@@ -179,10 +180,11 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/setup` · `!setup` | Guided server setup |
 | `/config` | Visual configuration panel |
 | `/admin_hub` | Admin toolbox |
-| `/cardadmin` | Give / take / shards / give-all / edit / delete (creates and drops are slashes) |
+| `/give` · `/take_back` · `/give_shards` · `/take_shards` · `/give_all` | Direct card and shard grants (autocomplete) |
+| `/edit_card` · `/delete_card` · `/edit_user` · `/library` | Edit, delete, member editor, Kitsu preview |
 | `/create_card_from_roblox` | Roblox username search, full-body avatar preview, then create |
 | `/create_card_from_mttv` | One new card from a Vault Values item (image + DN rarity) |
-| `/create_cards_from_mttv` | Bulk Vault create — website rarity filter, tag 5, image preview |
+| `/create_cards_from_mttv` | Bulk Vault create — preview, then the edit-card flow one card at a time |
 | `/battle_admin` · `/raid_admin` | Combat admin |
 | `/set_hub` · `/set_admin` | Card sets / spawn rotation |
 | `/event` | Limited events |
@@ -212,7 +214,7 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 > - **`/user-hub`:** daily, collection, wishlist, quests, market, squad, and related profile shortcuts
 > - **`/trade`:** gift, pending trades, history, accept, decline
 > - **`/vaultvalue`:** info, calc, list, help, postcalc
-> - **`/cardadmin`:** give, take, shards, give-all, edit, delete, library (creates/drops are slashes)
+> - **Card admin slashes:** `/give`, `/take_back`, `/give_shards`, `/take_shards`, `/give_all`, `/edit_card`, `/delete_card`, `/edit_user`, `/library` (`/cardadmin` is retired)
 > - **`/secret`:** whisper, staff secret (`/echo` stays as config)
 > - **`/quiet mode:…`:** vacation / loa entry aliases
 > - **`/help` → Admin:** adminhelp / welcomeadmin docs

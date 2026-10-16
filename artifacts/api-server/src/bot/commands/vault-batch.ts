@@ -1,7 +1,7 @@
 // /create_cards_from_mttv — stepped bulk create from Vault Values.
 // Vault rarity is only a filter (which website items to look at), not the DN
-// card rarity. Tag up to 5, preview images, then each tagged item runs the
-// same create path as /create_card_from_mttv.
+// card rarity. Tag up to 5, preview images, then each tagged item is created
+// one at a time through the /edit_card panel so it can be customized.
 
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags,
@@ -9,12 +9,15 @@ import {
   type ButtonInteraction, type ChatInputCommandInteraction,
   type GuildMember, type StringSelectMenuInteraction,
 } from "discord.js";
-import { isAdmin, getAllCards } from "../db.js";
+import { isAdmin, getAllCards, getOrCreateGuildSettings, getRarityDisplayOverrides } from "../db.js";
+import { rarityEmoji as dnRarityEmoji, rarityLabel, type Rarity } from "../cards-data.js";
 import {
   fetchMTTVItems, createCardFromVaultItem, rarityEmoji,
   type MTTVItem,
 } from "./mttvalues.js";
 import { logger } from "../../lib/logger.js";
+import { renderPanel } from "./edit-card.js";
+import { setEditPanelExtras } from "./edit-panel-extras.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const PAGE = 5;
@@ -58,6 +61,8 @@ export function pageItems<T>(items: T[], page: number, size = PAGE): T[] {
   return items.slice(start, start + size);
 }
 
+type CreatedCard = { id: number; name: string; rarity: string };
+
 type Session = {
   guildId: string;
   userId: string;
@@ -67,6 +72,10 @@ type Session = {
   dnRarity: string;
   setName: string | null;
   view: "rarity" | "browse" | "preview";
+  queue: string[];
+  created: CreatedCard[];
+  skipped: string[];
+  creating: boolean;
 };
 
 const sessions = new Map<string, Session>();
@@ -311,6 +320,10 @@ export async function handleVaultBatchCommand(interaction: ChatInputCommandInter
     dnRarity,
     setName,
     view: "rarity",
+    queue: [],
+    created: [],
+    skipped: [],
+    creating: false,
   });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await interaction.editReply(await rarityPayload(s));
@@ -328,6 +341,14 @@ export async function handleVaultBatchButton(interaction: ButtonInteraction): Pr
     return;
   }
   const action = interaction.customId.split(":")[1];
+  if (action === "advance") {
+    await presentNext(interaction, s);
+    return;
+  }
+  if (action === "finish") {
+    await showBatchDone(interaction, s);
+    return;
+  }
   if (action === "next") s.page += 1;
   if (action === "prev") s.page -= 1;
   if (action === "shuffle") {
@@ -387,54 +408,126 @@ export async function handleVaultBatchSelect(interaction: StringSelectMenuIntera
   await interaction.editReply(await payload(s));
 }
 
+function batchNavRow(s: Session): ActionRowBuilder<ButtonBuilder> {
+  const row = new ActionRowBuilder<ButtonBuilder>();
+  if (s.queue.length > 0) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId("vaultbatch:advance")
+        .setLabel(`Next card (${s.queue.length} left)`)
+        .setStyle(ButtonStyle.Primary),
+    );
+  }
+  row.addComponents(
+    new ButtonBuilder()
+      .setCustomId("vaultbatch:finish")
+      .setLabel(s.queue.length > 0 ? "Finish" : "Done")
+      .setStyle(s.queue.length > 0 ? ButtonStyle.Secondary : ButtonStyle.Success),
+  );
+  return row;
+}
+
+function pinBatchExtras(s: Session): void {
+  setEditPanelExtras(s.guildId, s.userId, () => [batchNavRow(s)]);
+}
+
+async function presentNext(interaction: ButtonInteraction, s: Session): Promise<void> {
+  if (s.creating) {
+    if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+    return;
+  }
+  s.creating = true;
+  try {
+    if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+    const items = await fetchMTTVItems();
+    while (s.queue.length > 0) {
+      const id = s.queue.shift()!;
+      const item = items.find(i => i.id === id);
+      if (!item) {
+        s.skipped.push("A tagged item is no longer on Vault Values.");
+        continue;
+      }
+      const position = s.created.length + s.skipped.length + 1;
+      const total = position + s.queue.length;
+      await interaction.editReply({
+        content: `Creating **${position}/${total}** — ${item.name}…`,
+        embeds: [],
+        components: [],
+      }).catch(() => {});
+      try {
+        const result = await createCardFromVaultItem({
+          guildId: s.guildId,
+          item,
+          rarityRaw: s.dnRarity,
+          setName: s.setName,
+        });
+        if (!result.ok) {
+          s.skipped.push(`**${item.name}** — ${result.message.replace(/^❌\s*/, "")}`);
+          continue;
+        }
+        s.created.push(result.card);
+        touch(s);
+        pinBatchExtras(s);
+        await renderPanel(
+          interaction,
+          result.card.id,
+          false,
+          `Card **${s.created.length}** — **${result.card.name}**. Customize it, then ${s.queue.length ? "Next" : "Done"}.`,
+        );
+        return;
+      } catch (err) {
+        logger.error({ err, item: item.name }, "vault batch create failed");
+        s.skipped.push(`**${item.name}** — unexpected error`);
+      }
+    }
+    await showBatchDone(interaction, s);
+  } finally {
+    s.creating = false;
+  }
+}
+
+async function showBatchDone(interaction: ButtonInteraction, s: Session): Promise<void> {
+  if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+  setEditPanelExtras(s.guildId, s.userId, null);
+  const left = s.queue.length;
+  sessions.delete(sessionKey(s.guildId, s.userId));
+  const [settings, displayMap] = await Promise.all([
+    getOrCreateGuildSettings(s.guildId),
+    getRarityDisplayOverrides(s.guildId),
+  ]);
+  const embed = new EmbedBuilder()
+    .setColor(s.created.length ? 0x2ecc71 : 0xe74c3c)
+    .setTitle("📦 Vault batch")
+    .setDescription(
+      [
+        s.created.length
+          ? `**Created ${s.created.length}**\n${s.created.map(c => {
+              const rarity = c.rarity as Rarity;
+              return `• **${c.name}** (${dnRarityEmoji(rarity, settings, displayMap)} ${rarityLabel(rarity, settings, displayMap)})`;
+            }).join("\n")}`
+          : "",
+        s.skipped.length ? `**Skipped ${s.skipped.length}**\n${s.skipped.map(l => `• ${l}`).join("\n")}` : "",
+        left ? `**Stopped early** — ${left} tagged item${left === 1 ? "" : "s"} not created.` : "",
+        s.created.length ? "\nEach card was opened in the edit panel along the way. `/edit_card` still works later." : "",
+      ].filter(Boolean).join("\n\n").slice(0, 4000),
+    );
+  await interaction.editReply({ content: null, embeds: [embed], components: [] });
+}
+
 async function runCreate(
   interaction: ButtonInteraction,
   s: Session,
 ): Promise<void> {
-  await interaction.deferUpdate();
   const items = await fetchMTTVItems();
-  const tagged = s.tagged
-    .map(id => items.find(i => i.id === id))
-    .filter((i): i is MTTVItem => !!i);
+  const tagged = s.tagged.filter(id => items.some(i => i.id === id));
   if (tagged.length === 0) {
+    if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
     await interaction.editReply(await previewPayload(s));
     return;
   }
-
-  const created: string[] = [];
-  const skipped: string[] = [];
-  for (let i = 0; i < tagged.length; i++) {
-    const item = tagged[i]!;
-    await interaction.editReply({
-      content: `Creating **${i + 1}/${tagged.length}** — ${item.name}…`,
-      embeds: [],
-      components: [],
-    }).catch(() => {});
-    try {
-      const result = await createCardFromVaultItem({
-        guildId: s.guildId,
-        item,
-        rarityRaw: s.dnRarity,
-        setName: s.setName,
-      });
-      if (result.ok) created.push(`**${result.card.name}** (${result.card.rarity})`);
-      else skipped.push(`**${item.name}** — ${result.message.replace(/^❌\s*/, "")}`);
-    } catch (err) {
-      logger.error({ err, item: item.name }, "vault batch create failed");
-      skipped.push(`**${item.name}** — unexpected error`);
-    }
-  }
-
-  sessions.delete(sessionKey(s.guildId, s.userId));
-  const embed = new EmbedBuilder()
-    .setColor(created.length ? 0x2ecc71 : 0xe74c3c)
-    .setTitle("📦 Vault batch")
-    .setDescription(
-      [
-        created.length ? `**Created ${created.length}**\n${created.map(l => `• ${l}`).join("\n")}` : "",
-        skipped.length ? `**Skipped ${skipped.length}**\n${skipped.map(l => `• ${l}`).join("\n")}` : "",
-        created.length ? "\nTweak any card with `/cardadmin` → Edit, or `/edit_image`." : "",
-      ].filter(Boolean).join("\n\n").slice(0, 4000),
-    );
-  await interaction.editReply({ content: null, embeds: [embed], components: [] });
+  s.queue = tagged;
+  s.created = [];
+  s.skipped = [];
+  touch(s);
+  await presentNext(interaction, s);
 }

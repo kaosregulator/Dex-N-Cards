@@ -24,7 +24,6 @@ import {
 } from "../unbelievaboat/lottery/definition.js";
 import { buildVaultValueCommandJson } from "./vaultvalue-hub.js";
 import { buildTradeHubCommandJson } from "./trade-hub.js";
-import { buildCardAdminCommandJson } from "./cardadmin-hub.js";
 import { buildSecretCommandJson } from "./secret-hub.js";
 import { getRaidFrames } from "../cards/frames.js";
 
@@ -212,12 +211,57 @@ function buildLegacyCommands() {
 
     adminCmd("deleteallcards", "Delete every card on this server, then any sets left. Asks you to confirm", s => s),
 
-    buildCardAdminCommandJson(),
+    // Restored from the card-admin hub. Buttons can't autocomplete a catalog
+    // or attach a file, so these are slash commands. /cardadmin is retired.
+    // Kitsu create (createcardfrom) stays unregistered.
+    adminCmd("deletecard", "Permanently delete a card from the roster", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card to delete").setRequired(true).setAutocomplete(true))),
 
-    // Restored from the card-admin hub (PR #161 / #163). Buttons can't attach a
-    // file or autocomplete a catalog, so these stay as real slash commands.
-    // Give / take / shards / give-all / delete / library stay on the /cardadmin panel.
-    // Creates, drops, and image edits are slashes only (no duplicate hub buttons).
+    adminCmd("give", "Give a card directly to a member", s => s
+      .addUserOption(o => o.setName("user").setDescription("Member to receive the card").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Card name").setRequired(true).setAutocomplete(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("How many copies to give (default 1, max 100)").setMinValue(1).setMaxValue(100))
+      .addIntegerOption(o => o.setName("star").setDescription("Star Rank the card arrives at (0-5)").setMinValue(0).setMaxValue(5))
+      .addIntegerOption(o => o.setName("level").setDescription("Level the card arrives at (1-100)").setMinValue(1).setMaxValue(100))),
+
+    adminCmd("giveall", "Give one copy of every card to a member — filter by set or rarity", s => s
+      .addUserOption(o => o.setName("user").setDescription("Member to receive the cards").setRequired(true))
+      .addStringOption(o => o.setName("set").setDescription("Only cards from this set (leave blank for all cards)").setAutocomplete(true))
+      .addStringOption(o => o.setName("rarity").setDescription("Only this rarity — includes custom names from /rarity").setAutocomplete(true))
+      .addIntegerOption(o => o.setName("shinyrate").setDescription("Shiny chance 0-100% (default 0.5)").setMinValue(0).setMaxValue(100))),
+
+    adminCmd("giveshards", "Give DN Shards to a member", s => s
+      .addUserOption(o => o.setName("user").setDescription("Member to receive shards").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Amount of shards").setRequired(true).setMinValue(1))),
+
+    adminCmd("takeback", "Remove a card from a member's collection", s => s
+      .addUserOption(o => o.setName("user").setDescription("Member to take the card from").setRequired(true))
+      .addStringOption(o => o.setName("name").setDescription("Card name").setRequired(true).setAutocomplete(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("How many copies to remove (default 1, max 100)").setMinValue(1).setMaxValue(100))),
+
+    adminCmd("takeshards", "Deduct DN Shards from a member", s => s
+      .addUserOption(o => o.setName("user").setDescription("Member to deduct shards from").setRequired(true))
+      .addIntegerOption(o => o.setName("amount").setDescription("Amount to deduct").setRequired(true).setMinValue(1))),
+
+    adminCmd("editcard", "Edit a card — optionally upload a replacement image/GIF", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card to edit").setRequired(true).setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Optional replacement image/GIF upload"))
+      .addIntegerOption(o => o.setName("max_copies").setDescription("Max copies for a limited edition card (0 removes the limit)").setMinValue(0))
+      .addIntegerOption(o => o.setName("total_minted").setDescription("Current number of copies that exist (careful: manual override)").setMinValue(0))
+      .addBooleanOption(o => o.setName("limited").setDescription("Mark this card as limited edition (enforces max_copies cap)"))),
+
+    adminCmd("edituser", "Edit a member: core profile, economy, and battle profile", s => s
+      .addUserOption(o => o.setName("user").setDescription("Member to edit").setRequired(true))),
+
+    adminCmd("library", "Search the Kitsu library by category and preview the bio + image", s => s
+      .addStringOption(o => o.setName("category").setDescription("Kitsu library to search").setRequired(true)
+        .addChoices(
+          { name: "Anime", value: "anime" },
+          { name: "Manga", value: "manga" },
+          { name: "Character", value: "character" },
+        ))
+      .addStringOption(o => o.setName("name").setDescription("Title or character name — type to search").setRequired(true).setAutocomplete(true))),
+
     adminCmd("drop", "Force-drop a card — for events and giveaways", s => s
       .addStringOption(o => o.setName("name").setDescription("Card name — leave empty for a random drop from the active set").setAutocomplete(true))
       .addStringOption(o => o.setName("set").setDescription("Pick a specific set to drop from (ignores the active set)").setAutocomplete(true))
@@ -585,6 +629,8 @@ export const COMMAND_RENAMES: Record<string, string> = {
   battleforceend: "battle_force_end",
   massdrop: "mass_drop",
   deleteallcards: "delete_all_cards",
+  giveall: "give_all",
+  edituser: "edit_user",
   adminhub: "admin_hub",
   user_hub: "user-hub",
   show_shiny: "show-shiny",
@@ -649,14 +695,10 @@ export const HUB_REPLACED_COMMANDS = new Set<string>([
   "gift", "trades", "tradehistory", "accept", "decline",
   // Folded into /vaultvalue hub (info / calc / list / help / postcalc).
   "info_mttv", "calc", "valuehelp", "valuelist", "postcalculator",
-  // Hub-only on /cardadmin (no duplicate slash): give/take/shards/giveall/edit/delete/library.
-  // Restored as slash only (no hub button): drop, massdrop, addcard,
-  //   createcardfrommttv, createcardsfrommttv, createcardfromroblox, editimage.
-  // Kitsu create stays hub-replaced (retired).
-  "createcardfrom", "library",
-  "editcard", "deletecard",
-  "give", "takeback", "giveall",
-  "giveshards", "takeshards", "edituser",
+  // Restored as their own slashes (autocomplete): give, take, shards, give-all,
+  // edit, delete, library, edit-user. /cardadmin is no longer registered.
+  // Kitsu create stays retired.
+  "createcardfrom",
   // Folded into /secret hub (whisper / staff). /echo stays as config.
   "whisper", "adminsecret",
   // Sanctuary entry aliases — use /quiet mode:vacation|loa (handlers kept).

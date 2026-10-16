@@ -7,9 +7,9 @@ import {
   type AutocompleteInteraction, type ButtonInteraction,
   type ChatInputCommandInteraction, type GuildMember,
 } from "discord.js";
-import { isAdmin, addCard, addCardToSet, getCardByName, getSetByName } from "../db.js";
+import { isAdmin, addCard, addCardToSet, builtinRarityEconomy, getCardByName, getSetByName } from "../db.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
-import { RARITY_BURN, RARITY_WEIGHTS, RARITY_WORTH, type Rarity } from "../cards-data.js";
+import { type Rarity } from "../cards-data.js";
 import { logger } from "../../lib/logger.js";
 import {
   searchUsers, resolveRobloxUser, getFullBodyAvatar, profileUrl,
@@ -20,12 +20,9 @@ const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 const CREATE_CARD_RARITIES = new Set<string>(["common", "uncommon", "rare", "epic", "legendary", "mythic"]);
 const TTL_MS = 15 * 60 * 1000;
 
-function createCardRarityDefaults(rarity: Rarity) {
-  return {
-    worth: RARITY_WORTH[rarity],
-    burn: RARITY_BURN[rarity],
-    weight: RARITY_WEIGHTS[rarity],
-  };
+async function createCardRarityDefaults(guildId: string, rarity: Rarity) {
+  const econ = await builtinRarityEconomy(guildId, rarity);
+  return { worth: econ.worthValue, burn: econ.burnValue, weight: econ.dropWeight };
 }
 
 type Draft = {
@@ -149,7 +146,7 @@ export async function handleCreateCardFromRoblox(interaction: ChatInputCommandIn
   const existing = await getCardByName(cardNameFor(user), interaction.guild.id);
   if (existing) {
     await interaction.editReply(
-      `❌ A card named **${cardNameFor(user)}** already exists (ID #${existing.id}). Use \`/edit_image\` or \`/cardadmin\` Edit.`,
+      `❌ A card named **${cardNameFor(user)}** already exists (ID #${existing.id}). Use \`/edit_card\` or \`/edit_image\`.`,
     );
     return;
   }
@@ -239,7 +236,7 @@ async function runCreate(interaction: ButtonInteraction, d: Draft): Promise<void
     return;
   }
 
-  const defs = createCardRarityDefaults(d.rarity);
+  const defs = await createCardRarityDefaults(d.guildId, d.rarity);
   let imageUrl: string | undefined;
   try {
     if (d.uploadedImageUrl) imageUrl = await persistBotImage(d.uploadedImageUrl, d.uploadedContentType);

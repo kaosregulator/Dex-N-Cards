@@ -1,12 +1,13 @@
 import { MessageFlags, type ChatInputCommandInteraction, type GuildMember } from "discord.js";
 import {
-  isAdmin, getAllCards, addShards, catchCard, getOrCreateGuildSettings,
+  isAdmin,   getAllCards, addShards, catchCard, getOrCreateGuildSettings,
   removeCardFromUser, deductShards, addAdmin, removeAdmin, listAdmins,
-  giveCardCopy, getCardsInSet,
+  giveCardCopy, getCardsInSet, getRarityContext,
 } from "../db.js";
 import { isHomeGuild, GLOBAL_ONLY_MSG } from "../home-guild.js";
 import { spawnCard, scheduleNextSpawn } from "../spawn-manager.js";
 import { RARITY_EMOJI, RARITY_LABELS, type Rarity, rarityLabel, rarityEmoji } from "../cards-data.js";
+import { effectiveRarityKey, getDisplayRarities } from "../rarity-runtime.js";
 import { getRarityDisplayOverrides } from "../db.js";
 import { logger } from "../../lib/logger.js";
 import { handleConfigCommand } from "./config-panel.js";
@@ -99,7 +100,14 @@ export async function handleAdminCommand(
       return;
     }
     await removeCard(card.name, interaction.guild.id);
-    await interaction.editReply(`🗑️ **${card.name}** (${card.rarity}) has been permanently deleted.`);
+    const { getRarityContext, getOrCreateGuildSettings, getRarityDisplayOverrides, getCardDisplayRarity } = await import("../db.js");
+    const [ctx, settings, displayMap] = await Promise.all([
+      getRarityContext(interaction.guild.id),
+      getOrCreateGuildSettings(interaction.guild.id),
+      getRarityDisplayOverrides(interaction.guild.id),
+    ]);
+    const display = getCardDisplayRarity(card, ctx, settings, displayMap);
+    await interaction.editReply(`🗑️ **${card.name}** (${display.emoji} ${display.label}) has been permanently deleted.`);
     return;
   }
   // /wishlist_role — set/clear the wishlist spawn ping role.
@@ -229,12 +237,13 @@ export async function handleAdminCommand(
     }
     const target = interaction.options.getUser("user", true);
     const setName = interaction.options.getString("set");
-    const rarity = interaction.options.getString("rarity") as Rarity | null;
+    const rarityKey = interaction.options.getString("rarity");
     const shinyRate = Math.min(100, Math.max(0, interaction.options.getInteger("shinyrate") ?? 0.5));
     const gId = interaction.guild.id;
 
     const { getSetByName } = await import("../db.js");
     let pool = await getAllCards(gId);
+    const rarityCtx = rarityKey ? await getRarityContext(gId) : null;
 
     if (setName?.trim()) {
       const set = await getSetByName(setName.trim(), gId);
@@ -247,8 +256,8 @@ export async function handleAdminCommand(
       pool = pool.filter(c => setCardIds.has(c.id));
     }
 
-    if (rarity) {
-      pool = pool.filter(c => c.rarity === rarity);
+    if (rarityKey && rarityCtx) {
+      pool = pool.filter(c => effectiveRarityKey(c, rarityCtx) === rarityKey);
     }
 
     pool = pool.filter(c => !c.isArchived);
@@ -267,8 +276,17 @@ export async function handleAdminCommand(
       if (isShiny) shinies++;
     }
 
-    const r = rarity ? rarityLabel(rarity as Rarity, null, await getRarityDisplayOverrides(gId)) : "all rarities";
-    const suffix = rarity ? ` (${r})` : "";
+    let rarityText = "all rarities";
+    if (rarityKey && rarityCtx) {
+      const [settings, displayMap] = await Promise.all([
+        getOrCreateGuildSettings(gId),
+        getRarityDisplayOverrides(gId),
+      ]);
+      const match = getDisplayRarities(rarityCtx, settings, { displayMap, rarestFirst: false })
+        .find(tier => tier.key === rarityKey || (tier.isCustom ? `custom:${tier.slug}` : tier.rarity) === rarityKey);
+      rarityText = match?.label ?? rarityKey;
+    }
+    const suffix = rarityKey ? ` (${rarityText})` : "";
     const setText = setName?.trim() ? ` from set **${setName.trim()}**` : "";
     await interaction.editReply(
       `✅ Gave **${given} card${given === 1 ? "" : "s"}**${suffix}${setText} to <@${target.id}>.` +

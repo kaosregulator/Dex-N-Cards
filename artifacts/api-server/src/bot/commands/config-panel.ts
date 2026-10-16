@@ -11,6 +11,7 @@ import { scheduleNextSpawn, clearSpawnTimer, scheduleNextSpawnSecondary, clearSp
 import { RARITY_WEIGHTS, RARITY_LABELS, RARITY_EMOJI, rarityLabel, rarityEmoji, getRarityOrder, getShinyName, getShinyMultiplier, SHINY_EMOJI, type Rarity, type RarityDisplayMap } from "../cards-data.js";
 import type { CustomPack, GuildSettings } from "@workspace/db";
 import { PACK_TIERS, PACK_TIER_META, PACK_DEFAULTS, resolveTierConfig, tierLabel, type PackTier } from "./pack.js";
+import { packRarityPanelPayload, resetPackRarityAllow, savePackRarityAllow } from "./pack-rarity-panel.js";
 import { FRAME_COLORS } from "../animations/card-frames.js";
 import {
   EXPERIENCES, MODE_LABELS, experienceByKey, getPrimary, getFallback, activityConfigured,
@@ -365,6 +366,10 @@ export async function handleConfigButton(interaction: ButtonInteraction): Promis
         const target = await getCustomPack(packId);
         if (target?.guildId === guildId) await deleteCustomPack(packId);
       }
+      if (subAction === "rarities" && parts[4]) {
+        await interaction.editReply(await packRarityPanelPayload(guildId, `c${parts[4]}`));
+        return;
+      }
       if (subAction === "types" && parts[4]) {
         const packId = parseInt(parts[4]!, 10);
         const target = await getCustomPack(packId);
@@ -409,6 +414,19 @@ export async function handleConfigButton(interaction: ButtonInteraction): Promis
         embeds: [buildPacksNamesEmbed(settings)],
         components: buildPacksNamesComponents(),
       });
+    } else if (arg === "rarities") {
+      const sub = parts[3];
+      const token = parts[4] ?? null;
+      if (sub === "reset" && token) {
+        const err = await resetPackRarityAllow(guildId, token);
+        if (err) {
+          await interaction.followUp({ content: `❌ ${err}`, flags: MessageFlags.Ephemeral });
+        }
+        await interaction.editReply(await packRarityPanelPayload(guildId, token));
+        return;
+      }
+      await interaction.editReply(await packRarityPanelPayload(guildId, null));
+      return;
     } else if (arg === "back") {
       await interaction.editReply({
         embeds: [buildPacksEmbed(settings)],
@@ -523,6 +541,19 @@ export async function handlePacksSelect(interaction: StringSelectMenuInteraction
 
   const guildId = interaction.guild.id;
   const id = interaction.customId;
+  if (id === "packs_rarity_target") {
+    await interaction.editReply(await packRarityPanelPayload(guildId, interaction.values[0] ?? null));
+    return;
+  }
+  if (id.startsWith("packs_rarity_allow:")) {
+    const token = id.slice("packs_rarity_allow:".length);
+    const err = await savePackRarityAllow(guildId, token, interaction.values);
+    if (err) {
+      await interaction.followUp({ content: `❌ ${err}`, flags: MessageFlags.Ephemeral });
+    }
+    await interaction.editReply(await packRarityPanelPayload(guildId, token));
+    return;
+  }
   const value = parseInt(interaction.values[0]!, 10);
 
   let panel: "main" | "sizes" | "limits" = "main";
@@ -1841,7 +1872,7 @@ export function buildPacksEmbed(s: GuildSettings): EmbedBuilder {
         name: "Tips",
         value:
           `**Defaults:** ${tierLabel(s, "basic")} 💠 ${PACK_DEFAULTS.basic.cost} · ${tierLabel(s, "premium")} 💠 ${PACK_DEFAULTS.premium.cost} · ${tierLabel(s, "legendary")} 💠 ${PACK_DEFAULTS.legendary.cost}\n` +
-          "Click **📐 Cards/Pack** or **📅 Weekly Limits** for more options.",
+          "Click **📐 Cards/Pack**, **📅 Weekly Limits**, or **✨ Rarities** to limit what each pack pulls.",
         inline: false,
       },
     )
@@ -1873,7 +1904,8 @@ export function buildPacksComponents(s: GuildSettings) {
     new ButtonBuilder().setCustomId("config:packs:sizes").setLabel("📐 Cards / Pack").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("config:packs:limits").setLabel("📅 Weekly Limits").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("config:packs:custom").setLabel("🎁 Custom Packs").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("config:packs:names").setLabel("🏷️ Rename Tiers").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("config:packs:names").setLabel("🏷️ Rename").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("config:packs:rarities").setLabel("✨ Rarities").setStyle(ButtonStyle.Secondary),
   );
 
   return [
@@ -2127,7 +2159,7 @@ function buildCustomPacksEmbed(packs: CustomPack[]): EmbedBuilder {
             (p, i) =>
               `**${i + 1}. ${p.name}** — 💠 ${p.cost.toLocaleString()} · ${p.size} card/open · ${formatLimit(p.weeklyLimit)}\n` +
               (p.description ? `*${p.description}*\n` : "") +
-              `Types: ${p.cardTypes.length > 0 ? p.cardTypes.join(", ") : "*All*"} · ${p.isActive ? "🟢 Active" : "🔴 Inactive"}`,
+              `Types: ${p.cardTypes.length > 0 ? p.cardTypes.join(", ") : "*All*"} · Rarities: ${p.allowedRarities && p.allowedRarities.length > 0 ? `${p.allowedRarities.length} locked` : "default mix"} · ${p.isActive ? "🟢 Active" : "🔴 Inactive"}`,
           )
           .join("\n\n");
   return new EmbedBuilder()
@@ -2166,8 +2198,12 @@ function buildCustomPacksComponents(packs: CustomPack[]): ActionRowBuilder<Butto
           .setLabel("📋 Types")
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
+          .setCustomId(`config:packs:custom:rarities:${pack.id}`)
+          .setLabel("✨ Rarity")
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
           .setCustomId(`config:packs:custom:delete:${pack.id}`)
-          .setLabel("🗑️ Delete")
+          .setLabel("🗑️")
           .setStyle(ButtonStyle.Danger),
       ),
     );

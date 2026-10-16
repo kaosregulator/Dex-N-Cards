@@ -29,7 +29,8 @@ import { withGuildFrames } from "../animations/card-frames.js";
 import { getBattleSettings } from "../battle/config-engine.js";
 import { getScaledStats } from "../battle/stat-engine.js";
 import type { CardProgressionGrant } from "../cards/progression.js";
-import { effectiveRarityKey, rarityLadderRank } from "../rarity-runtime.js";
+import { effectiveRarityKey, getDisplayRarities, rarityLadderRank } from "../rarity-runtime.js";
+import { allowListWeights, normalizeAllowList, rollWeightedKey } from "./pack-rarity.js";
 import type { RenderCard } from "../battle/image/render.js";
 import { scheduleReplyDelete } from "../../lib/temp-message.js";
 
@@ -178,16 +179,74 @@ function pickByDropWeight(pool: Card[]): Card | undefined {
   return pool[pool.length - 1];
 }
 
+function tierAllowList(settings: GuildSettings, tier: PackTier): string[] | null {
+  const raw = tier === "basic" ? settings.packBasicRarities
+    : tier === "premium" ? settings.packPremiumRarities
+    : settings.packLegendaryRarities;
+  return normalizeAllowList(raw);
+}
+
+function drawByAllowList(
+  cards: Card[],
+  allow: string[],
+  baseRates: Record<string, number>,
+  size: number,
+  ctx: RarityContext,
+): Card[] {
+  const weights = allowListWeights(baseRates, allow);
+  if (weights.length === 0 || cards.length === 0) return [];
+  const byKey = new Map<string, Card[]>();
+  for (const card of cards) {
+    const key = effectiveRarityKey(card, ctx);
+    const bucket = byKey.get(key) ?? [];
+    bucket.push(card);
+    byKey.set(key, bucket);
+  }
+  const order = weights.map(w => w.key);
+  const drawn: Card[] = [];
+  for (let i = 0; i < size; i++) {
+    const rolled = rollWeightedKey(weights);
+    if (!rolled) break;
+    const start = Math.max(0, order.indexOf(rolled));
+    let picked: Card | undefined;
+    for (let j = start; j < order.length && !picked; j++) {
+      picked = pickByDropWeight(byKey.get(order[j]!) ?? []);
+    }
+    for (let j = 0; j < start && !picked; j++) {
+      picked = pickByDropWeight(byKey.get(order[j]!) ?? []);
+    }
+    if (picked) drawn.push(picked);
+  }
+  return drawn;
+}
+
 async function drawPack(tier: PackTier, size: number, guildId: string): Promise<Card[]> {
-  const ctx = await getRarityContext(guildId);
+  const [ctx, settings] = await Promise.all([
+    getRarityContext(guildId),
+    getOrCreateGuildSettings(guildId),
+  ]);
+  const allow = tierAllowList(settings, tier);
+  const basePool = (await getAllCards(guildId)).filter(c => {
+    if (!(c.droppable && c.inPacks && !c.isArchived && !c.isEventExclusive)) return false;
+    if (c.isLimitedEdition && c.maxCopies != null && c.totalMinted >= c.maxCopies) return false;
+    return true;
+  });
+  // An explicit allow-list is the rarity gate, including custom names from /rarity.
+  // Spill stays inside that list. Card-level "not in packs" still applies.
+  if (allow) {
+    const allowSet = new Set(allow);
+    const eligible = applyRarityContextAll(
+      basePool.filter(c => allowSet.has(effectiveRarityKey(c, ctx))),
+      ctx,
+    );
+    return drawByAllowList(eligible, allow, TIER_RATES[tier], size, ctx);
+  }
   // Stage-2: cards assigned to a custom tier are excluded from packs by
   // default (and entirely whenever their tier sets `inPacks=false`). This
   // keeps the built-in pack tiers (Basic/Premium/Legendary) focused on the
   // built-in rarity ladder unless an admin explicitly opts a custom tier in.
   const all = applyRarityContextAll(
-    (await getAllCards(guildId)).filter(c => {
-      if (!(c.droppable && c.inPacks && !c.isArchived && !c.isEventExclusive)) return false;
-      if (c.isLimitedEdition && c.maxCopies != null && c.totalMinted >= c.maxCopies) return false;
+    basePool.filter(c => {
       const customTier = ctx.customByCard.get(c.id);
       if (customTier && !customTier.inPacks) return false;
       return true;
@@ -625,13 +684,19 @@ async function drawCustomPack(pack: CustomPack, ctx: RarityContext, guildId: str
     eligible = all.filter(c => typeSet.has(c.cardType.toLowerCase().trim()));
   }
 
+  const allow = normalizeAllowList(pack.allowedRarities);
+  if (allow) {
+    const allowSet = new Set(allow);
+    eligible = eligible.filter(c => allowSet.has(effectiveRarityKey(c, ctx)));
+  }
+
   if (eligible.length === 0) return [];
 
   const drawn: Card[] = [];
 
   // When a pack has an explicit card whitelist, draw directly from those cards
-  // using their drop weights. Admins curate the exact list via /editpack, so
-  // rarity-rate gating should not hide cards they intentionally added.
+  // using their drop weights. An allow-list still intersects that whitelist so
+  // a pack can be "these cards, but only this rarity."
   if (whitelisted.length > 0) {
     for (let i = 0; i < pack.size; i++) {
       const picked = pickByDropWeight(eligible);
@@ -640,13 +705,18 @@ async function drawCustomPack(pack: CustomPack, ctx: RarityContext, guildId: str
     return drawn;
   }
 
+  const rates = pack.rarityRates as Record<string, number>;
+
+  // Explicit allow-list: only those rarities, no spill outside the list.
+  if (allow) {
+    return drawByAllowList(eligible, allow, rates, pack.size, ctx);
+  }
+
   // Legacy type-filtered path: roll rarity from the pack's configured rates.
   const byRarity: Record<Rarity, Card[]> = {
     common: [], uncommon: [], rare: [], epic: [], legendary: [], mythic: [],
   };
   for (const c of eligible) byRarity[c.rarity as Rarity]?.push(c);
-
-  const rates = pack.rarityRates as Record<string, number>;
   const allRarities: Rarity[] = ["mythic", "legendary", "epic", "rare", "uncommon", "common"];
 
   for (let i = 0; i < pack.size; i++) {
@@ -693,12 +763,19 @@ export async function handleCustomPack(
   const cards = await drawCustomPack(pack, ctx, guildId);
   if (cards.length === 0) {
     const packCards = await getCustomPackCards(pack.id);
+    const allow = normalizeAllowList(pack.allowedRarities);
+    const allowHint = allow
+      ? ` Rarity lock: **${allow.map(key => {
+          const match = getDisplayRarities(ctx, null, { rarestFirst: false }).find(r => r.key === key);
+          return match?.label ?? key;
+        }).join(", ")}**.`
+      : "";
     const hint = packCards.length > 0
-      ? ` The pack has ${packCards.length} card(s) on its whitelist, but none are eligible to draw right now (archived, not droppable, or limited editions are maxed). Use /editpack to adjust the list.`
+      ? ` The pack has ${packCards.length} card(s) on its whitelist, but none are eligible to draw right now (archived, not droppable, limited editions maxed, or outside the rarity lock). Use /editpack or /config → Packs.`
       : pack.cardTypes.length > 0
         ? ` The pack draws from types: **${pack.cardTypes.join(", ")}**. Use /editpack to add cards or change the type filter.`
         : " Use /editpack to add cards or set a type filter.";
-    await interaction.editReply(`❌ No eligible cards for **${pack.name}**.${hint}`);
+    await interaction.editReply(`❌ No eligible cards for **${pack.name}**.${hint}${allowHint}`);
     return;
   }
 
@@ -905,7 +982,10 @@ export async function handlePack(interaction: PackInteraction, tierOverride?: st
   // momentarily consume the cooldown. Cheap pure-RAM operation.
   const cards = await drawPack(tier, cfg.size, guildId);
   if (cards.length === 0) {
-    await interaction.editReply("❌ No droppable cards available right now. Ask an admin to load a card set.");
+    const allow = tierAllowList(settings, tier);
+    await interaction.editReply(allow
+      ? "❌ No cards in the rarities this pack is allowed to pull. Change the lock in `/config` → Packs → ✨ Rarities, or turn those cards back on for packs."
+      : "❌ No droppable cards available right now. Ask an admin to load a card set.");
     return;
   }
 
