@@ -342,15 +342,19 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/setup` — interactive setup wizard (spawn channel, interval, catch mode, roster)\n" +
           "`/config` — visual config panel · `/admin_hub` — admins, timeouts, channels, state\n" +
           "`/dashboard` — DM yourself a website login link · this **Admin** help page is the reference" },
-        { name: "🎁 Drops, Gives & Events (`/cardadmin`)", value:
-          "`/cardadmin` panel — Drop · Mass drop · Give · Take · Shards · Give all\n" +
+        { name: "🎁 Drops, Gives & Events", value:
+          "`/drop [name] [set] [star] [level]` — force one card (blank name = random)\n" +
+          "`/mass_drop [amount] [set]` — 10–25 cards in a batch\n" +
+          "`/cardadmin` panel — Give · Take · Shards · Give all\n" +
           "*star/level make the card arrive pre-fused/levelled (battle-ready).*\n" +
           "`/event start|list|stop` — limited-time spawn boosts" },
         { name: "✨ Reveals & Card Progression", value:
           "`/config → 🎞️ Reveals` — spawn reveal style (**Auto**/Blur/Puzzle/Silhouette/Off) + **shiny catch animation** toggle\n" +
           "`/progression_default` · `/progression_card` — default / per-card Star/Level on spawn/pull/drop" },
-        { name: "🗂️ Cards & Sets (`/cardadmin`)", value:
-          "`/cardadmin` panel — Create · Kitsu · Vault Values · Library · Edit · Delete\n" +
+        { name: "🗂️ Cards & Sets", value:
+          "`/create_card_from_mttv item: rarity: [image:]` — Vault Values art + DN rarity\n" +
+          "`/add_card` — upload your own image · `/edit_image` — Vault image or a file\n" +
+          "`/cardadmin` panel — Kitsu · Library · Edit · Delete · Give\n" +
           "`/set_hub` · `/set_admin` — set manager\n" +
           "`/rarity` — names, colors, worth, burn, weights, order" },
         { name: "🎨 Appearance & Embeds", value:

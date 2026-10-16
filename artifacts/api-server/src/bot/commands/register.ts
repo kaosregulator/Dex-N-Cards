@@ -264,6 +264,45 @@ function buildLegacyCommands() {
 
     buildCardAdminCommandJson(),
 
+    // Restored from the card-admin hub (PR #161 / #163). Buttons can't attach a
+    // file or autocomplete a catalog, so these stay as real slash commands.
+    // Give / take / shards / delete / library / Kitsu stay on the /cardadmin panel.
+    adminCmd("drop", "Force-drop a card — for events and giveaways", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card name — leave empty for a random drop from the active set").setAutocomplete(true))
+      .addStringOption(o => o.setName("set").setDescription("Pick a specific set to drop from (ignores the active set)").setAutocomplete(true))
+      .addIntegerOption(o => o.setName("star").setDescription("Star Rank the caught card arrives at (0-5)").setMinValue(0).setMaxValue(5))
+      .addIntegerOption(o => o.setName("level").setDescription("Level the caught card arrives at (1-100)").setMinValue(1).setMaxValue(100))),
+
+    adminCmd("massdrop", "Drop a big batch of cards — mostly low tier with a few bangers", s => s
+      .addIntegerOption(o => o.setName("amount").setDescription("How many cards to drop (10-25, default 15)").setMinValue(10).setMaxValue(25))
+      .addStringOption(o => o.setName("set").setDescription("Pick a specific set to drop from (ignores the active set)").setAutocomplete(true))),
+
+    adminCmd("addcard", "Create a new card — upload an image/GIF from Discord", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card name").setRequired(true).setMaxLength(80))
+      .addStringOption(o => o.setName("rarity").setDescription("Built-in rarity tier — type to search").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("type").setDescription("Card type/tag — type to search existing types or enter a new one").setRequired(true).setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Upload card image/GIF with Discord's file picker"))
+      .addStringOption(o => o.setName("set").setDescription("Optional set to add this card to immediately").setAutocomplete(true))
+      .addStringOption(o => o.setName("description").setDescription("Card description (up to 500 chars)").setMaxLength(500))
+      .addBooleanOption(o => o.setName("limited").setDescription("Limited edition — capped copy count?"))
+      .addIntegerOption(o => o.setName("max_copies").setDescription("Max copies if limited (default 50)").setMinValue(1))
+      .addBooleanOption(o => o.setName("event_exclusive").setDescription("Event exclusive — never spawns randomly?"))),
+
+    adminCmd("createcardfrommttv", "Create a card from a Vault Values item — its image, or your upload, plus a DN rarity", s => s
+      .addStringOption(o => o.setName("item").setDescription("Vault Values item name — type to search").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("rarity").setDescription("DN rarity — type to search, or auto to use the Vault rarity").setRequired(true).setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Upload an image (overrides the Vault Values image)"))
+      .addStringOption(o => o.setName("type").setDescription("Card type/tag — blank uses the Vault category").setAutocomplete(true))
+      .addStringOption(o => o.setName("set").setDescription("Optional set to add this card to immediately").setAutocomplete(true))
+      .addStringOption(o => o.setName("description").setDescription("Override the card description (up to 500 chars)").setMaxLength(500))
+      .addBooleanOption(o => o.setName("limited").setDescription("Limited edition — capped copy count?"))
+      .addIntegerOption(o => o.setName("max_copies").setDescription("Max copies if limited (default 50)").setMinValue(1))
+      .addBooleanOption(o => o.setName("event_exclusive").setDescription("Event exclusive — never spawns randomly?"))),
+
+    adminCmd("editimage", "Update a card's image from Vault Values or an uploaded file", s => s
+      .addStringOption(o => o.setName("name").setDescription("Card to edit").setRequired(true).setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Upload image/GIF (overrides the Vault Values search)"))),
+
     // Variable card progression — set the DEFAULT Star/Level a card arrives with
     // per acquisition source (guild-wide), then override specific cards below.
     adminCmd("progression_default", "Set the default Star/Level cards arrive at when caught/pulled/dropped", s => s
@@ -661,10 +700,12 @@ export const HUB_REPLACED_COMMANDS = new Set<string>([
   "gift", "trades", "tradehistory", "accept", "decline",
   // Folded into /vaultvalue hub (info / calc / list / help / postcalc).
   "info_mttv", "calc", "valuehelp", "valuelist", "postcalculator",
-  // Folded into /cardadmin hub (create / Kitsu / Vault Values / edit / give / drop…).
-  "addcard", "createcardfrom", "createcardfrommttv", "library",
-  "editcard", "editimage", "deletecard",
-  "give", "takeback", "giveall", "drop", "massdrop",
+  // Still on the /cardadmin panel (buttons/modals are enough — no file upload).
+  // Restored as slash (autocomplete or an image Discord modals can't take):
+  //   drop, massdrop, addcard, createcardfrommttv, editimage.
+  "createcardfrom", "library",
+  "editcard", "deletecard",
+  "give", "takeback", "giveall",
   "giveshards", "takeshards", "edituser",
   // Folded into /secret hub (whisper / staff). /echo stays as config.
   "whisper", "adminsecret",

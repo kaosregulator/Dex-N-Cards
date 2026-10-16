@@ -202,17 +202,17 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
 
       "**✅ Step 2 — Activate a Card Set**\n" +
       "Random spawns only fire from the **active set**. Run `/set_hub` (clickable panel) " +
-      "to pick one. No active set = no random spawns (admin `/cardadmin drop` always works).\n\n" +
+      "to pick one. No active set = no random spawns (admin `/drop` always works).\n\n" +
 
       "**✅ Step 3 — Add & Edit Cards**\n" +
       `• **Website** → [${SITE_ADMIN}](${SITE_ADMIN}) — display name, image, description, featured/hidden, sort order.\n` +
-      "• **Discord** → `/cardadmin create` (upload) · `create_kitsu` · `create_vault` — or prefix `!addcard` / `!editcard`.\n\n" +
+      "• **Discord** → `/add_card` (upload) · `/create_card_from_mttv` (Vault Values image + rarity) · `/cardadmin` From Kitsu — or prefix `!addcard` / `!editcard`.\n\n" +
 
       "**✅ Step 4 — Dashboard Login**\n" +
       "Run `/dashboard` — bot DMs you a one-time login link. Do this for every admin who needs site access.\n\n" +
 
       "**✅ Step 5 — Test It**\n" +
-      "Run `/cardadmin drop` (no name = random from active set). If nothing spawns, check the set has droppable cards and the spawn channel is configured.",
+      "Run `/drop` (no name = random from active set). If nothing spawns, check the set has droppable cards and the spawn channel is configured.",
     )
     .setImage(DIVIDER_GIF);
 
@@ -254,11 +254,12 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
     .setTitle("⚡ Admin Command Cheat-Sheet")
     .addFields(
       {
-        name: "🎁 Drops & Giveaways (`/cardadmin`)",
+        name: "🎁 Drops & Giveaways",
         value:
-          "`/cardadmin drop [name]` — single drop (bypasses active-set check)\n" +
-          "`/cardadmin mass_drop [amount]` — 10–25 cards in a batch (event use)\n" +
-          "`/cardadmin give` · `take` · `give_shards` · `take_shards`",
+          "`/drop [name]` — single drop (bypasses active-set check)\n" +
+          "`/mass_drop [amount]` — 10–25 cards in a batch (event use)\n" +
+          "`/create_card_from_mttv` — Vault Values image + rarity · `/add_card` · `/edit_image`\n" +
+          "`/cardadmin` — give · take · give shards · take shards",
         inline: false,
       },
       {

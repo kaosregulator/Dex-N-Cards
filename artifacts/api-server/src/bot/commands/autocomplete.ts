@@ -270,10 +270,13 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
         getRarityDisplayOverrides(interaction.guild.id),
       ]);
       const builtIn: Rarity[] = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
-      const builtInOptions = builtIn.map(r => ({
+      const builtInOptions: { name: string; value: string }[] = builtIn.map(r => ({
         name: `${rarityEmoji(r, settings, displayMap)} ${rarityLabel(r, settings, displayMap)}`.slice(0, 100),
         value: r,
       }));
+      if (cmd === "createcardfrommttv") {
+        builtInOptions.unshift({ name: "Auto — use the Vault Values rarity", value: "auto" });
+      }
       const filtered = !q
         ? builtInOptions
         : builtInOptions.filter(o => o.name.toLowerCase().includes(q) || o.value.includes(q));

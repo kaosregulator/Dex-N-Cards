@@ -117,13 +117,15 @@ export async function handleEditImageButton(interaction: ButtonInteraction): Pro
   }
 
   if (action === "upload") {
+    const card = await getCardById(cardId);
+    const label = card?.name ?? "Card Name";
     await interaction.update({
       embeds: [
         new EmbedBuilder()
           .setTitle("📎 Upload your own image")
           .setDescription(
-            `Use the command with the image option:\n` +
-            `\`/edit_image name:${cardId} image:<your file>\``,
+            `Run the slash command and attach the file:\n` +
+            `\`/edit_image name:${label} image:<your file>\``,
           )
           .setColor(0x95a5a6),
       ],

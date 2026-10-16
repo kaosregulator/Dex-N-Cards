@@ -434,7 +434,7 @@ async function doSingleSpawn(guildId: string, forcedCardId?: number, isForced = 
   } else {
     // Sets-driven spawn pool (Phases 1-3): random spawns now pull EXCLUSIVELY
     // from the guild's active set. No active set → no random spawns (Option B).
-    // Admin `/cardadmin drop` and `/cardadmin give` bypass this by setting forcedCardId.
+    // Admin `/drop` and `/cardadmin` give bypass this by setting forcedCardId.
     const spawnPool = await getActiveSetSpawnPoolCached(guildId);
     if (spawnPool.cards.length === 0) {
       logger.debug({ guildId, isSecondary }, "No active set or active set is empty — skipping random spawn");
@@ -714,7 +714,7 @@ function startProgressiveReveal(
 
 // ── Public API: force-drop a specific card (admin use) ────────────────────────
 // `progression` lets an admin drop a card that will be caught at an explicit
-// Star Rank / Level (e.g. `/cardadmin drop … star:3 level:50`); omit to fall back to the
+// Star Rank / Level (e.g. `/drop … star:3 level:50`); omit to fall back to the
 // guild's configured "drop" acquisition range (or 0★ / Lv 1 if unconfigured).
 export async function spawnCard(
   guildId: string, forcedCardId?: number, isForced = false,

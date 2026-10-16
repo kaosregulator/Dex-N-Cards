@@ -117,7 +117,7 @@ async function buildPanel(cardId: number, guildId?: string | null): Promise<{ em
       { name: "Archived", value: card.isArchived ? "🗄️ Yes" : "❌ No", inline: true },
       { name: "Limited", value: card.isLimitedEdition ? `💎 Yes (${card.totalMinted}/${card.maxCopies ?? "?"})` : "❌ No", inline: true },
     )
-    .setFooter({ text: `Card #${card.id} — use /edit_card name:<card> image:<file> to replace the image.` });
+    .setFooter({ text: `Card #${card.id} — /edit_image name:${card.name} to pull a Vault Values image or upload a file.` });
   const thumbUrl = cardImageUrl(card.imageUrl);
   if (thumbUrl) embed.setThumbnail(thumbUrl);
 

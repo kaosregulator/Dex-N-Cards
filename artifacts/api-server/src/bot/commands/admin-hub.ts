@@ -170,7 +170,7 @@ async function buildHubEmbed(guildId: string): Promise<EmbedBuilder> {
     .setDescription(
       "Quick admin actions for this server. Buttons below open private prompts; results show only to you.\n\n" +
       "**Spawn / drop / settings:** use `/config` (channel, interval, drop rates, catch mode, toggles).\n" +
-      "**Card grants:** `/cardadmin drop` · `give` · `give_shards` · `take` · `take_shards`.\n" +
+      "**Card grants:** `/drop` · `/mass_drop` · `/cardadmin` give · give shards · take · take shards.\n" +
       "**Card sets:** `/set_admin load` `/set_admin unload` `/set_admin listloaded`.",
     )
     .addFields(
