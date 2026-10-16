@@ -42,7 +42,7 @@ describe("restored card-admin slash commands", () => {
   it("registers drop, mass drop, vault create, upload create, and edit image", async () => {
     const { chat, HUB_REPLACED_COMMANDS, internalCommandName } = await registered();
     const names = new Set(chat.map((c) => c.name));
-    for (const name of ["drop", "mass_drop", "create_card_from_mttv", "create_cards_from_mttv", "add_card", "edit_image"]) {
+    for (const name of ["drop", "mass_drop", "create_card_from_mttv", "create_cards_from_mttv", "create_card_from_roblox", "add_card", "edit_image"]) {
       expect(names.has(name), name).toBe(true);
       expect(HUB_REPLACED_COMMANDS.has(internalCommandName(name)), name).toBe(false);
     }
@@ -53,13 +53,14 @@ describe("restored card-admin slash commands", () => {
     expect(chat.length).toBeLessThanOrEqual(100);
   });
 
-  it("keeps give, take, and kitsu on the hub", async () => {
+  it("keeps give, take, leftover kitsu create, and library on the hub", async () => {
     const { chat, HUB_REPLACED_COMMANDS } = await registered();
     const names = new Set(chat.map((c) => c.name));
     for (const internal of ["give", "takeback", "createcardfrom", "library", "deletecard"]) {
       expect(HUB_REPLACED_COMMANDS.has(internal)).toBe(true);
       expect(names.has(internal)).toBe(false);
     }
+    expect(names.has("create_card_from")).toBe(false);
   });
 
   it("gives vault create an item, a rarity, and an image attachment", async () => {
@@ -108,5 +109,25 @@ describe("restored card-admin slash commands", () => {
     expect(names).not.toEqual(expect.arrayContaining(["item"]));
     expect(cmd.options?.find((o) => o.name === "rarity")?.required).toBeFalsy();
     expect(cmd.options?.find((o) => o.name === "set")?.required).toBeFalsy();
+  });
+
+  it("registers Roblox create with username autocomplete and optional image", async () => {
+    const { chat, internalCommandName, ADMIN_HUB_COMMANDS } = await registered();
+    const cmd = chat.find((c) => c.name === "create_card_from_roblox") as {
+      description?: string;
+      options?: Array<{ name: string; type: number; required?: boolean; autocomplete?: boolean }>;
+    };
+    expect(cmd).toBeTruthy();
+    expect(cmd.description?.length ?? 999).toBeLessThanOrEqual(100);
+    expect(internalCommandName("create_card_from_roblox")).toBe("createcardfromroblox");
+    expect(ADMIN_HUB_COMMANDS.has("createcardfromroblox")).toBe(true);
+    const names = (cmd.options ?? []).map((o) => o.name);
+    expect(names).toEqual(expect.arrayContaining(["username", "rarity"]));
+    const username = cmd.options?.find((o) => o.name === "username");
+    expect(username?.required).toBe(true);
+    expect(username?.autocomplete).toBe(true);
+    const image = cmd.options?.find((o) => o.name === "image");
+    expect(image?.type).toBe(11);
+    expect(image?.required).toBeFalsy();
   });
 });

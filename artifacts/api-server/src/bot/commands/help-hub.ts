@@ -352,10 +352,11 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/config → 🎞️ Reveals` — spawn reveal style (**Auto**/Blur/Puzzle/Silhouette/Off) + **shiny catch animation** toggle\n" +
           "`/progression` — hub: which area (spawn / pack / drop / all) is in control, plus per-card overrides" },
         { name: "🗂️ Cards & Sets", value:
+          "`/create_card_from_roblox username: rarity:` — Roblox search, full-body preview, create\n" +
           "`/create_card_from_mttv item: rarity: [image:]` — Vault Values art + DN rarity\n" +
           "`/create_cards_from_mttv` — bulk: filter by website rarity, tag 5, preview images, create\n" +
           "`/add_card` — upload your own image · `/edit_image` — Vault image or a file\n" +
-          "`/cardadmin` panel — Kitsu · Library · Edit · Delete · Give\n" +
+          "`/cardadmin` panel — Library · Edit · Delete · Give\n" +
           "`/set_hub` · `/set_admin` — **Delete** one set, or **Delete all sets** (cards stay)\n" +
           "`/delete_all_cards` — asks first, then erases every card and any sets left\n" +
           "`/rarity` — names, colors, worth, burn, weights, order" },

@@ -49,7 +49,8 @@ Collect, trade, battle, and build — with a User Hub for daily profile flow, co
 - **`/setup`** (and `!setup`) — guided configuration
 - **`/config`** — visual toggles, intervals, rates, pack settings
 - Sets, rarity, embeds, giveaways — `/set_hub`, `/rarity`, `/embed`, `/giveaway`
-- **`/cardadmin`** — create (upload / Kitsu / Vault Values), edit, give, drop
+- **`/cardadmin`** — create (upload / Roblox / Vault Values), edit, give, drop
+- **`/create_card_from_roblox`** — search a Roblox user, preview the full-body avatar, create
 - **`/create_cards_from_mttv`** — bulk Vault Values: filter by website rarity, tag up to 5, preview images, create
 - **`/admin_hub`** — staff toolbox · **`/help` → Admin** for the full reference
 
@@ -178,7 +179,8 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 | `/setup` · `!setup` | Guided server setup |
 | `/config` | Visual configuration panel |
 | `/admin_hub` | Admin toolbox |
-| `/cardadmin` | Create / edit / give / drop cards (upload · Kitsu · Vault Values) |
+| `/cardadmin` | Create / edit / give / drop cards (upload · Roblox · Vault Values) |
+| `/create_card_from_roblox` | Roblox username search, full-body avatar preview, then create |
 | `/create_card_from_mttv` | One new card from a Vault Values item (image + DN rarity) |
 | `/create_cards_from_mttv` | Bulk Vault create — website rarity filter, tag 5, image preview |
 | `/battle_admin` · `/raid_admin` | Combat admin |
@@ -210,7 +212,7 @@ Slash names below are what Discord registers today. Prefer **`/help`** and **`/u
 > - **`/user-hub`:** daily, collection, wishlist, quests, market, squad, and related profile shortcuts
 > - **`/trade`:** gift, pending trades, history, accept, decline
 > - **`/vaultvalue`:** info, calc, list, help, postcalc
-> - **`/cardadmin`:** create / Kitsu / Vault Values create, library, edit, give, drop, shards
+> - **`/cardadmin`:** create / Roblox / Vault Values create, library, edit, give, drop, shards
 > - **`/secret`:** whisper, staff secret (`/echo` stays as config)
 > - **`/quiet mode:…`:** vacation / loa entry aliases
 > - **`/help` → Admin:** adminhelp / welcomeadmin docs

@@ -170,6 +170,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       (cmd === "addcard" && focused.name === "set") ||
       (cmd === "createcardfrommttv" && focused.name === "set") ||
       (cmd === "createcardsfrommttv" && focused.name === "set") ||
+      (cmd === "createcardfromroblox" && focused.name === "set") ||
       (cmd === "createcardfrom" && focused.name === "set") ||
       (cmd === "cardadmin" && focused.name === "set" &&
         ["create", "create_kitsu", "create_vault", "giveall", "drop", "mass_drop"].includes(sub ?? ""));
@@ -261,7 +262,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
     // Legacy custom-tier assignment still exists in advanced tools; new cards
     // should start with a stable built-in rarity identity.
     if (
-      ((cmd === "addcard" || cmd === "createcardfrommttv" || cmd === "createcardsfrommttv" || cmd === "createcardfrom") && focused.name === "rarity") ||
+      ((cmd === "addcard" || cmd === "createcardfrommttv" || cmd === "createcardsfrommttv" || cmd === "createcardfromroblox" || cmd === "createcardfrom") && focused.name === "rarity") ||
       (cmd === "cardadmin" && focused.name === "rarity" && ["create", "create_kitsu", "create_vault"].includes(sub ?? ""))
     ) {
       if (!interaction.guild) { await interaction.respond([]); return; }
@@ -287,7 +288,7 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
 
     // ── /add_card and /cardadmin create* type — existing card types plus free entry ──
     if (
-      ((cmd === "addcard" || cmd === "createcardfrommttv" || cmd === "createcardfrom") && focused.name === "type") ||
+      ((cmd === "addcard" || cmd === "createcardfrommttv" || cmd === "createcardfromroblox" || cmd === "createcardfrom") && focused.name === "type") ||
       (cmd === "cardadmin" && focused.name === "type" && ["create", "create_kitsu", "create_vault"].includes(sub ?? ""))
     ) {
       if (!interaction.guild) { await interaction.respond([]); return; }
@@ -317,7 +318,14 @@ export async function handleAutocomplete(interaction: AutocompleteInteraction): 
       return;
     }
 
-    // ── Kitsu AC — /cardadmin create_kitsu|library (+ legacy) ──
+    // ── Roblox username AC — /create_card_from_roblox ──
+    if (cmd === "createcardfromroblox" && focused.name === "username") {
+      const { handleRobloxUserAutocomplete } = await import("./roblox-cards.js");
+      await handleRobloxUserAutocomplete(interaction);
+      return;
+    }
+
+    // ── Kitsu AC — leftover /library (+ legacy create_card_from) ──
     if (
       (cmd === "createcardfrom" && focused.name === "item") ||
       (cmd === "library" && focused.name === "name") ||

@@ -478,6 +478,12 @@ export async function startBot() {
         await handleArtShowModal(interaction);
         return;
       }
+      // ── Roblox create preview (rbxcreate:*) ────────────────────────────────
+      if (interaction.isButton() && interaction.customId.startsWith("rbxcreate:")) {
+        const { handleRobloxCreateButton } = await import("./commands/roblox-cards.js");
+        await handleRobloxCreateButton(interaction);
+        return;
+      }
       // ── Vault batch create (vaultbatch:*) ──────────────────────────────────
       if (interaction.isButton() && interaction.customId.startsWith("vaultbatch:")) {
         const { handleVaultBatchButton } = await import("./commands/vault-batch.js");

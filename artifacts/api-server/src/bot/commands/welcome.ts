@@ -206,7 +206,7 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
 
       "**✅ Step 3 — Add & Edit Cards**\n" +
       `• **Website** → [${SITE_ADMIN}](${SITE_ADMIN}) — display name, image, description, featured/hidden, sort order.\n` +
-      "• **Discord** → `/add_card` (upload) · `/create_card_from_mttv` (one Vault item) · `/create_cards_from_mttv` (bulk, up to 5) · `/cardadmin` From Kitsu — or prefix `!addcard` / `!editcard`.\n\n" +
+      "• **Discord** → `/add_card` (upload) · `/create_card_from_roblox` (Roblox avatar) · `/create_card_from_mttv` (one Vault item) · `/create_cards_from_mttv` (bulk, up to 5) — or prefix `!addcard` / `!editcard`.\n\n" +
 
       "**✅ Step 4 — Dashboard Login**\n" +
       "Run `/dashboard` — bot DMs you a one-time login link. Do this for every admin who needs site access.\n\n" +
@@ -258,6 +258,7 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
         value:
           "`/drop [name]` — single drop (bypasses active-set check)\n" +
           "`/mass_drop [amount]` — 10–25 cards in a batch (event use)\n" +
+          "`/create_card_from_roblox` — Roblox username + full-body avatar (preview, then create)\n" +
           "`/create_card_from_mttv` — one Vault item · `/create_cards_from_mttv` — bulk (tag 5, preview)\n" +
           "`/add_card` · `/edit_image`\n" +
           "`/cardadmin` — give · take · give shards · take shards",

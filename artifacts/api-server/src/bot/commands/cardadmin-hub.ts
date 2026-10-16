@@ -1,7 +1,7 @@
 // /cardadmin — panel hub for the actions buttons can do (give, take, shards,
-// Kitsu, library, delete). Drop, mass drop, Vault Values create, image upload,
-// and image edit are real slash commands — Discord modals can't attach a file
-// or autocomplete a catalog.
+// library, delete). Drop, mass drop, Vault Values create, Roblox create,
+// image upload, and image edit are real slash commands — Discord modals can't
+// attach a file or autocomplete a catalog.
 
 import type {
   ChatInputCommandInteraction,
@@ -29,7 +29,7 @@ const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 export function buildCardAdminCommandJson() {
   return new SlashCommandBuilder()
     .setName("cardadmin")
-    .setDescription("Admin card hub — create, edit, give, drop (Kitsu · Vault Values · upload)")
+    .setDescription("Admin card hub — create, edit, give, drop (Roblox · Vault Values · upload)")
     .setDMPermission(false)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON();
@@ -41,10 +41,11 @@ function hubEmbed(): EmbedBuilder {
     .setTitle("🃏 Card Admin Hub")
     .setDescription(
       [
-        "Buttons cover give, take, shards, Kitsu, library, and delete.",
+        "Buttons cover give, take, shards, library, and delete.",
         "File uploads and catalog search stay as slash commands:",
         "",
         "`/drop` · `/mass_drop` — force a spawn (card and set autocomplete)",
+        "`/create_card_from_roblox` — Roblox username search, full-body preview, create",
         "`/create_card_from_mttv` — Vault Values item, its image, and a DN rarity",
         "`/create_cards_from_mttv` — bulk: website rarity filter → tag 5 → image preview → create",
         "`/add_card` — upload your own image · `/edit_image` — Vault image or a file",
@@ -57,7 +58,7 @@ function hubRows() {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("cahub:create").setLabel("Create").setEmoji("✨").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("cahub:create_kitsu").setLabel("From Kitsu").setEmoji("🎌").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("cahub:create_roblox").setLabel("From Roblox").setEmoji("🎮").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("cahub:create_vault").setLabel("From Vault").setEmoji("📦").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("cahub:library").setLabel("Library").setEmoji("📚").setStyle(ButtonStyle.Secondary),
     ),
@@ -151,14 +152,13 @@ export async function handleCardAdminHubComponent(
     return;
   }
 
-  if (id === "cahub:create_kitsu" && interaction.isButton()) {
-    await interaction.showModal(textModal("cahub:modal:create_kitsu", "Create from Kitsu", [
-      { id: "category", label: "Category: anime | manga | character", required: true, placeholder: "anime" },
-      { id: "item", label: "Title or character name", required: true },
-      { id: "rarity", label: "DN rarity", required: true, placeholder: "epic" },
-      { id: "type", label: "Card type/tag", required: true },
-      { id: "set", label: "Set (optional)" },
-    ]));
+  if ((id === "cahub:create_roblox" || id === "cahub:create_kitsu") && interaction.isButton()) {
+    await interaction.reply({
+      content:
+        "Use `/create_card_from_roblox` — type a Roblox username (autocomplete), preview the full-body avatar, then create.\n" +
+        "Kitsu create is gone; this is the replacement.",
+      ...EPHEMERAL,
+    });
     return;
   }
 

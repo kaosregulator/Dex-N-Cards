@@ -216,7 +216,8 @@ function buildLegacyCommands() {
 
     // Restored from the card-admin hub (PR #161 / #163). Buttons can't attach a
     // file or autocomplete a catalog, so these stay as real slash commands.
-    // Give / take / shards / delete / library / Kitsu stay on the /cardadmin panel.
+    // Give / take / shards / delete / library stay on the /cardadmin panel.
+    // Roblox create is a real slash (username autocomplete + full-body preview).
     adminCmd("drop", "Force-drop a card — for events and giveaways", s => s
       .addStringOption(o => o.setName("name").setDescription("Card name — leave empty for a random drop from the active set").setAutocomplete(true))
       .addStringOption(o => o.setName("set").setDescription("Pick a specific set to drop from (ignores the active set)").setAutocomplete(true))
@@ -252,6 +253,17 @@ function buildLegacyCommands() {
     adminCmd("createcardsfrommttv", "Batch-create cards from Vault Values — pick a website rarity, tag 5, preview, create", s => s
       .addStringOption(o => o.setName("rarity").setDescription("DN rarity for new cards — default auto from each item's Vault rarity").setAutocomplete(true))
       .addStringOption(o => o.setName("set").setDescription("Optional set to add every created card to").setAutocomplete(true))),
+
+    adminCmd("createcardfromroblox", "Create a card from a Roblox user's full-body avatar and username", s => s
+      .addStringOption(o => o.setName("username").setDescription("Roblox username — type to search").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("rarity").setDescription("DN rarity — type to search").setRequired(true).setAutocomplete(true))
+      .addStringOption(o => o.setName("type").setDescription("Card type/tag — blank uses roblox").setAutocomplete(true))
+      .addAttachmentOption(o => o.setName("image").setDescription("Upload an image (overrides the Roblox full-body avatar)"))
+      .addStringOption(o => o.setName("set").setDescription("Optional set to add this card to immediately").setAutocomplete(true))
+      .addStringOption(o => o.setName("description").setDescription("Override the card description (up to 500 chars)").setMaxLength(500))
+      .addBooleanOption(o => o.setName("limited").setDescription("Limited edition — capped copy count?"))
+      .addIntegerOption(o => o.setName("max_copies").setDescription("Max copies if limited (default 50)").setMinValue(1))
+      .addBooleanOption(o => o.setName("event_exclusive").setDescription("Event exclusive — never spawns randomly?"))),
 
     adminCmd("editimage", "Update a card's image from Vault Values or an uploaded file", s => s
       .addStringOption(o => o.setName("name").setDescription("Card to edit").setRequired(true).setAutocomplete(true))
@@ -562,6 +574,7 @@ export const COMMAND_RENAMES: Record<string, string> = {
   addcard: "add_card",
   createcardfrommttv: "create_card_from_mttv",
   createcardsfrommttv: "create_cards_from_mttv",
+  createcardfromroblox: "create_card_from_roblox",
   createcardfrom: "create_card_from",
   editcard: "edit_card",
   editimage: "edit_image",
@@ -638,7 +651,9 @@ export const HUB_REPLACED_COMMANDS = new Set<string>([
   "info_mttv", "calc", "valuehelp", "valuelist", "postcalculator",
   // Still on the /cardadmin panel (buttons/modals are enough — no file upload).
   // Restored as slash (autocomplete or an image Discord modals can't take):
-  //   drop, massdrop, addcard, createcardfrommttv, createcardsfrommttv, editimage.
+  //   drop, massdrop, addcard, createcardfrommttv, createcardsfrommttv,
+  //   createcardfromroblox, editimage.
+  // Kitsu create stays hub-replaced (retired). Library preview stays on /cardadmin.
   "createcardfrom", "library",
   "editcard", "deletecard",
   "give", "takeback", "giveall",
@@ -692,7 +707,7 @@ export const USER_HUB_COMMANDS = new Set([
 export const ADMIN_HUB_COMMANDS = new Set([
   "setup", "config", "minigames", "adminhub", "sethub", "set_admin", "deletecard", "deleteallcards",
   "welcomeadmin", "adminhelp", "drop", "massdrop", "give", "giveshards",
-  "takeback", "takeshards", "addcard", "createcardfrommttv", "createcardsfrommttv", "createcardfrom", "library", "editcard", "editimage", "dashboard", "collectorrole",
+  "takeback", "takeshards", "addcard", "createcardfrommttv", "createcardsfrommttv", "createcardfromroblox", "createcardfrom", "library", "editcard", "editimage", "dashboard", "collectorrole",
   "battleforceend",
   "rarity", "embed", "event", "edituser", "giveall", "editpack",
   "postcalculator", "postboard", "massrole",

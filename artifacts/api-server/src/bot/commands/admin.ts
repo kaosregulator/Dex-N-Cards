@@ -141,7 +141,14 @@ export async function handleAdminCommand(
     return;
   }
 
-  // /create_card_from — creates a DN card using Kitsu anime/manga/character data.
+  // /create_card_from_roblox — preview full-body avatar, then create (own reply).
+  if (cmd === "createcardfromroblox") {
+    const { handleCreateCardFromRoblox } = await import("./roblox-cards.js");
+    await handleCreateCardFromRoblox(interaction);
+    return;
+  }
+
+  // /create_card_from — leftover Kitsu path (hub-replaced; library still uses Kitsu).
   if (cmd === "createcardfrom") {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (!(await checkAdmin(interaction))) {
