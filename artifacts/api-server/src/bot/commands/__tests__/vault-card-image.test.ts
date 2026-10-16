@@ -34,15 +34,15 @@ describe("Vault Values card image", () => {
 describe("restored card-admin slash commands", () => {
   async function registered() {
     process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
-    const { HUB_REPLACED_COMMANDS, buildCommands, internalCommandName } = await import("../register.js");
+    const { HUB_REPLACED_COMMANDS, buildCommands, internalCommandName, ADMIN_HUB_COMMANDS } = await import("../register.js");
     const chat = buildCommands().filter((c) => (c.type ?? 1) === 1);
-    return { chat, HUB_REPLACED_COMMANDS, internalCommandName };
+    return { chat, HUB_REPLACED_COMMANDS, internalCommandName, ADMIN_HUB_COMMANDS };
   }
 
   it("registers drop, mass drop, vault create, upload create, and edit image", async () => {
     const { chat, HUB_REPLACED_COMMANDS, internalCommandName } = await registered();
     const names = new Set(chat.map((c) => c.name));
-    for (const name of ["drop", "mass_drop", "create_card_from_mttv", "add_card", "edit_image"]) {
+    for (const name of ["drop", "mass_drop", "create_card_from_mttv", "create_cards_from_mttv", "create_card_from_roblox", "add_card", "edit_image"]) {
       expect(names.has(name), name).toBe(true);
       expect(HUB_REPLACED_COMMANDS.has(internalCommandName(name)), name).toBe(false);
     }
@@ -53,13 +53,14 @@ describe("restored card-admin slash commands", () => {
     expect(chat.length).toBeLessThanOrEqual(100);
   });
 
-  it("keeps give, take, and kitsu on the hub", async () => {
+  it("keeps give, take, leftover kitsu create, and library on the hub", async () => {
     const { chat, HUB_REPLACED_COMMANDS } = await registered();
     const names = new Set(chat.map((c) => c.name));
     for (const internal of ["give", "takeback", "createcardfrom", "library", "deletecard"]) {
       expect(HUB_REPLACED_COMMANDS.has(internal)).toBe(true);
       expect(names.has(internal)).toBe(false);
     }
+    expect(names.has("create_card_from")).toBe(false);
   });
 
   it("gives vault create an item, a rarity, and an image attachment", async () => {
@@ -91,5 +92,57 @@ describe("restored card-admin slash commands", () => {
       expect(names.has(keep), keep).toBe(true);
     }
     expect(chat.length).toBeLessThanOrEqual(100);
+  });
+
+  it("registers bulk vault create with optional DN rarity and set", async () => {
+    const { chat, internalCommandName, ADMIN_HUB_COMMANDS } = await registered();
+    const cmd = chat.find((c) => c.name === "create_cards_from_mttv") as {
+      description?: string;
+      options?: Array<{ name: string; required?: boolean }>;
+    };
+    expect(cmd).toBeTruthy();
+    expect(cmd.description?.length ?? 999).toBeLessThanOrEqual(100);
+    expect(internalCommandName("create_cards_from_mttv")).toBe("createcardsfrommttv");
+    expect(ADMIN_HUB_COMMANDS.has("createcardsfrommttv")).toBe(true);
+    const names = (cmd.options ?? []).map((o) => o.name);
+    expect(names).toEqual(expect.arrayContaining(["rarity", "set"]));
+    expect(names).not.toEqual(expect.arrayContaining(["item"]));
+    expect(cmd.options?.find((o) => o.name === "rarity")?.required).toBeFalsy();
+    expect(cmd.options?.find((o) => o.name === "set")?.required).toBeFalsy();
+  });
+
+  it("keeps slash-backed creates and drops off the cardadmin hub", async () => {
+    process.env.DATABASE_URL ??= "postgresql://test:test@127.0.0.1:5432/test";
+    const { CARD_ADMIN_HUB_BUTTON_IDS } = await import("../cardadmin-hub.js");
+    const ids = new Set<string>(CARD_ADMIN_HUB_BUTTON_IDS);
+    for (const gone of [
+      "cahub:create_roblox", "cahub:create_kitsu", "cahub:create_vault",
+      "cahub:create", "cahub:drop", "cahub:mass_drop", "cahub:edit_image",
+    ]) {
+      expect(ids.has(gone), gone).toBe(false);
+    }
+    for (const keep of ["cahub:give", "cahub:take", "cahub:giveall", "cahub:edit", "cahub:delete"]) {
+      expect(ids.has(keep), keep).toBe(true);
+    }
+  });
+
+  it("registers Roblox create with username autocomplete and optional image", async () => {
+    const { chat, internalCommandName, ADMIN_HUB_COMMANDS } = await registered();
+    const cmd = chat.find((c) => c.name === "create_card_from_roblox") as {
+      description?: string;
+      options?: Array<{ name: string; type: number; required?: boolean; autocomplete?: boolean }>;
+    };
+    expect(cmd).toBeTruthy();
+    expect(cmd.description?.length ?? 999).toBeLessThanOrEqual(100);
+    expect(internalCommandName("create_card_from_roblox")).toBe("createcardfromroblox");
+    expect(ADMIN_HUB_COMMANDS.has("createcardfromroblox")).toBe(true);
+    const names = (cmd.options ?? []).map((o) => o.name);
+    expect(names).toEqual(expect.arrayContaining(["username", "rarity"]));
+    const username = cmd.options?.find((o) => o.name === "username");
+    expect(username?.required).toBe(true);
+    expect(username?.autocomplete).toBe(true);
+    const image = cmd.options?.find((o) => o.name === "image");
+    expect(image?.type).toBe(11);
+    expect(image?.required).toBeFalsy();
   });
 });

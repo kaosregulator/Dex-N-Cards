@@ -1,7 +1,6 @@
-// /cardadmin — panel hub for the actions buttons can do (give, take, shards,
-// Kitsu, library, delete). Drop, mass drop, Vault Values create, image upload,
-// and image edit are real slash commands — Discord modals can't attach a file
-// or autocomplete a catalog.
+// /cardadmin — panel hub for actions that are NOT their own slash:
+// give, take, shards, give-all, edit, delete, library, edit-user.
+// Creates, drops, and image uploads live only as slashes (autocomplete / files).
 
 import type {
   ChatInputCommandInteraction,
@@ -29,7 +28,7 @@ const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 export function buildCardAdminCommandJson() {
   return new SlashCommandBuilder()
     .setName("cardadmin")
-    .setDescription("Admin card hub — create, edit, give, drop (Kitsu · Vault Values · upload)")
+    .setDescription("Admin card hub — give, take, shards, edit, delete")
     .setDMPermission(false)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON();
@@ -41,39 +40,34 @@ function hubEmbed(): EmbedBuilder {
     .setTitle("🃏 Card Admin Hub")
     .setDescription(
       [
-        "Buttons cover give, take, shards, Kitsu, library, and delete.",
-        "File uploads and catalog search stay as slash commands:",
+        "Buttons are only for things with **no** slash: give, take, shards, give-all, edit, delete, library.",
         "",
-        "`/drop` · `/mass_drop` — force a spawn (card and set autocomplete)",
-        "`/create_card_from_mttv` — Vault Values item, its image, and a DN rarity",
-        "`/add_card` — upload your own image · `/edit_image` — Vault image or a file",
+        "Creates, drops, and image uploads are slash commands:",
+        "`/add_card` · `/create_card_from_roblox` · `/create_card_from_mttv` · `/create_cards_from_mttv`",
+        "`/drop` · `/mass_drop` · `/edit_image`",
       ].join("\n"),
     )
-    .setFooter({ text: "Administrator only · slash commands above also have buttons here" });
+    .setFooter({ text: "Administrator only · slashes are not duplicated as buttons" });
 }
+
+/** Live hub buttons — slash-backed creates/drops are listed in the embed, not here. */
+export const CARD_ADMIN_HUB_BUTTON_IDS = [
+  "cahub:give", "cahub:take", "cahub:give_shards", "cahub:take_shards",
+  "cahub:edit", "cahub:delete", "cahub:library", "cahub:edituser", "cahub:giveall",
+] as const;
 
 function hubRows() {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("cahub:create").setLabel("Create").setEmoji("✨").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("cahub:create_kitsu").setLabel("From Kitsu").setEmoji("🎌").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("cahub:create_vault").setLabel("From Vault").setEmoji("📦").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("cahub:library").setLabel("Library").setEmoji("📚").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("cahub:give").setLabel("Give").setEmoji("🎁").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("cahub:take").setLabel("Take").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("cahub:give_shards").setLabel("Give shards").setEmoji("💠").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("cahub:take_shards").setLabel("Take shards").setEmoji("💸").setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("cahub:edit").setLabel("Edit").setEmoji("✏️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cahub:edit_image").setLabel("Edit image").setEmoji("🖼️").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("cahub:delete").setLabel("Delete").setEmoji("🗑️").setStyle(ButtonStyle.Danger),
-    ),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("cahub:give").setLabel("Give").setEmoji("🎁").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("cahub:take").setLabel("Take").setEmoji("↩️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("cahub:drop").setLabel("Drop").setEmoji("🎴").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("cahub:mass_drop").setLabel("Mass drop").setEmoji("💥").setStyle(ButtonStyle.Success),
-    ),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("cahub:give_shards").setLabel("Give shards").setEmoji("💠").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("cahub:take_shards").setLabel("Take shards").setEmoji("💸").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("cahub:library").setLabel("Library").setEmoji("📚").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("cahub:edituser").setLabel("Edit user").setEmoji("👤").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("cahub:giveall").setLabel("Give all").setEmoji("📚").setStyle(ButtonStyle.Danger),
     ),
@@ -150,14 +144,13 @@ export async function handleCardAdminHubComponent(
     return;
   }
 
-  if (id === "cahub:create_kitsu" && interaction.isButton()) {
-    await interaction.showModal(textModal("cahub:modal:create_kitsu", "Create from Kitsu", [
-      { id: "category", label: "Category: anime | manga | character", required: true, placeholder: "anime" },
-      { id: "item", label: "Title or character name", required: true },
-      { id: "rarity", label: "DN rarity", required: true, placeholder: "epic" },
-      { id: "type", label: "Card type/tag", required: true },
-      { id: "set", label: "Set (optional)" },
-    ]));
+  if ((id === "cahub:create_roblox" || id === "cahub:create_kitsu") && interaction.isButton()) {
+    await interaction.reply({
+      content:
+        "Use `/create_card_from_roblox` — type a Roblox username (autocomplete), preview the full-body avatar, then create.\n" +
+        "Kitsu create is gone; this is the replacement.",
+      ...EPHEMERAL,
+    });
     return;
   }
 
