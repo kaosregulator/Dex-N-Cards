@@ -339,7 +339,7 @@ const PAGES: Record<HelpSection, PageFn> = {
       .setDescription("Setup, configuration, and management. Most live under `/admin` (and prefix `!` commands for setup)." + NAV_HINT)
       .addFields(
         { name: "🚀 First-Time Setup", value:
-          "`/setup` — interactive setup wizard (spawn channel, interval, catch mode, roster)\n" +
+          "`/setup` — wizard for drop & battle channels, welcome board, timing, and the roster\n" +
           "`/config` — visual config panel · `/admin_hub` — admins, timeouts, channels, state\n" +
           "`/dashboard` — DM yourself a website login link · this **Admin** help page is the reference" },
         { name: "🎁 Drops, Gives & Events", value:

@@ -135,7 +135,7 @@ function buildLegacyCommands() {
 
     // Admin-only: /welcome posts a public, server-wide welcome message, so it is
     // hidden from non-admins in the slash menu (the bot also enforces this server-side).
-    adminCmd("welcome", "Post the server welcome message (admin)", s => s),
+    adminCmd("welcome", "Post the welcome board in this channel (admin)", s => s),
 
     // ── /begin (interactive onboarding adventure — one-time, real rewards) ─────
     cmd("begin", "Start your Dex N Cards adventure — a guided intro with real starter rewards", s => s),

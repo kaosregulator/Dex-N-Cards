@@ -1,16 +1,24 @@
-import type { ChatInputCommandInteraction } from "discord.js";
-import { EmbedBuilder, MessageFlags, AttachmentBuilder } from "discord.js";
+import type { ChatInputCommandInteraction, GuildTextBasedChannel } from "discord.js";
+import { EmbedBuilder, AttachmentBuilder } from "discord.js";
 import { applyEmbedOverride } from "../embed-overrides.js";
 import { getOrCreateGuildSettings, isAdmin } from "../db.js";
 import { getShinyName } from "../cards-data.js";
-import { BRAND_NAME, brandAsset, BRAND_BANNER_FILE, BRAND_LOGO_FILE } from "../help-banners.js";
+import { BRAND_NAME, brandAsset, BRAND_LOGO_FILE } from "../help-banners.js";
 import { publicBaseUrl } from "../../lib/runtime-env.js";
 
-// Thin animated divider GIF used as the separator image at the bottom of each
-// embed. The rainbow-glow line (4 KB, GitHub user-images CDN) renders as a
-// full-width animated stripe between embeds in Discord.
-const DIVIDER_GIF =
-  "https://user-images.githubusercontent.com/73097560/115834477-dbab4500-a447-11eb-908a-139a6edaec5c.gif";
+// Section banners live in assets/brand/. The hero GIF is paced at 8 fps so the
+// brush stroke reads clearly without strobing. Static banners replace the old
+// flashing divider between sections.
+const WELCOME_ART = {
+  hero: "welcome-hero.gif",
+  rules: "welcome-rules.png",
+  know: "welcome-know.png",
+  help: "welcome-help.png",
+  collecting: "welcome-collecting.png",
+  trades: "welcome-trades.png",
+  battling: "welcome-battling.png",
+  sieges: "welcome-sieges.png",
+} as const;
 
 const BRAND_COLOR  = 0xe63946;   // DarkNight red
 const ADMIN_COLOR  = 0xeb459e;   // pink for admin embeds
@@ -41,28 +49,37 @@ function dashboardAdminUrl(): string {
   return `${publicBaseUrl(SITE_URL)}/dashboard/admin`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// /welcome — public, member-facing. Drops in #welcome or #info channels.
-// Small, spaced-out sections — Welcome · Rules · Good to Know · Dive In — each
-// separated by the animated GIF banner. Kept short on purpose: the full command
-// reference lives in the interactive `/help` hub. Each section stays editable
-// via `/embed` (keys: welcome · rules · commands).
-// NOT in EPHEMERAL_COMMANDS — visible to everyone.
-// ─────────────────────────────────────────────────────────────────────────────
-export async function handleWelcome(interaction: ChatInputCommandInteraction): Promise<void> {
-  const shinySettings = interaction.guildId ? await getOrCreateGuildSettings(interaction.guildId) : null;
-  const shinyName = getShinyName(shinySettings);
-  const guildId   = interaction.guildId;
-  const guildName = interaction.guild?.name ?? "this server";
+function attachArt(files: AttachmentBuilder[], name: string): string | null {
+  const buf = brandAsset(name);
+  if (!buf) return null;
+  files.push(new AttachmentBuilder(buf, { name }));
+  return `attachment://${name}`;
+}
 
-  // Brand art: the Dex N Cards banner as the hero image, the circle logo as the
-  // thumbnail. Attached once to this message; both fall back gracefully.
+export type WelcomePost = {
+  guildId: string | null;
+  guildName: string;
+  username: string;
+  userId: string;
+};
+
+/** The public board only. Callers post it with channel.send so Discord does not stamp "used a command" on it. */
+export async function buildWelcomeBoard(post: WelcomePost): Promise<{ embeds: EmbedBuilder[]; files: AttachmentBuilder[] }> {
+  const shinySettings = post.guildId ? await getOrCreateGuildSettings(post.guildId) : null;
+  const shinyName = getShinyName(shinySettings);
+  const guildId = post.guildId;
+  const guildName = post.guildName;
+
   const files: AttachmentBuilder[] = [];
-  const bannerBuf = brandAsset(BRAND_BANNER_FILE);
-  const logoBuf = brandAsset(BRAND_LOGO_FILE);
-  if (bannerBuf) files.push(new AttachmentBuilder(bannerBuf, { name: BRAND_BANNER_FILE }));
-  if (logoBuf) files.push(new AttachmentBuilder(logoBuf, { name: BRAND_LOGO_FILE }));
-  const heroImage = bannerBuf ? `attachment://${BRAND_BANNER_FILE}` : DIVIDER_GIF;
+  const heroImage = attachArt(files, WELCOME_ART.hero);
+  const rulesImage = attachArt(files, WELCOME_ART.rules);
+  const knowImage = attachArt(files, WELCOME_ART.know);
+  const helpImage = attachArt(files, WELCOME_ART.help);
+  const collectingImage = attachArt(files, WELCOME_ART.collecting);
+  const tradesImage = attachArt(files, WELCOME_ART.trades);
+  const battlingImage = attachArt(files, WELCOME_ART.battling);
+  const siegesImage = attachArt(files, WELCOME_ART.sieges);
+  const logoImage = attachArt(files, BRAND_LOGO_FILE);
 
   // ── 1 · Welcome ─────────────────────────────────────────────────────────────
   const welcome = new EmbedBuilder()
@@ -71,13 +88,13 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
     .setDescription(
       `Welcome to **${guildName}** — DarkNight's military collectible card game. Tanks, jets, warships, bosses, and the odd cursed community card drop right here in chat.\n\n` +
       "**When a card spawns, just type its name to catch it.** That's the core loop — then hoard, battle, trade, and climb the leaderboard.",
-    )
-    .setImage(heroImage);
-  if (logoBuf) welcome.setThumbnail(`attachment://${BRAND_LOGO_FILE}`);
+    );
+  if (heroImage) welcome.setImage(heroImage);
+  if (logoImage) welcome.setThumbnail(logoImage);
 
   await applyEmbedOverride(welcome, {
     guildId, key: "welcome", defaultImageUrl: heroImage,
-    ctx: { guild: guildName, username: interaction.user.username, userId: interaction.user.id },
+    ctx: { guild: guildName, username: post.username, userId: post.userId },
   });
 
   // ── 2 · Rules & Fair Play ───────────────────────────────────────────────────
@@ -89,11 +106,11 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
       "• **No cheating** — macros, self-bots, or auto-typers to snipe catches are bannable.\n" +
       "• **Fair catches** — ties break by Discord's own message timestamp, not bot speed. Got the 🎯 but lost? Someone genuinely typed it first — no bugs, no favouritism.\n" +
       "• **Trade honestly** — deals over 3:1 in value show a ⚠️ warning; it's a heads-up, not a block.",
-    )
-    .setImage(DIVIDER_GIF);
+    );
+  if (rulesImage) rules.setImage(rulesImage);
 
   await applyEmbedOverride(rules, {
-    guildId, key: "rules", defaultImageUrl: DIVIDER_GIF, ctx: { guild: guildName },
+    guildId, key: "rules", defaultImageUrl: rulesImage, ctx: { guild: guildName },
   });
 
   // ── 3 · Things You Should Know ───────────────────────────────────────────────
@@ -105,12 +122,23 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
       { name: "💠 Shards, Packs & Shiny", value: `Earn 💠 shards from \`/daily\`, burning duplicates, quests & achievements, then open \`/pack tier:<basic|premium|legendary>\`. Every catch and pull has a **0.5%** chance to mint a rare **${shinyName}** — worth more and tracked separately.` },
       { name: "⭐ Star Rank", value: "Duplicates aren't waste — `/card_recycle name:<card>` turns spare copies into a permanent ⭐ Star Rank boost for that card. One copy is always kept and the rarity never changes." },
       { name: "🏠 Your Hubs", value: "`/user-hub` is home base — profile, collection, daily, rank, frames & the market in one panel. `/help` is the full interactive guide to every command." },
-    )
-    .setImage(DIVIDER_GIF);
+    );
+  if (knowImage) info.setImage(knowImage);
 
   await applyEmbedOverride(info, {
-    guildId, key: "commands", defaultImageUrl: DIVIDER_GIF, ctx: { guild: guildName },
+    guildId, key: "commands", defaultImageUrl: knowImage, ctx: { guild: guildName },
   });
+
+  const help = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("Help & Support")
+    .setDescription(
+      "Stuck, or showing someone around?\n\n" +
+      "❓ **`/help`** — the full interactive guide\n" +
+      "🏠 **`/user-hub`** — profile, collection, daily, and the market\n" +
+      "🌐 **" + SITE_URL + "** — the public card roster",
+    );
+  if (helpImage) help.setImage(helpImage);
 
   // ── 4 · Collecting ───────────────────────────────────────────────────────────
   const collecting = new EmbedBuilder()
@@ -125,8 +153,8 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
       "🗂️ **`/set_hub`** — browse sets & track completion\n" +
       "🏆 **`/top`** — server leaderboards (Collector, Battle & Raid)\n" +
       "💠 **`/daily`** · **`/pack`** · **`/burn`** duplicates for shards",
-    )
-    .setImage(DIVIDER_GIF);
+    );
+  if (collectingImage) collecting.setImage(collectingImage);
 
   // ── 5 · Trades ───────────────────────────────────────────────────────────────
   const trades = new EmbedBuilder()
@@ -138,8 +166,8 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
       "🎁 **`/trade gift user:@player`** — send 💠 shards to a friend.\n" +
       "📌 **/user-hub → Wishlist** — mark the cards you're hunting so trade partners can find you.\n" +
       "🏪 **/user-hub → Market** — the player marketplace: list what you're selling, browse & buy what you need.",
-    )
-    .setImage(DIVIDER_GIF);
+    );
+  if (tradesImage) trades.setImage(tradesImage);
 
   // ── 6 · Battling ─────────────────────────────────────────────────────────────
   const battling = new EmbedBuilder()
@@ -152,8 +180,8 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
       "🐉 **`/raid`** — team up against a co-op boss card.\n" +
       "🤝 **`/squad`** — form a squad and climb together.\n" +
       "📊 **`/battle profile`** — your record, rank & battle stats.",
-    )
-    .setImage(DIVIDER_GIF);
+    );
+  if (battlingImage) battling.setImage(battlingImage);
 
   // ── 7 · Sieges ───────────────────────────────────────────────────────────────
   const sieges = new EmbedBuilder()
@@ -168,11 +196,47 @@ export async function handleWelcome(interaction: ChatInputCommandInteraction): P
       "⭐ Take a base without losing a card for the full **★★★**.\n" +
       "🔧 Set up your own defenses in **`/hq`** (admins tune the rules in `/hqadmin`).",
     )
-    .setFooter({ text: `🌐 ${SITE_URL}  ·  Run /help for the complete guide` })
-    .setImage(DIVIDER_GIF);
+    .setFooter({ text: `🌐 ${SITE_URL}  ·  Run /help for the complete guide` });
+  if (siegesImage) sieges.setImage(siegesImage);
 
-  await interaction.editReply({ embeds: [welcome, rules, info, collecting, trades, battling, sieges], files });
+  return { embeds: [welcome, rules, info, help, collecting, trades, battling, sieges], files };
+}
 
+export async function postWelcomeBoard(
+  channel: GuildTextBasedChannel,
+  post: WelcomePost,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const payload = await buildWelcomeBoard(post);
+    await channel.send({ embeds: payload.embeds, files: payload.files });
+    return { ok: true };
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code === 50013 || code === 50001) {
+      return { ok: false, error: "❌ I can't post in that channel. I need permission to view it and send messages." };
+    }
+    return { ok: false, error: "❌ Couldn't post the welcome board in that channel." };
+  }
+}
+
+// The slash reply stays private. The channel only receives the board itself.
+export async function handleWelcome(interaction: ChatInputCommandInteraction): Promise<void> {
+  const channel = interaction.channel;
+  if (!interaction.guild || !channel || !channel.isTextBased() || channel.isDMBased()) {
+    await interaction.editReply("❌ Run this in a server channel.");
+    return;
+  }
+  const posted = await postWelcomeBoard(channel, {
+    guildId: interaction.guildId,
+    guildName: interaction.guild.name,
+    username: interaction.user.username,
+    userId: interaction.user.id,
+  });
+  if (!posted.ok) {
+    await interaction.editReply(posted.error);
+    return;
+  }
+  await interaction.editReply(`Posted the welcome board in <#${channel.id}>. The channel only shows the board.`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,8 +277,7 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
 
       "**✅ Step 5 — Test It**\n" +
       "Run `/drop` (no name = random from active set). If nothing spawns, check the set has droppable cards and the spawn channel is configured.",
-    )
-    .setImage(DIVIDER_GIF);
+    );
 
   // ── Embed 2: Card Editing — Website vs Discord ────────────────────────────
   const cardEditing = new EmbedBuilder()
@@ -245,8 +308,7 @@ export async function handleWelcomeAdmin(interaction: ChatInputCommandInteractio
       "`/set_hub` — clickable panel (create, activate, export, toggle showcase).\n" +
       "`/set_admin` — advanced set hub (weights, bulk operations, import/export).\n" +
       "Export any set to JSON → re-import with `!import` + file attachment, or load it from the `/set_hub` panel. Full roundtrip.",
-    )
-    .setImage(DIVIDER_GIF);
+    );
 
   // ── Embed 3: Admin Cheat-Sheet ────────────────────────────────────────────
   const cheatsheet = new EmbedBuilder()

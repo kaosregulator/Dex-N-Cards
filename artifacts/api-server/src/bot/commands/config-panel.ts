@@ -530,8 +530,68 @@ export async function handleConfigButton(interaction: ButtonInteraction): Promis
 }
 
 // ── Router: packs sub-panel selects ──────────────────────────────────────────────────────────────────
+export function parsePackCost(raw: string): number | null {
+  const cleaned = raw.replace(/,/g, "").trim();
+  if (!/^\d+$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  if (!Number.isSafeInteger(n) || n > 1_000_000) return null;
+  return n;
+}
+
+export async function handlePacksCostModal(interaction: ModalSubmitInteraction): Promise<void> {
+  if (!interaction.guild) return;
+  await interaction.deferUpdate();
+  const allowed =
+    interaction.guild.ownerId === interaction.user.id ||
+    interaction.memberPermissions?.has("Administrator") ||
+    (await isAdmin(interaction.guild.id, interaction.user.id));
+  if (!allowed) {
+    await interaction.followUp({ content: "❌ Admins only.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const tier = interaction.customId.slice("packs_cost_modal:".length) as PackTier;
+  if (tier !== "basic" && tier !== "premium" && tier !== "legendary") return;
+  const amount = parsePackCost(interaction.fields.getTextInputValue("amount"));
+  if (amount === null) {
+    await interaction.followUp({
+      content: "❌ Enter a whole number from 0 to 1,000,000.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const patch: Partial<GuildSettings> = {};
+  if (tier === "basic") patch.packBasicCost = amount;
+  if (tier === "premium") patch.packPremiumCost = amount;
+  if (tier === "legendary") patch.packLegendaryCost = amount;
+  await updateGuildSettings(interaction.guild.id, patch);
+  const settings = await getOrCreateGuildSettings(interaction.guild.id);
+  await interaction.editReply({ embeds: [buildPacksEmbed(settings)], components: buildPacksComponents(settings) });
+  await interaction.followUp({
+    content: `✅ ${tierLabel(settings, tier)} now costs 💠 ${amount.toLocaleString()}.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 export async function handlePacksSelect(interaction: StringSelectMenuInteraction): Promise<void> {
   if (!interaction.guild) return;
+  const picked = interaction.values[0];
+  if (interaction.customId.startsWith("packs_cost_") && picked === "custom") {
+    const tier = interaction.customId.slice("packs_cost_".length);
+    const modal = new ModalBuilder()
+      .setCustomId(`packs_cost_modal:${tier}`)
+      .setTitle("Custom pack price")
+      .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("amount")
+          .setLabel("Shard price")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Example: 325")
+          .setRequired(true)
+          .setMaxLength(9),
+      ));
+    await interaction.showModal(modal);
+    return;
+  }
   await interaction.deferUpdate();
   const ok = await ensureAdmin(interaction);
   if (!ok) {
@@ -1858,7 +1918,8 @@ export function buildPacksEmbed(s: GuildSettings): EmbedBuilder {
     .setTitle("🎴 Pack Store — Pricing & Limits")
     .setColor(0xfee75c)
     .setDescription(
-      "Tune what `/pack` charges and how often players can open.\n" +
+      "Tune what `/pack` charges and how often players can open. " +
+      "The listed prices stay, and **Custom amount** lets you type any shard price.\n" +
       "*Weekly counters reset every Monday 00:00 UTC.*",
     )
     .addFields(
@@ -1889,14 +1950,23 @@ export function buildPacksComponents(s: GuildSettings) {
 
   const costSelect = (tier: PackTier, current: number) => {
     const meta = PACK_TIER_META[tier];
-    const opts = COST_OPTS[tier].map(c => ({
+    const presets = COST_OPTS[tier];
+    const opts = presets.map(c => ({
       label: `💠 ${c.toLocaleString()}`,
       value: String(c),
       default: current === c,
     }));
+    if (!presets.includes(current)) {
+      opts.unshift({
+        label: `💠 ${current.toLocaleString()} (custom)`,
+        value: String(current),
+        default: true,
+      });
+    }
+    opts.push({ label: "✏️ Custom amount", value: "custom", default: false });
     return new StringSelectMenuBuilder()
       .setCustomId(`packs_cost_${tier}`)
-      .setPlaceholder(`${meta.emoji} ${tierLabel(s, tier)} cost`)
+      .setPlaceholder(`${meta.emoji} ${tierLabel(s, tier)} — 💠 ${current.toLocaleString()}`)
       .addOptions(opts);
   };
 

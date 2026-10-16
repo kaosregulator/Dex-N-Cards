@@ -1,10 +1,10 @@
 import {
   EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
-  MessageFlags,
+  StringSelectMenuBuilder, ChannelSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
+  MessageFlags, ChannelType,
   type Message, type ChatInputCommandInteraction,
-  type ButtonInteraction, type StringSelectMenuInteraction,
-  type ModalSubmitInteraction, type GuildMember,
+  type ButtonInteraction, type StringSelectMenuInteraction, type ChannelSelectMenuInteraction,
+  type ModalSubmitInteraction, type GuildMember, type Guild, type TextChannel,
 } from "discord.js";
 import { BRAND_NAME } from "../help-banners.js";
 import type { GuildSettings } from "@workspace/db";
@@ -16,16 +16,13 @@ import {
 import { spawnCard, scheduleNextSpawn, clearSpawnTimer } from "../spawn-manager.js";
 import { DEFAULT_CARDS, RARITY_WEIGHTS, type Rarity } from "../cards-data.js";
 import { buildRatesEmbed, buildRatesComponents } from "./config-panel.js";
+import { getBattleSettings, updateBattleSettings } from "../battle/config-engine.js";
+import { postWelcomeBoard } from "./welcome.js";
 
 // ── Entry: !setup ────────────────────────────────────────────────────────────────────────────────────────
 export async function startSetupWizard(msg: Message): Promise<void> {
   if (!msg.guild) return;
-  const settings = await getOrCreateGuildSettings(msg.guild.id);
-  const hasDefaults = await defaultsLoaded(msg.guild.id);
-  await msg.reply({
-    embeds: [buildSetupEmbed(settings, hasDefaults)],
-    components: buildSetupComponents(settings, hasDefaults),
-  });
+  await msg.reply(await setupView(msg.guild.id));
 }
 
 // ── Entry: /setup (slash) ────────────────────────────────────────────────────────────────────────────────────
@@ -35,12 +32,7 @@ export async function handleSetupCommand(interaction: ChatInputCommandInteractio
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const ok = await ensureAdminSlash(interaction);
   if (!ok) return;
-  const settings = await getOrCreateGuildSettings(interaction.guild.id);
-  const hasDefaults = await defaultsLoaded(interaction.guild.id);
-  await interaction.editReply({
-    embeds: [buildSetupEmbed(settings, hasDefaults)],
-    components: buildSetupComponents(settings, hasDefaults),
-  });
+  await interaction.editReply(await setupView(interaction.guild.id));
 }
 
 // ── Button handler ──────────────────────────────────────────────────────────────────────────────────────────
@@ -88,6 +80,18 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
   } else if (action === "toggle" && arg === "trade") {
     const s = await getOrCreateGuildSettings(guildId);
     await updateGuildSettings(guildId, { tradeEnabled: !s.tradeEnabled });
+  } else if (action === "channels") {
+    await showChannelsPanel(interaction, guildId);
+    return;
+  } else if (action === "back") {
+    await refreshPanel(interaction, guildId);
+    return;
+  } else if (action === "create" && (arg === "spawn" || arg === "battle" || arg === "welcome")) {
+    await createSetupChannel(interaction, guildId, arg);
+    return;
+  } else if (action === "postwelcome") {
+    await postWelcomeFromSetup(interaction, guildId, interaction.channelId);
+    return;
   } else if (action === "channel" && arg === "spawn") {
     await updateGuildSettings(guildId, { spawnChannelId: interaction.channelId });
     scheduleNextSpawn(guildId);
@@ -131,7 +135,7 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
     const settings = await getOrCreateGuildSettings(guildId);
     if (!settings.spawnChannelId) {
       await interaction.followUp({
-        content: "❌ Pick a spawn channel first — go to your drops channel and click **📢 Spawn here**.",
+        content: "❌ Pick a spawn channel first — open **Channels** and choose one, or create #card-drops.",
         flags: MessageFlags.Ephemeral,
       }).catch(() => {});
       return;
@@ -147,7 +151,7 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
           .setDescription(
             `Drops are live in <#${settings.spawnChannelId}>.\n\n` +
             `**👈 What to do next**\n` +
-            `• **Post the welcome guide:** Go to your info channel and run \`/welcome\`\n` +
+            `• **Welcome board:** \`/setup\` → **Channels** → **Post welcome board**, or \`/welcome\` in the info channel\n` +
             `• **Add your own cards:** \`/add_card\` with an image, \`/create_card_from_roblox\` for a Roblox avatar, \`/create_card_from_mttv\` for one Vault item, or \`/create_cards_from_mttv\` to batch up to 5\n` +
             `• **Test drops:** \`/drop\` (force one) · \`/mass_drop\` (batch)\n` +
             `• **Players need help?** \`/help\` (admins: open the **Admin** topic)\n\n` +
@@ -196,7 +200,7 @@ export async function handleSetupModalSubmit(interaction: ModalSubmitInteraction
   const guildId = interaction.guild.id;
   const settings = await getOrCreateGuildSettings(guildId);
   if (!settings.spawnChannelId) {
-    await interaction.editReply("❌ Pick a spawn channel first — click **📢 Spawn here** in your drops channel.");
+    await interaction.editReply("❌ Pick a spawn channel first — open **Channels** and choose one, or create #card-drops.");
     return;
   }
 
@@ -237,17 +241,193 @@ async function refreshPanel(
   interaction: ButtonInteraction | StringSelectMenuInteraction,
   guildId: string,
 ): Promise<void> {
-  const settings = await getOrCreateGuildSettings(guildId);
-  const hasDefaults = await defaultsLoaded(guildId);
-  await interaction.editReply({
-    embeds: [buildSetupEmbed(settings, hasDefaults)],
+  await interaction.editReply(await setupView(guildId)).catch(() => {});
+}
+
+async function setupView(guildId: string) {
+  const [settings, hasDefaults, battle] = await Promise.all([
+    getOrCreateGuildSettings(guildId),
+    defaultsLoaded(guildId),
+    getBattleSettings(guildId).catch(() => null),
+  ]);
+  return {
+    embeds: [buildSetupEmbed(settings, hasDefaults, battle?.battleChannelId ?? null)],
     components: buildSetupComponents(settings, hasDefaults),
+  };
+}
+
+const SETUP_CHANNELS = {
+  spawn: { name: "card-drops", topic: "Card drops land here. Type the card name to catch it." },
+  battle: { name: "battles", topic: "Duels, raids, and sieges start in this channel." },
+  welcome: { name: "welcome", topic: "Start here — rules, catching, trades, and battles." },
+} as const;
+
+async function findOrCreateTextChannel(
+  guild: Guild,
+  spec: { name: string; topic: string },
+): Promise<{ channel: TextChannel; created: boolean }> {
+  if (guild.channels.cache.size === 0) await guild.channels.fetch().catch(() => {});
+  const existing = guild.channels.cache.find(
+    (c): c is TextChannel => c.type === ChannelType.GuildText && c.name === spec.name,
+  );
+  if (existing) return { channel: existing, created: false };
+  const channel = await guild.channels.create({
+    name: spec.name,
+    type: ChannelType.GuildText,
+    topic: spec.topic,
+    reason: "Dex N Cards setup",
+  });
+  return { channel, created: true };
+}
+
+async function showChannelsPanel(
+  interaction: ButtonInteraction | ChannelSelectMenuInteraction,
+  guildId: string,
+): Promise<void> {
+  const [settings, battle] = await Promise.all([
+    getOrCreateGuildSettings(guildId),
+    getBattleSettings(guildId).catch(() => null),
+  ]);
+  const battleId = battle?.battleChannelId ?? null;
+  const embed = new EmbedBuilder()
+    .setTitle("📡 Channels")
+    .setColor(0x5865f2)
+    .setDescription(
+      "Pick a channel that already exists, or create the standard ones. " +
+      "Creating a channel uses it if a text channel with that name is already there.\n\n" +
+      `**🎴 Spawns** — ${settings.spawnChannelId ? `<#${settings.spawnChannelId}>` : "_not set_"}\n` +
+      `**⚔️ Battles** — ${battleId ? `<#${battleId}>` : "_not set — battles can start in any channel_"}\n` +
+      `**🔄 Trades** — ${settings.tradeChannelId ? `<#${settings.tradeChannelId}>` : "_not set_"}`,
+    )
+    .setFooter({ text: "Post welcome drops only the board in the channel. This panel stays private." });
+
+  const spawnPick = new ChannelSelectMenuBuilder()
+    .setCustomId("setup:ch:spawn")
+    .setPlaceholder("Use an existing channel for card drops")
+    .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement);
+  const battlePick = new ChannelSelectMenuBuilder()
+    .setCustomId("setup:ch:battle")
+    .setPlaceholder("Use an existing channel for battles")
+    .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement);
+  const createRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("setup:create:spawn").setLabel("Create #card-drops").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("setup:create:battle").setLabel("Create #battles").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("setup:postwelcome").setLabel("Post welcome here").setStyle(ButtonStyle.Secondary),
+  );
+  const welcomeRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("setup:create:welcome").setLabel("Create #welcome & post").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("setup:back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+  );
+  await interaction.editReply({
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(spawnPick),
+      new ActionRowBuilder<ChannelSelectMenuBuilder>().addComponents(battlePick),
+      createRow,
+      welcomeRow,
+    ],
+  }).catch(() => {});
+}
+
+async function createSetupChannel(
+  interaction: ButtonInteraction,
+  guildId: string,
+  kind: "spawn" | "battle" | "welcome",
+): Promise<void> {
+  const guild = interaction.guild;
+  if (!guild) return;
+  const spec = SETUP_CHANNELS[kind];
+  let channel: TextChannel;
+  let created: boolean;
+  try {
+    ({ channel, created } = await findOrCreateTextChannel(guild, spec));
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    const why = code === 50013
+      ? "I need the Manage Channels permission to create that."
+      : "I couldn't create that channel.";
+    await interaction.followUp({ content: `❌ ${why}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+
+  if (kind === "spawn") {
+    await updateGuildSettings(guildId, { spawnChannelId: channel.id });
+    scheduleNextSpawn(guildId);
+  } else if (kind === "battle") {
+    await updateBattleSettings(guildId, { battleChannelId: channel.id, enabled: true, setupComplete: true });
+  }
+
+  await showChannelsPanel(interaction, guildId);
+  const verb = created ? "Created" : "Using the existing";
+  let extra = "";
+  if (kind === "welcome") {
+    const posted = await postWelcomeBoard(channel, {
+      guildId,
+      guildName: guild.name,
+      username: interaction.user.username,
+      userId: interaction.user.id,
+    });
+    extra = posted.ok
+      ? " The welcome board is posted there."
+      : ` ${posted.error}`;
+  }
+  await interaction.followUp({
+    content: `${verb} <#${channel.id}>.${extra}`,
+    flags: MessageFlags.Ephemeral,
+  }).catch(() => {});
+}
+
+async function postWelcomeFromSetup(
+  interaction: ButtonInteraction,
+  guildId: string,
+  channelId: string | null,
+): Promise<void> {
+  const channel = channelId ? interaction.guild?.channels.cache.get(channelId) : interaction.channel;
+  if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+    await interaction.followUp({ content: "❌ Pick a text channel first.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+  const posted = await postWelcomeBoard(channel, {
+    guildId,
+    guildName: interaction.guild?.name ?? "this server",
+    username: interaction.user.username,
+    userId: interaction.user.id,
+  });
+  await interaction.followUp({
+    content: posted.ok ? `Posted the welcome board in <#${channel.id}>.` : posted.error,
+    flags: MessageFlags.Ephemeral,
+  }).catch(() => {});
+}
+
+export async function handleSetupChannelSelect(interaction: ChannelSelectMenuInteraction): Promise<void> {
+  if (!interaction.guild) return;
+  await interaction.deferUpdate();
+  if (!(await ensureAdmin(interaction))) return;
+  const guildId = interaction.guild.id;
+  const kind = interaction.customId.split(":")[2];
+  const channel = interaction.channels.first();
+  if (!channel) {
+    await interaction.followUp({ content: "❌ Couldn't read that channel.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+  if (kind === "spawn") {
+    await updateGuildSettings(guildId, { spawnChannelId: channel.id });
+    scheduleNextSpawn(guildId);
+  } else if (kind === "battle") {
+    await updateBattleSettings(guildId, { battleChannelId: channel.id, enabled: true, setupComplete: true });
+  } else {
+    return;
+  }
+  await showChannelsPanel(interaction, guildId);
+  await interaction.followUp({
+    content: `✅ ${kind === "spawn" ? "Card drops" : "Battles"} will use <#${channel.id}>.`,
+    flags: MessageFlags.Ephemeral,
   }).catch(() => {});
 }
 
 // Callers must deferUpdate first so editReply works correctly.
 async function ensureAdmin(
-  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  interaction: ButtonInteraction | StringSelectMenuInteraction | ChannelSelectMenuInteraction,
 ): Promise<boolean> {
   if (!interaction.guild) return false;
   const perms = interaction.memberPermissions;
@@ -296,7 +476,7 @@ function formatSec(sec: number): string {
 }
 
 // ── Embed + components ────────────────────────────────────────────────────────────────────────────────────────
-function buildSetupEmbed(s: GuildSettings, hasDefaults: boolean): EmbedBuilder {
+function buildSetupEmbed(s: GuildSettings, hasDefaults: boolean, battleChannelId: string | null): EmbedBuilder {
   const catchMode = (s as unknown as { catchMode?: string }).catchMode ?? "type";
   const modeLabel = ({
     type: "Typing",
@@ -323,8 +503,13 @@ function buildSetupEmbed(s: GuildSettings, hasDefaults: boolean): EmbedBuilder {
     .addFields(
       {
         name: "📢 Spawn Channel",
-        value: s.spawnChannelId ? `<#${s.spawnChannelId}>` : "Not set — click **📢 Spawn here** in your drops channel",
-        inline: false,
+        value: s.spawnChannelId ? `<#${s.spawnChannelId}>` : "Not set — open **Channels** to pick one or create #card-drops",
+        inline: true,
+      },
+      {
+        name: "⚔️ Battle Channel",
+        value: battleChannelId ? `<#${battleChannelId}>` : "Not set — battles can start anywhere",
+        inline: true,
       },
       {
         name: "⏱️ Spawn Interval",
@@ -360,7 +545,7 @@ function buildSetupEmbed(s: GuildSettings, hasDefaults: boolean): EmbedBuilder {
       {
         name: "✅ Guided Next Steps",
         value:
-          `• \`/welcome\` — post player guide (run in info channel)\n` +
+          `• **Channels** — pick or create the drop and battle channels, and post the welcome board\n` +
           `• \`/drop\` — force a drop instantly\n` +
           `• \`/add_card\` — create a card with a built-in rarity and an uploaded image`,
         inline: false,
@@ -409,26 +594,10 @@ function buildSetupComponents(s: GuildSettings, hasDefaults: boolean) {
       default: !s.useRandomInterval && s.spawnIntervalSeconds === o.sec,
     })));
 
-  const windowOpts = [
-    { label: "30 seconds", sec: 30 },
-    { label: "1 minute", sec: 60 },
-    { label: "2 minutes", sec: 120 },
-    { label: "5 minutes", sec: 300 },
-    { label: "10 minutes", sec: 600 },
-  ];
-  const windowSelect = new StringSelectMenuBuilder()
-    .setCustomId("setup_window")
-    .setPlaceholder("🛑 Catch window")
-    .addOptions(windowOpts.map(o => ({
-      label: o.label, value: String(o.sec),
-      default: s.catchWindowSeconds === o.sec,
-    })));
-
-  // Row 4: channel + toggles + rates
   const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId("setup:channel:spawn")
-      .setLabel("📢 Spawn here")
+      .setCustomId("setup:channels")
+      .setLabel("📡 Channels")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId("setup:toggle:spawn")
