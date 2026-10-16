@@ -43,6 +43,8 @@ import {
   getGuildCooldowns,
 } from "./cooldowns.js";
 import { replyThenPostAsUnbelievaBoat } from "./webhook.js";
+import { formatCollectCooldownBoard, formatCollectSuccessBoard, type BoardRole } from "./ub-board.js";
+import { iconStampFromMeta, isAnimatedStoreImage, pickStoreBoardImage } from "./store-icons.js";
 import { renderCoinCollectGif, renderDepositGif, renderWithdrawGif } from "./render-collect.js";
 import { renderUbLeaderboardGif } from "./render-leaderboard.js";
 import { brandAsset, BRAND_LOGO_FILE, BRAND_NAME } from "../help-banners.js";
@@ -72,6 +74,11 @@ export function buildCasinoCommandJson() {
     .setDescription("UnbelievaBoat casino — wallet, games, collect, leaderboard")
     .setDMPermission(false)
     .toJSON();
+}
+
+function actorName(interaction: ChatInputCommandInteraction): string {
+  const member = interaction.member as GuildMember | null;
+  return (member?.displayName || interaction.user.globalName || interaction.user.username).slice(0, 256);
 }
 
 function brandEmbed(title: string, description: string): EmbedBuilder {
@@ -698,16 +705,32 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
 
     if (!planned.ready.length) {
       const soonest = Math.min(...planned.cooling.map(r => r.readyInMs));
-      const lines = planned.cooling.slice(0, 10).map(r =>
-        `• ${r.emoji} **${r.link.name}** — ready in **${formatCooldownLeft(r.readyInMs)}**`,
-      );
-      await interaction.editReply(
-        [
-          `All your income roles are on cooldown. Next in **${formatCooldownLeft(soonest)}**.`,
-          "",
-          ...lines,
-        ].join("\n"),
-      );
+      const coolingRows: BoardRole[] = planned.cooling.map(r => ({
+        emoji: r.emoji,
+        name: r.link.name,
+        roleId: r.link.discordRoleId,
+        detail: `ready in **${formatCooldownLeft(r.readyInMs)}**`,
+      }));
+      const embed = new EmbedBuilder()
+        .setColor(0xf0b232)
+        .setAuthor({
+          name: actorName(interaction),
+          iconURL: interaction.user.displayAvatarURL({ size: 128 }),
+        })
+        .setDescription(formatCollectCooldownBoard(formatCooldownLeft(soonest), coolingRows));
+      const boardImage = pickStoreBoardImage(planned.cooling.map(r => {
+        const stamp = iconStampFromMeta((r.link.meta as Record<string, unknown> | null) ?? {});
+        return {
+          imageUrl: r.imageUrl,
+          animated: stamp.animated || isAnimatedStoreImage(r.imageUrl),
+          iconUpdatedAt: stamp.iconUpdatedAt,
+        };
+      }));
+      if (boardImage) {
+        if (isAnimatedStoreImage(boardImage)) embed.setImage(boardImage);
+        else embed.setThumbnail(boardImage);
+      }
+      await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed] });
       return;
     }
 
@@ -732,13 +755,25 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
       })),
     });
 
-    const roleLinesEmbed = planned.ready.map(r =>
-      `• ${r.emoji} **${r.link.name}** — **${r.income >= 0 ? "+" : ""}${fmtCash(r.income)}**` +
-      (r.link.discordRoleId ? ` · <@&${r.link.discordRoleId}>` : ""),
-    );
-    const coolingLines = planned.cooling.slice(0, 5).map(r =>
-      `• ${r.emoji} **${r.link.name}** — ready in ${formatCooldownLeft(r.readyInMs)}`,
-    );
+    const symbol = bal.symbol?.trim() || "💰";
+    const amountDetail = (income: number) => {
+      const gap = symbol.length > 2 ? " " : "";
+      const sign = income < 0 ? "-" : "";
+      return `${symbol}${gap}${sign}${fmtCash(Math.abs(income))} (cash)`;
+    };
+    const collectedRows: BoardRole[] = planned.ready.map(r => ({
+      emoji: r.emoji,
+      name: r.link.name,
+      roleId: r.link.discordRoleId,
+      detail: amountDetail(r.income),
+    }));
+    const coolingRows: BoardRole[] = planned.cooling.map(r => ({
+      emoji: r.emoji,
+      name: r.link.name,
+      roleId: r.link.discordRoleId,
+      detail: `ready in **${formatCooldownLeft(r.readyInMs)}**`,
+    }));
+    const roleLinesEmbed = collectedRows.map((r, i) => `${i + 1} - ${r.name} ${r.detail}`);
 
     const gif = await renderCoinCollectGif({
       amount: total,
@@ -754,20 +789,19 @@ export async function handleCollect(interaction: ChatInputCommandInteraction): P
       })),
     });
     const { files, imageName } = await attachGif(gif, "collect.gif");
-    const embed = brandEmbed("Role Income Collected", [
-      `${interaction.user} swept **${fmtCash(total)}** ${bal.symbol}` +
-        (planned.ready.length > 1 ? ` from **${planned.ready.length}** owned roles:` : " from owned role:"),
-      ...roleLinesEmbed,
-      coolingLines.length ? `\n_Still cooling:_\n${coolingLines.join("\n")}` : null,
-      "",
-      `💵 Cash **${fmtCash(bal.cash)}** · 🏦 Bank **${fmtCash(bal.bank)}**`,
-    ].filter(Boolean).join("\n"));
+    const wallet = `Cash **${fmtCash(bal.cash)}** · Bank **${fmtCash(bal.bank)}**`;
+    const embed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setAuthor({
+        name: actorName(interaction),
+        iconURL: interaction.user.displayAvatarURL({ size: 128 }),
+      })
+      .setDescription(
+        `${formatCollectSuccessBoard(collectedRows, coolingRows)}\n\n${wallet}`,
+      );
     if (imageName) embed.setImage(`attachment://${imageName}`);
-    // Prefer an animated role icon as thumbnail when present
-    const animThumb = planned.ready.find(r => r.imageUrl?.includes(".gif"))?.imageUrl;
-    if (animThumb) embed.setThumbnail(animThumb);
 
-    await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], files, slashHint: "/collect_ub" });
+    await replyThenPostAsUnbelievaBoat(interaction, { embeds: [embed], files });
     void logEconomyEvent(
       interaction.client, interaction.guildId!, interaction.user,
       "Role Collect", `Collected ${fmtCash(total)} from ${planned.ready.length} role(s)`,

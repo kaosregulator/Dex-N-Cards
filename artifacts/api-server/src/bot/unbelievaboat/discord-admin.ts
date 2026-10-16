@@ -76,11 +76,15 @@ import {
 } from "../pets/engine.js";
 import {
   discordEmojiCdnUrl,
+  emojiKeptAfterUpload,
   formatGuildEmoji,
+  iconStampFromMeta,
   isAnimatedStoreImage,
   isHttpImageUrl,
   normalizeStoreIconInput,
+  pickStoreBoardImage,
   resolveSelectEmoji,
+  stampIconMeta,
   titleSafeStoreEmoji,
 } from "./store-icons.js";
 import { readCooldowns } from "./cooldowns.js";
@@ -424,16 +428,15 @@ async function applyCapturedIconToLink(
   const roles = await listRoleLinks(guildId);
   const row = roles.find(r => r.id === linkId);
   if (!row) return null;
-  const meta: Record<string, unknown> = { ...(row.meta as Record<string, unknown>) };
-  if (icon.imageUrl) {
-    meta.imageUrl = icon.imageUrl;
-    meta.animated = Boolean(icon.animated);
-    delete meta.iconGif;
-  } else {
-    delete meta.imageUrl;
-    delete meta.iconGif;
-    delete meta.animated;
+  const base: Record<string, unknown> = { ...(row.meta as Record<string, unknown>) };
+  if (!icon.imageUrl) {
+    delete base.imageUrl;
+    delete base.iconGif;
+    delete base.animated;
   }
+  const meta = stampIconMeta(base, icon.imageUrl
+    ? { imageUrl: icon.imageUrl, animated: Boolean(icon.animated) }
+    : undefined);
   // Icon never mutates the role display name.
   await updateRoleLink(guildId, linkId, { emoji: icon.emoji.slice(0, 64), meta });
   await syncEmojiToUbItem(guildId, row.ubItemId, icon.emoji);
@@ -448,8 +451,27 @@ async function applyCapturedIconToLink(
 }
 
 function applyStoreImageToEmbed(embed: EmbedBuilder, imageUrl: string) {
-  if (isAnimatedStoreImage(imageUrl)) embed.setImage(imageUrl);
-  else embed.setThumbnail(imageUrl);
+  const animated = isAnimatedStoreImage(imageUrl);
+  // Clear the other slot so a GIF doesn't stay stuck under a new still,
+  // and a still doesn't stay stuck beside a new GIF.
+  if (animated) {
+    embed.setImage(imageUrl);
+    embed.setThumbnail(null);
+  } else {
+    embed.setThumbnail(imageUrl);
+    embed.setImage(null);
+  }
+  // Footer icons are stills. A GIF URL there fails or freezes on one frame,
+  // so animated icons play as the embed image and stay in the title/description.
+  const footerText = embed.data.footer?.text;
+  if (!animated) {
+    embed.setFooter({
+      text: footerText && footerText.length > 0 ? footerText : "Icon preview",
+      iconURL: imageUrl,
+    });
+  } else if (footerText) {
+    embed.setFooter({ text: footerText });
+  }
   return embed;
 }
 
@@ -742,12 +764,14 @@ async function renderStoreAdmin(
     `• \`${a.action}\` · <@${a.actorId.replace(/^dash:/, "")}> · <t:${Math.floor(new Date(a.createdAt).getTime() / 1000)}:R>`,
   ).join("\n") || "_No audit yet._";
 
-  const thumb = roles
-    .map(r => {
-      const m = (r.meta as Record<string, unknown> | null) ?? {};
-      return typeof m.imageUrl === "string" ? m.imageUrl : typeof m.iconGif === "string" ? m.iconGif : null;
-    })
-    .find((u): u is string => typeof u === "string" && u.length > 8);
+  const thumb = pickStoreBoardImage(roles.map(r => {
+    const stamp = iconStampFromMeta((r.meta as Record<string, unknown> | null) ?? {});
+    return {
+      imageUrl: stamp.imageUrl,
+      animated: stamp.animated,
+      iconUpdatedAt: stamp.iconUpdatedAt,
+    };
+  }));
 
   const embed = new EmbedBuilder()
     .setColor(0xe91e8c)
@@ -2056,9 +2080,12 @@ export async function handleUbAdminComponent(
           .setColor(0xe91e8c)
           .setTitle(`${titleSafeStoreEmoji(icon.emoji, "🖼️")} ${applied.name}`)
           .setDescription(
-            icon.animated
-              ? "Animated icon set — Discord plays it on the store board."
-              : "Icon set from Discord’s picker.",
+            [
+              icon.emoji,
+              icon.animated
+                ? "Animated icon set — Discord plays it on the store board."
+                : "Icon set from Discord’s picker.",
+            ].join("\n"),
           );
         if (icon.imageUrl) applyStoreImageToEmbed(preview, icon.imageUrl);
         await interaction.editReply({
@@ -2136,11 +2163,13 @@ export async function handleUbAdminComponent(
     const roles = await listRoleLinks(guildId);
     const row = roles.find(r => r.id === linkId);
     if (row) {
-      const meta = { ...(row.meta as Record<string, unknown>) };
-      delete meta.imageUrl;
-      delete meta.iconGif;
-      // Keep a simple unicode emoji so custom markup doesn’t stick in titles.
-      const keep = titleSafeStoreEmoji(row.emoji, "✨");
+      const base = { ...(row.meta as Record<string, unknown>) };
+      delete base.imageUrl;
+      delete base.iconGif;
+      delete base.animated;
+      const meta = stampIconMeta(base);
+      // Drop the uploaded picture only. The role's emoji (including custom) stays on the name.
+      const keep = (row.emoji || "✨").slice(0, 64);
       await updateRoleLink(guildId, linkId, { emoji: keep, meta });
       await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
         id: linkId, preset: "emoji_only", emoji: keep,
@@ -2176,12 +2205,10 @@ export async function handleUbAdminComponent(
       await interaction.editReply({ content: "That perk is gone.", components: [], embeds: [] });
       return;
     }
-    const meta: Record<string, unknown> = {
-      ...(row.meta as Record<string, unknown>),
-      imageUrl,
-      animated: Boolean(guildEmoji.animated),
-    };
-    delete meta.iconGif;
+    const meta = stampIconMeta(
+      { ...(row.meta as Record<string, unknown>) },
+      { imageUrl, animated: Boolean(guildEmoji.animated) },
+    );
     await updateRoleLink(guildId, linkId, { emoji, meta });
     await syncEmojiToUbItem(guildId, row.ubItemId, emoji);
     await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
@@ -2191,9 +2218,12 @@ export async function handleUbAdminComponent(
       .setColor(0xe91e8c)
       .setTitle(`${titleSafeStoreEmoji(emoji, "🖼️")} ${row.name}`)
       .setDescription(
-        guildEmoji.animated
-          ? "Animated server emoji — Discord plays the GIF on the store board."
-          : "Server emoji set as store icon.",
+        [
+          emoji,
+          guildEmoji.animated
+            ? "Animated server emoji — Discord plays the GIF on the store board."
+            : "Server emoji set as store icon.",
+        ].join("\n"),
       );
     applyStoreImageToEmbed(preview, imageUrl);
     await interaction.editReply({
@@ -2698,24 +2728,27 @@ export async function handleUbAdminModal(interaction: ModalSubmitInteraction): P
       return;
     }
     const animated = type.includes("gif") || fileName.endsWith(".gif") || isAnimatedStoreImage(imageUrl);
-    const meta: Record<string, unknown> = {
-      ...(row.meta as Record<string, unknown>),
-      imageUrl,
-    };
-    delete meta.iconGif;
-    // Replace stuck custom-emoji markup so the name/title isn’t glued to the old emoji.
-    const nextEmoji = animated ? "🎞️" : "🖼️";
+    const meta = stampIconMeta(
+      { ...(row.meta as Record<string, unknown>) },
+      { imageUrl, animated },
+    );
+    // Keep the role's custom emoji in the name. A film-strip fallback is only
+    // used when the role never had an emoji of its own.
+    const nextEmoji = emojiKeptAfterUpload(row.emoji, animated);
     await updateRoleLink(guildId, linkId, { emoji: nextEmoji, meta });
     await writeUbAudit(guildId, interaction.user.id, "discord_perk_icon", {
       id: linkId, preset: "discord_upload", imageUrl, animated, name: attachment.name,
     });
     const preview = new EmbedBuilder()
       .setColor(0xe91e8c)
-      .setTitle(`${nextEmoji} ${row.name}`)
+      .setTitle(`${titleSafeStoreEmoji(nextEmoji, animated ? "🎞️" : "🖼️")} ${row.name}`)
       .setDescription(
-        animated
-          ? "Uploaded GIF — Discord plays the animation on the store board."
-          : "Uploaded image set as store icon.",
+        [
+          nextEmoji,
+          animated
+            ? "Uploaded GIF — Discord plays the animation on the store board."
+            : "Uploaded image set as store icon.",
+        ].join("\n"),
       );
     applyStoreImageToEmbed(preview, imageUrl);
     await interaction.editReply({
