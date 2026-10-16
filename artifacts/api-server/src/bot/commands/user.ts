@@ -119,7 +119,7 @@ export async function handleUserCommand(
       });
       return;
     }
-    await interaction.deferReply();
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await handleWelcome(interaction);
     return;
   }

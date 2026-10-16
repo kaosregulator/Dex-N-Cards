@@ -15,7 +15,7 @@ import { handleEditCardSelect, handleEditCardModal } from "./commands/edit-card.
 import { handleEditImageButton, handleEditImageModal, handleEditImagePick } from "./commands/edit-image.js";
 import { handleTradeButton } from "./commands/trading.js";
 import { initSpawnManager, initAllGuilds, handleCatchAttempt, handleClaimButtonClick, scheduleNextSpawn, buildPostDecisionEmbed, buildDisabledDecisionRow, markDecisionMade } from "./spawn-manager.js";
-import { handleConfigButton, handleConfigSelect, handleRatesSelect, handlePacksSelect, handleRatesCustomModal, handleExperienceSelect } from "./commands/config-panel.js";
+import { handleConfigButton, handleConfigSelect, handleRatesSelect, handlePacksSelect, handlePacksCostModal, handleRatesCustomModal, handleExperienceSelect } from "./commands/config-panel.js";
 import { LAUNCH_PREFIX, handleExperienceLaunch } from "./experience.js";
 import { handleSetsHubButton, handleSetsHubSelect, handleSetsHubModal } from "./commands/sets-panel.js";
 import { handleSetAdminHubButton, handleSetAdminHubSelect, handleSetAdminHubWeightSelect, handleSetAdminHubModal } from "./commands/set-admin-hub.js";
@@ -29,7 +29,7 @@ import { handleAdminCommand } from "./commands/admin.js";
 import { handleUserCommand } from "./commands/user.js";
 import { handlePrefixCommand, getGuildPrefix, getGuildGamesPrefix } from "./commands/prefix.js";
 import {
-  handleSetupButton, handleSetupSelect, handleSetupModalSubmit,
+  handleSetupButton, handleSetupSelect, handleSetupModalSubmit, handleSetupChannelSelect,
 } from "./commands/setup-wizard.js";
 import { handleCardWizardStep, handleCardEditStep } from "./commands/card-wizard.js";
 import { handleAutocomplete } from "./commands/autocomplete.js";
@@ -271,7 +271,7 @@ export async function startBot() {
           `🔗 ${url}\n\n` +
           `**Expires:** <t:${Math.floor(expiresAt.getTime() / 1000)}:R>\n` +
           `Need a fresh link later? Run \`/dashboard\` in your server.\n\n` +
-          `Quick start: run \`/welcome\` for the public intro, then \`/setup\` to configure spawning.`,
+          `Quick start: run \`/setup\` — pick or create the drop and battle channels, then post the welcome board from there.`,
         );
       await owner.send({ embeds: [embed] });
     } catch (err) {
@@ -659,6 +659,8 @@ export async function startBot() {
       if (interaction.isChannelSelectMenu()) {
         if (interaction.customId.startsWith("setchannels:set:")) {
           await handleSetChannelsApply(interaction);
+        } else if (interaction.customId.startsWith("setup:ch:")) {
+          await handleSetupChannelSelect(interaction);
         } else if (interaction.customId.startsWith("battleadmin:")) {
           await handleBattleAdminChannelSelect(interaction);
         }
@@ -690,6 +692,8 @@ export async function startBot() {
           await handleSetupModalSubmit(interaction);
         } else if (interaction.customId === "rates_custom") {
           await handleRatesCustomModal(interaction);
+        } else if (interaction.customId.startsWith("packs_cost_modal:")) {
+          await handlePacksCostModal(interaction);
         } else if (interaction.customId.startsWith("sets:modal:")) {
           await handleSetsHubModal(interaction);
         } else if (interaction.customId.startsWith("setadminhub:modal:")) {
