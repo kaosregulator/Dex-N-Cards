@@ -22,7 +22,7 @@ import { queueRender } from "./render-queue.js";
 import { getRarityEffectColor, loadArt as loadArtShared, createBurst, drawParticles, drawDamageNumber, drawScreenFlash } from "./effects.js";
 import { drawAtmosphere, atmospherePreset } from "./atmosphere.js";
 import { drawImpactDebris, physicsShake } from "./physics.js";
-import { FRAME_INSET } from "./card-frames.js";
+import { FRAME_INSET, accentForRarity } from "./card-frames.js";
 import { extractArtColor } from "../battle/image/vibrant-color.js";
 import { encodeAnimation, getCanvas, TITLE_FONT_FAMILY, easeInOutCubic, easeOutBack, type CanvasMod, type Ctx } from "./engine.js";
 import type { Rarity } from "../cards-data.js";
@@ -212,6 +212,8 @@ const FONT = TITLE_FONT_FAMILY; // "Orbitron", registered by the engine loader
 // accent.
 const colorCache = new Map<string, number>();
 async function resolveFieldColor(f: SiegeFieldFighter): Promise<number> {
+  const framed = accentForRarity(f.rarity);
+  if (framed?.color != null) return framed.color;
   const fallback = f.rarityColor ?? getRarityEffectColor(f.rarity as Rarity);
   if (!f.artUrl) return fallback;
   const cached = colorCache.get(f.artUrl);

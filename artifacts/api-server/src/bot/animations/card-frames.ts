@@ -17,12 +17,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Rarity } from "../cards-data.js";
 import { getCanvas, type CanvasMod, type Ctx } from "./engine.js";
 import { logger } from "../../lib/logger.js";
+
+export interface RarityAccent {
+  color: number | null;
+  paint: "solid" | "rainbow" | "blend";
+  blendA?: number;
+  blendB?: number;
+  ownsColor: boolean;
+}
 
 type LoadedImage = import("@napi-rs/canvas").Image;
 
@@ -77,7 +85,38 @@ export function progressionTierForLevel(level: number): ProgTier {
 // Per-rarity → frame colour, resolved for one guild. Only mapped rarities appear.
 export type FrameMap = Partial<Record<Rarity, FrameColor>>;
 
-const frameStore = new AsyncLocalStorage<FrameMap>();
+interface FrameScope {
+  images: FrameMap | null;
+  accents: Partial<Record<Rarity, RarityAccent>> | null;
+}
+
+const frameStore = new AsyncLocalStorage<FrameScope>();
+
+const FRAME_COLUMNS: [Rarity, string][] = [
+  ["common", "cardFrameCommon"], ["uncommon", "cardFrameUncommon"], ["rare", "cardFrameRare"],
+  ["epic", "cardFrameEpic"], ["legendary", "cardFrameLegendary"], ["mythic", "cardFrameMythic"],
+];
+
+export function readAssignedFrames(settings: Record<string, unknown>): FrameMap {
+  const map: FrameMap = {};
+  for (const [rarity, key] of FRAME_COLUMNS) {
+    const v = settings[key];
+    if (typeof v === "string" && (FRAME_COLORS as readonly string[]).includes(v)) map[rarity] = v as FrameColor;
+  }
+  return map;
+}
+
+/** Frames that are actually drawn. Off, or nothing mapped, is an empty map. */
+export function assignedFrameColors(settings: Record<string, unknown>): FrameMap {
+  if (settings["cardFramesEnabled"] !== true) return {};
+  return readAssignedFrames(settings);
+}
+
+export function readFramePng(color: FrameColor): Buffer | null {
+  const file = fileFor(color, "128");
+  if (!file || !existsSync(file)) return null;
+  try { return readFileSync(file); } catch { return null; }
+}
 
 // Decoded-image cache, keyed by `${color}:${size}`. Loaded once, reused forever.
 type FrameSize = "full" | "256" | "128";
@@ -194,16 +233,7 @@ export function drawProgressionOverlay(ctx: Ctx, x: number, y: number, w: number
 // Build a guild's frame map from its settings. Returns null when frames are off
 // or nothing is mapped, so callers cheaply skip the whole system.
 function buildFrameMap(settings: Record<string, unknown>): FrameMap | null {
-  if (settings["cardFramesEnabled"] !== true) return null;
-  const cols: [Rarity, string][] = [
-    ["common", "cardFrameCommon"], ["uncommon", "cardFrameUncommon"], ["rare", "cardFrameRare"],
-    ["epic", "cardFrameEpic"], ["legendary", "cardFrameLegendary"], ["mythic", "cardFrameMythic"],
-  ];
-  const map: FrameMap = {};
-  for (const [rarity, key] of cols) {
-    const v = settings[key];
-    if (typeof v === "string" && (FRAME_COLORS as readonly string[]).includes(v)) map[rarity] = v as FrameColor;
-  }
+  const map = assignedFrameColors(settings);
   return Object.keys(map).length > 0 ? map : null;
 }
 
@@ -226,15 +256,60 @@ export async function resolveGuildFrames(settings: Record<string, unknown>): Pro
 export async function withGuildFrames<T>(settings: Record<string, unknown> | null | undefined, fn: () => Promise<T>): Promise<T> {
   if (!settings) return fn();
   const map = await resolveGuildFrames(settings).catch(() => null);
-  return map ? frameStore.run(map, fn) : fn();
+  let accents: Partial<Record<Rarity, RarityAccent>> | null = null;
+  const guildId = typeof settings["guildId"] === "string" ? settings["guildId"] : null;
+  if (guildId) {
+    try {
+      const { loadRarityAccents } = await import("../battle/frame-scope.js");
+      const buffers: Partial<Record<FrameColor, Buffer>> = {};
+      const assigned = map ?? {};
+      for (const color of new Set(Object.values(assigned))) {
+        const buf = readFramePng(color);
+        if (buf) buffers[color] = buf;
+      }
+      accents = await loadRarityAccents(guildId, assigned, buffers);
+    } catch (err) {
+      logger.debug({ err }, "card-frames: rarity frame colours skipped");
+    }
+  }
+  if (!map && !accents) return fn();
+  return frameStore.run({ images: map, accents }, fn);
 }
 
 // ── Synchronous hooks used by effects.ts drawCardArt / drawCardFrame ──────────
 // True when a frame scope is active and this rarity maps to a (loaded) colour.
 export function frameColorForRarity(rarity: Rarity | string | null | undefined): FrameColor | null {
-  const map = frameStore.getStore();
+  const map = frameStore.getStore()?.images;
   if (!map || rarity == null) return null;
   return map[rarity as Rarity] ?? null;
+}
+
+/** The colour staff saved for this rarity, when this render is inside a guild frame scope. */
+export function accentForRarity(rarity: Rarity | string | null | undefined): RarityAccent | null {
+  if (rarity == null) return null;
+  const accent = frameStore.getStore()?.accents?.[rarity as Rarity];
+  if (!accent?.ownsColor || accent.color == null) return null;
+  return accent;
+}
+
+export function applyRarityAccent<T extends {
+  rarity?: string | null;
+  rarityColor?: number | null;
+  framePaint?: "solid" | "rainbow" | "blend";
+  blendA?: number;
+  blendB?: number;
+  frameMode?: string;
+}>(card: T): T {
+  const live = accentForRarity(card.rarity);
+  if (!live) return card;
+  return {
+    ...card,
+    rarityColor: live.color ?? card.rarityColor,
+    framePaint: live.paint,
+    blendA: live.blendA,
+    blendB: live.blendB,
+    frameMode: card.frameMode ?? "custom",
+  };
 }
 
 // The art window inside the card rect when a frame is active — else the rect

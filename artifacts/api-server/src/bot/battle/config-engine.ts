@@ -24,6 +24,7 @@ const BATTLE_SETTING_COLUMN_SQL = [
   `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_mode text NOT NULL DEFAULT 'image'`,
   `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_a text`,
   `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_b text`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_by_rarity jsonb`,
   `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_miss_chance_pct integer`,
   `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_dodge_chance_pct integer`,
   `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_crit_chance_pct integer`,
@@ -70,11 +71,11 @@ function missingBattleStatusTheme(err: unknown): boolean {
   });
 }
 
-async function loadBattleSettings(guildId: string): Promise<BattleSettings> {
+async function loadBattleSettings(guildId: string, create: boolean): Promise<BattleSettings | null> {
   const [row] = await db.select().from(battleSettingsTable)
     .where(eq(battleSettingsTable.guildId, guildId)).limit(1);
-  const value = row ?? (await db.insert(battleSettingsTable).values({ guildId }).returning())[0]!;
-  _cache.set(guildId, { value, expiresAt: Date.now() + TTL_MS });
+  const value = row ?? (create ? (await db.insert(battleSettingsTable).values({ guildId }).returning())[0]! : null);
+  if (value) _cache.set(guildId, { value, expiresAt: Date.now() + TTL_MS });
   return value;
 }
 
@@ -82,11 +83,24 @@ export async function getBattleSettings(guildId: string): Promise<BattleSettings
   const cached = _cache.get(guildId);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   try {
-    return await loadBattleSettings(guildId);
+    return (await loadBattleSettings(guildId, true))!;
   } catch (err) {
     if (!missingBattleStatusTheme(err)) throw err;
     await ensureBattleStatusThemeColumn();
-    return await loadBattleSettings(guildId);
+    return (await loadBattleSettings(guildId, true))!;
+  }
+}
+
+/** Read frame colours without creating a battle row for a server that only shows cards. */
+export async function peekBattleSettings(guildId: string): Promise<BattleSettings | null> {
+  const cached = _cache.get(guildId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  try {
+    return await loadBattleSettings(guildId, false);
+  } catch (err) {
+    if (!missingBattleStatusTheme(err)) throw err;
+    await ensureBattleStatusThemeColumn();
+    return await loadBattleSettings(guildId, false);
   }
 }
 

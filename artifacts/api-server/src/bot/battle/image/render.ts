@@ -26,6 +26,7 @@ import { drawAtmosphere, atmosphereForBackground } from "../../animations/atmosp
 import type { Ctx as AnimCtx } from "../../animations/engine.js";
 import { extractArtColor, blendColors } from "./vibrant-color.js";
 import { stampCardAccent } from "../frame-color.js";
+import { applyRarityAccent } from "../../animations/card-frames.js";
 import { canvasSafeText } from "../../discord-emoji.js";
 import { registerCanvasSans, CANVAS_SANS_STACK } from "../../canvas-fonts.js";
 import { loadArt as loadSharedArt, BACKDROP_MAX_EDGE, CARD_ART_MAX_EDGE } from "../../animations/effects.js";
@@ -47,6 +48,8 @@ export interface RenderCard {
   frameColorA?: number | null;
   frameColorB?: number | null;
   frameSlot?: "a" | "b";
+  frameImage?: import("../frame-color.js").FrameImageColor | null;
+  frameBuffer?: Buffer | null;
   framePaint?: "solid" | "rainbow" | "blend";
   blendA?: number;
   blendB?: number;
@@ -510,7 +513,10 @@ export async function renderBattleImage(
   try {
     // Pull dominant colours from each card's art so the glows, frames, and
     // background gradient match the artwork. Vibrant extraction is cached.
-    const [stampedA, stampedB] = await Promise.all([stampCardAccent(a), stampCardAccent(b)]);
+    const [stampedA, stampedB] = await Promise.all([
+      stampCardAccent(a).then(applyRarityAccent),
+      stampCardAccent(b).then(applyRarityAccent),
+    ]);
     const [sampledA, sampledB] = await Promise.all([
       stampedA.frameMode ? Promise.resolve(stampedA.rarityColor ?? null) : extractArtColor(a.artUrl),
       stampedB.frameMode ? Promise.resolve(stampedB.rarityColor ?? null) : extractArtColor(b.artUrl),

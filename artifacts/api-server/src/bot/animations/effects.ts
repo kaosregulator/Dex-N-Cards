@@ -8,7 +8,7 @@ import {
   clamp01, type CanvasMod, type Ctx, type TextAlign,
 } from "./engine.js";
 import { ObjectStorageService } from "../../lib/objectStorage.js";
-import { frameArtWindow, drawFrameOverlay, progressionArtWindow, drawProgressionOverlay, type ProgTier } from "./card-frames.js";
+import { frameArtWindow, drawFrameOverlay, progressionArtWindow, drawProgressionOverlay, accentForRarity, type ProgTier } from "./card-frames.js";
 import { logger } from "../../lib/logger.js";
 import { shrinkArtBuffer, CARD_ART_MAX_EDGE } from "../images/raster.js";
 import { canvasSafeText } from "../discord-emoji.js";
@@ -526,11 +526,16 @@ export function drawCardFrame(
 ): void {
   // A card's equipped progression (level) frame wins; then the rarity image
   // frame; otherwise fall through to the drawn border (frames off/unmapped).
+  const accent = accentForRarity(rarity);
+  const frameColor = accent?.color ?? color;
+  const framePaint = accent?.paint ?? paint;
+  const frameA = accent?.blendA ?? blendA;
+  const frameB = accent?.blendB ?? blendB;
   if (progTier && drawProgressionOverlay(ctx, x, y, w, h, progTier)) return;
   if (drawFrameOverlay(ctx, x, y, w, h, rarity)) return;
   ctx.save();
   ctx.lineWidth = thickness;
-  ctx.strokeStyle = frameStrokeStyle(ctx, x, y, w, h, color, paint, blendA, blendB);
+  ctx.strokeStyle = frameStrokeStyle(ctx, x, y, w, h, frameColor, framePaint, frameA, frameB);
   roundRectPath(ctx, x, y, w, h, 18);
   ctx.stroke();
   ctx.lineWidth = 1.5;
@@ -560,6 +565,8 @@ export function drawRarityBadge(
 }
 
 export function getRarityEffectColor(rarity: Rarity): number {
+  const framed = accentForRarity(rarity);
+  if (framed?.color != null) return framed.color;
   switch (rarity) {
     case "common": return 0x95a5a6;
     case "uncommon": return 0x2ecc71;
