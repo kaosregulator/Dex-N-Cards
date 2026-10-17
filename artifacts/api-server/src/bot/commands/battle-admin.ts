@@ -78,28 +78,45 @@ const SPEED_PRESETS: Array<{ value: string; label: string; emoji: string; ms: nu
 ];
 
 // ── Entry ────────────────────────────────────────────────────────────────────
+function battleAdminFailureText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "unknown error";
+  const lower = raw.toLowerCase();
+  if (lower.includes("invalid form body") || lower.includes("component")) {
+    return "❌ Battle admin could not open. Discord rejected the panel layout (a button row, menu, or option is over the limit).";
+  }
+  if (lower.includes("battle_status_theme") && lower.includes("does not exist")) {
+    return "❌ Battle admin could not open. The status-layout column is missing and could not be added.";
+  }
+  const safe = raw.replace(/[\r\n`]/g, " ").slice(0, 160);
+  return `❌ Battle admin could not open. ${safe}`;
+}
+
 export async function handleBattleAdminCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.guild) return;
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  if (!(await ensureAdmin(interaction))) return;
-  const guildId = interaction.guild.id;
+  try {
+    if (!(await ensureAdmin(interaction))) return;
+    const guildId = interaction.guild.id;
 
-  // Quick-upload: an attached image fills the next empty arena-background slot
-  // (or replaces slot 1 when all three are full), then opens the manager.
-  const image = interaction.options.getAttachment("image");
-  if (image?.url) {
-    const existing = await getBattleBackgrounds(guildId);
-    const slot = (existing.length < 3 ? existing.length + 1 : 1) as 1 | 2 | 3;
-    let url = image.url;
-    if (image.url.includes("cdn.discordapp.com") || image.url.includes("media.discordapp.net")) {
-      try { url = await persistBotImage(image.url, image.contentType ?? undefined); } catch { /* fall back to raw URL */ }
+    // Quick-upload: an attached image fills the next empty arena-background slot
+    // (or replaces slot 1 when all three are full), then opens the manager.
+    const image = interaction.options.getAttachment("image");
+    if (image?.url) {
+      const existing = await getBattleBackgrounds(guildId);
+      const slot = (existing.length < 3 ? existing.length + 1 : 1) as 1 | 2 | 3;
+      let url = image.url;
+      if (image.url.includes("cdn.discordapp.com") || image.url.includes("media.discordapp.net")) {
+        try { url = await persistBotImage(image.url, image.contentType ?? undefined); } catch { /* fall back to raw URL */ }
+      }
+      await setBattleBackground(guildId, slot, url, interaction.user.id);
+      await interaction.editReply(await buildBackgroundsManager(guildId));
+      return;
     }
-    await setBattleBackground(guildId, slot, url, interaction.user.id);
-    await interaction.editReply(await buildBackgroundsManager(guildId));
-    return;
-  }
 
-  await interaction.editReply({ embeds: [await buildHubEmbed(guildId)], components: buildHubComponents(await getBattleSettings(guildId)) });
+    await interaction.editReply({ embeds: [await buildHubEmbed(guildId)], components: buildHubComponents(await getBattleSettings(guildId)) });
+  } catch (err) {
+    await interaction.editReply(battleAdminFailureText(err)).catch(() => {});
+  }
 }
 
 // ── Button router ────────────────────────────────────────────────────────────
@@ -777,14 +794,26 @@ async function buildDisplayPanel(guildId: string) {
   return { embeds: [embed], components: [row] };
 }
 
-function speedLabel(ms: number): string {
-  // Nearest preset name for display.
+function nearestSpeedPreset(ms: number) {
+  // Strict `<` so an equal distance keeps the earlier preset. Discord allows
+  // exactly one default option; a window around the current delay can mark two.
   let best = SPEED_PRESETS[0]!;
   for (const p of SPEED_PRESETS) if (Math.abs(p.ms - ms) < Math.abs(best.ms - ms)) best = p;
+  return best;
+}
+
+function speedLabel(ms: number): string {
+  const best = nearestSpeedPreset(ms);
   return `${best.emoji} ${best.label.replace(/ \(.*\)$/, "")}`;
 }
 
-function buildHubComponents(s?: { frameDelayMs: number; battleAnimationSpeed?: string }): ActionRowBuilder<any>[] {
+const GIF_SPEED_OPTIONS = [
+  { label: "Slow (cinematic)", value: "slow", emoji: "🐢" },
+  { label: "Normal", value: "normal", emoji: "⚖️" },
+  { label: "Fast", value: "fast", emoji: "🚀" },
+] as const;
+
+export function buildHubComponents(s?: { frameDelayMs: number; battleAnimationSpeed?: string }): ActionRowBuilder<any>[] {
   const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("battleadmin:wizard").setLabel("Setup Wizard").setEmoji("🚀").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId("battleadmin:toggle").setLabel("Enable/Disable").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
@@ -807,21 +836,21 @@ function buildHubComponents(s?: { frameDelayMs: number; battleAnimationSpeed?: s
     new ButtonBuilder().setCustomId("battleadmin:display").setLabel("Status Layout").setEmoji("📊").setStyle(ButtonStyle.Secondary),
   );
   const cur = s?.frameDelayMs ?? 950;
+  const chosenSpeed = nearestSpeedPreset(cur).value;
   const speedRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder().setCustomId("battleadmin:speed").setPlaceholder("⚡ Battle speed / animation pace")
       .addOptions(SPEED_PRESETS.map(p => ({
         label: p.label, emoji: p.emoji, value: p.value,
         description: `${p.ms}ms between frames`,
-        default: Math.abs(p.ms - cur) < 120,
+        default: p.value === chosenSpeed,
       }))),
   );
+  const chosenGif = GIF_SPEED_OPTIONS.some(o => o.value === s?.battleAnimationSpeed)
+    ? s!.battleAnimationSpeed!
+    : "normal";
   const animSpeedRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder().setCustomId("battleadmin:animspeed").setPlaceholder("🎞️ GIF battle speed")
-      .addOptions([
-        { label: "Slow (cinematic)", value: "slow", emoji: "🐢" },
-        { label: "Normal", value: "normal", emoji: "⚖️" },
-        { label: "Fast", value: "fast", emoji: "🚀" },
-      ].map(o => ({ ...o, default: o.value === (s?.battleAnimationSpeed ?? "normal") }))),
+      .addOptions(GIF_SPEED_OPTIONS.map(o => ({ ...o, default: o.value === chosenGif }))),
   );
   return [row1, row2, row3, speedRow, animSpeedRow];
 }

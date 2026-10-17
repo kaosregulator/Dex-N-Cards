@@ -5,7 +5,7 @@
 // an admin runs the setup wizard, which flips `setupComplete`). A tiny 5s
 // per-guild cache mirrors the pattern used elsewhere in the bot.
 
-import { db, battleSettingsTable } from "@workspace/db";
+import { db, pool, battleSettingsTable } from "@workspace/db";
 import type { BattleSettings } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import type { Rarity } from "./types.js";
@@ -19,14 +19,54 @@ export { RARITY_ORDER, rarityRank };
 const _cache = new Map<string, { value: BattleSettings; expiresAt: number }>();
 const TTL_MS = 5_000;
 
-export async function getBattleSettings(guildId: string): Promise<BattleSettings> {
-  const cached = _cache.get(guildId);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+const BATTLE_STATUS_THEME_SQL =
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_status_theme text NOT NULL DEFAULT 'classic'`;
+
+let statusThemeColumnReady: Promise<void> | null = null;
+
+/** Same statement as the boot migration, so a live process can recover if the column is still missing. */
+export function ensureBattleStatusThemeColumn(): Promise<void> {
+  if (!statusThemeColumnReady) {
+    statusThemeColumnReady = pool.query(BATTLE_STATUS_THEME_SQL).then(() => undefined).catch((err) => {
+      statusThemeColumnReady = null;
+      throw err;
+    });
+  }
+  return statusThemeColumnReady;
+}
+
+function errorText(err: unknown): string {
+  if (!err) return "";
+  if (err instanceof Error) {
+    const cause = (err as { cause?: unknown }).cause;
+    return `${err.message}\n${errorText(cause)}`;
+  }
+  return String(err);
+}
+
+function missingBattleStatusTheme(err: unknown): boolean {
+  const text = errorText(err);
+  return text.includes("battle_status_theme") && /does not exist|42703/i.test(text);
+}
+
+async function loadBattleSettings(guildId: string): Promise<BattleSettings> {
   const [row] = await db.select().from(battleSettingsTable)
     .where(eq(battleSettingsTable.guildId, guildId)).limit(1);
   const value = row ?? (await db.insert(battleSettingsTable).values({ guildId }).returning())[0]!;
   _cache.set(guildId, { value, expiresAt: Date.now() + TTL_MS });
   return value;
+}
+
+export async function getBattleSettings(guildId: string): Promise<BattleSettings> {
+  const cached = _cache.get(guildId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  try {
+    return await loadBattleSettings(guildId);
+  } catch (err) {
+    if (!missingBattleStatusTheme(err)) throw err;
+    await ensureBattleStatusThemeColumn();
+    return await loadBattleSettings(guildId);
+  }
 }
 
 export async function updateBattleSettings(

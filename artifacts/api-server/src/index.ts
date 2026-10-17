@@ -230,6 +230,10 @@ async function runBootMigrations() {
   await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS pack_animation_enabled boolean NOT NULL DEFAULT true`);
   await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_animation_speed text NOT NULL DEFAULT 'normal'`);
   await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_scene_animated boolean NOT NULL DEFAULT true`);
+  // Status layout (classic / drain / gauges). Production only learns new columns
+  // from these boot statements. Without this one, /battle_admin selects a missing
+  // column after deferReply and Discord shows the command as not responding.
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_status_theme text NOT NULL DEFAULT 'classic'`);
   // Raid stats on battle_profiles (feed the /top Raid leaderboard). Self-healing.
   await pool.query(`ALTER TABLE battle_profiles ADD COLUMN IF NOT EXISTS raids_won integer NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE battle_profiles ADD COLUMN IF NOT EXISTS raids_lost integer NOT NULL DEFAULT 0`);
