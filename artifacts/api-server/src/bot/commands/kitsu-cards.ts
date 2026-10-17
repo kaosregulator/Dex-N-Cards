@@ -3,7 +3,8 @@ import type {
   AutocompleteInteraction,
 } from "discord.js";
 import { MessageFlags, EmbedBuilder } from "discord.js";
-import { addCard, addCardToSet, builtinRarityEconomy, getCardByName, getSetByName } from "../db.js";
+import { addCard, addCardToSet, builtinRarityEconomy, getAllCards, getSetByName } from "../db.js";
+import { duplicateCardMessage, findCollidingCard } from "../cards/name-collision.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
 import { type Rarity } from "../cards-data.js";
 import { logger } from "../../lib/logger.js";
@@ -322,12 +323,9 @@ export async function handleCreateCardFromKitsu(interaction: ChatInputCommandInt
     return;
   }
 
-  const existing = await getCardByName(item.name, guildId);
+  const existing = findCollidingCard(await getAllCards(guildId), item.name);
   if (existing) {
-    await interaction.editReply(
-      `❌ A card named **${item.name}** already exists (ID #${existing.id}). ` +
-      `Use \`/edit_card\` to modify it.`,
-    );
+    await interaction.editReply(duplicateCardMessage(item.name, existing));
     return;
   }
 

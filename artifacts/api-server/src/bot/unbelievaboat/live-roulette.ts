@@ -28,6 +28,8 @@ type RouletteSession = {
   guildId: string;
   userId: string;
   bet: number;
+  /** `.roul all` locks the stake to cash and never touches bank. */
+  cashOnly: boolean;
   color: "red" | "black" | "green" | null;
   expires: number;
 };
@@ -106,9 +108,16 @@ export async function handleRoulette(interaction: ChatInputCommandInteraction): 
     await assertGameCooldown(interaction.guildId, interaction.user.id);
     const bet = interaction.options.getInteger("bet", true);
     const preColor = interaction.options.getString("color") as "red" | "black" | "green" | null;
+    let cashOnly = false;
+    try { cashOnly = interaction.options.getBoolean("cash_only") === true; } catch { cashOnly = false; }
     const bal = await getCashBalance(interaction.guildId, interaction.user.id);
-    if (bal.cash + bal.bank < bet) {
-      await interaction.editReply(`Need **${fmtCash(bet)}** ${bal.symbol}.`);
+    const purse = cashOnly ? (bal.cash ?? 0) : (bal.cash ?? 0) + (bal.bank ?? 0);
+    if (purse < bet) {
+      await interaction.editReply(
+        cashOnly
+          ? `Need **${fmtCash(bet)}** cash ${bal.symbol}. Bank is not used for \`all\`.`
+          : `Need **${fmtCash(bet)}** ${bal.symbol}.`,
+      );
       return;
     }
     await markGameCooldown(interaction.guildId, interaction.user.id);
@@ -117,12 +126,14 @@ export async function handleRoulette(interaction: ChatInputCommandInteraction): 
       guildId: interaction.guildId,
       userId: interaction.user.id,
       bet,
+      cashOnly,
       color: preColor && ["red", "black", "green"].includes(preColor) ? preColor : null,
       expires: Date.now() + 15 * 60_000,
     });
     const session = sessions.get(k)!;
     const embed = brandEmbed("🎡 Roulette Table", [
-      `${interaction.user} · stake **${fmtCash(bet)}** ${bal.symbol}`,
+      `${interaction.user} · stake **${fmtCash(bet)}** ${bal.symbol}` +
+        (cashOnly ? " · **all cash**" : ""),
       session.color ? `Color locked: **${session.color}**` : "Pick a color, then **SPIN THE WHEEL**.",
       `Cash **${fmtCash(bal.cash)}** · bank **${fmtCash(bal.bank)}**`,
     ].join("\n"));
@@ -138,7 +149,13 @@ export async function handleRoulette(interaction: ChatInputCommandInteraction): 
 
 async function doSpin(interaction: ButtonInteraction, session: RouletteSession) {
   if (!session.color) throw new CashError("Pick a color first.");
-  const spent = await spendFunds(session.guildId, session.userId, session.bet, `Roulette ${session.color}`);
+  const spent = await spendFunds(
+    session.guildId,
+    session.userId,
+    session.bet,
+    `Roulette ${session.color}`,
+    session.cashOnly ? { cashOnly: true } : undefined,
+  );
   const landing = Math.floor(Math.random() * 37);
   const landed: "red" | "black" | "green" =
     landing === 0 ? "green" : landing % 2 === 0 ? "black" : "red";
@@ -188,7 +205,8 @@ export async function handleRouletteComponent(interaction: ButtonInteraction): P
     await interaction.update({
       embeds: [
         brandEmbed("🎡 Roulette Table", [
-          `${interaction.user} · stake **${fmtCash(session.bet)}**`,
+          `${interaction.user} · stake **${fmtCash(session.bet)}**` +
+            (session.cashOnly ? " · **all cash** (bank stays put)" : ""),
           `Color locked: **${color}** — hit **SPIN THE WHEEL**.`,
         ].join("\n")),
       ],
@@ -222,7 +240,8 @@ export async function handleRouletteComponent(interaction: ButtonInteraction): P
     await interaction.update({
       embeds: [
         brandEmbed("🎡 Roulette Table", [
-          `${interaction.user} · stake **${fmtCash(session.bet)}** ${bal.symbol}`,
+          `${interaction.user} · stake **${fmtCash(session.bet)}** ${bal.symbol}` +
+            (session.cashOnly ? " · **all cash** (bank stays put)" : ""),
           "Pick a color, then **SPIN THE WHEEL**.",
           `Cash **${fmtCash(bal.cash)}** · bank **${fmtCash(bal.bank)}**`,
         ].join("\n")),

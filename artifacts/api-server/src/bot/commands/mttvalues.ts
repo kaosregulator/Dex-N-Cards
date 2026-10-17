@@ -11,7 +11,8 @@ import {
 import { renderCalcResultsCanvas, CALC_RESULTS_FILE } from "./calc-results-canvas.js";
 import { logger } from "../../lib/logger.js";
 import { getBotClient } from "../client-holder.js";
-import { addCard, addCardToSet, builtinRarityEconomy, getCardByName, getSetByName } from "../db.js";
+import { addCard, addCardToSet, builtinRarityEconomy, getAllCards, getSetByName } from "../db.js";
+import { duplicateCardMessage, findCollidingCard } from "../cards/name-collision.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
 import { type Rarity } from "../cards-data.js";
 import { dnRarityFromVault, vaultItemImageUrl } from "./vault-image.js";
@@ -362,14 +363,10 @@ export async function createCardFromVaultItem(input: VaultCreateInput): Promise<
   const type = (input.typeRaw ?? "").trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40) || defaultTypeFromVaultItem(input.item);
   const defs = await createCardRarityDefaults(input.guildId, baseRarity);
 
-  const existing = await getCardByName(input.item.name, input.guildId);
+  const roster = await getAllCards(input.guildId);
+  const existing = findCollidingCard(roster, input.item.name);
   if (existing) {
-    return {
-      ok: false,
-      message:
-        `❌ A card named **${input.item.name}** already exists (ID #${existing.id}). ` +
-        `Use \`/edit_image\` or \`/edit_card\` to change it.`,
-    };
+    return { ok: false, message: duplicateCardMessage(input.item.name, existing) };
   }
 
   let imageUrl: string | undefined;

@@ -9,7 +9,8 @@
 import {
   type ChatInputCommandInteraction,
 } from "discord.js";
-import { addCard, addCardToSet, builtinRarityEconomy, getCardByName, getSetByName } from "../db.js";
+import { addCard, addCardToSet, builtinRarityEconomy, getAllCards, getSetByName } from "../db.js";
+import { duplicateCardMessage, findCollidingCard } from "../cards/name-collision.js";
 import { renderPanel, persistBotImage } from "./edit-card.js";
 import type { Rarity } from "../cards-data.js";
 
@@ -52,12 +53,9 @@ export async function handleAddCardCommand(interaction: ChatInputCommandInteract
   const burn = defs.burn;
   const weight = defs.weight;
 
-  const existing = await getCardByName(name, guildId);
+  const existing = findCollidingCard(await getAllCards(guildId), name);
   if (existing) {
-    await interaction.editReply(
-      `❌ A card named **${name}** already exists (ID #${existing.id}). ` +
-      `Use \`/edit_card\` to modify it.`,
-    );
+    await interaction.editReply(duplicateCardMessage(name, existing));
     return;
   }
 

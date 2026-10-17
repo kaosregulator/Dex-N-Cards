@@ -145,10 +145,13 @@ describe("restored card-admin slash commands", () => {
     expect(internalCommandName("create_card_from_roblox")).toBe("createcardfromroblox");
     expect(ADMIN_HUB_COMMANDS.has("createcardfromroblox")).toBe(true);
     const names = (cmd.options ?? []).map((o) => o.name);
-    expect(names).toEqual(expect.arrayContaining(["username", "rarity"]));
+    expect(names).toEqual(expect.arrayContaining(["username", "rarity", "role"]));
     const username = cmd.options?.find((o) => o.name === "username");
-    expect(username?.required).toBe(true);
+    expect(username?.required).toBeFalsy();
     expect(username?.autocomplete).toBe(true);
+    const role = cmd.options?.find((o) => o.name === "role");
+    expect(role?.type).toBe(8);
+    expect(role?.required).toBeFalsy();
     const image = cmd.options?.find((o) => o.name === "image");
     expect(image?.type).toBe(11);
     expect(image?.required).toBeFalsy();

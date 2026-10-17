@@ -352,7 +352,7 @@ const PAGES: Record<HelpSection, PageFn> = {
           "`/config → 🎞️ Reveals` — spawn reveal style (**Auto**/Blur/Puzzle/Silhouette/Off) + **shiny catch animation** toggle\n" +
           "`/progression` — hub: which area (spawn / pack / drop / all) is in control, plus per-card overrides" },
         { name: "🗂️ Cards & Sets", value:
-          "`/create_card_from_roblox username: rarity:` — Roblox search, full-body preview, create\n" +
+          "`/create_card_from_roblox` — username, or a Bloxlink role (search stays ready until you pick)\n" +
           "`/create_card_from_mttv item: rarity: [image:]` — Vault Values art + DN rarity\n" +
           "`/create_cards_from_mttv` — bulk: filter by website rarity, tag 5, preview, then edit one card at a time\n" +
           "`/add_card` — upload your own image · `/edit_image` — Vault image or a file\n" +

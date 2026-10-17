@@ -139,7 +139,7 @@ export async function handleCardAdminHubComponent(
   if ((id === "cahub:create_roblox" || id === "cahub:create_kitsu") && interaction.isButton()) {
     await interaction.reply({
       content:
-        "Use `/create_card_from_roblox` — type a Roblox username (autocomplete), preview the full-body avatar, then create.\n" +
+        "Use `/create_card_from_roblox` — a username, or a Discord role. Role nicknames stay ready as searches until you pick someone.\n" +
         "Kitsu create is gone; this is the replacement.",
       ...EPHEMERAL,
     });

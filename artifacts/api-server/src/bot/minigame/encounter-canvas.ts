@@ -27,7 +27,7 @@ import { logger } from "../../lib/logger.js";
 
 type Img = import("@napi-rs/canvas").Image;
 
-export const ENCOUNTER_CANVAS = { width: 1000, height: 560 } as const;
+export const ENCOUNTER_CANVAS = { width: 920, height: 500 } as const;
 export const ENCOUNTER_GIF_FILE = "wild-encounter.gif";
 export const ENCOUNTER_PNG_FILE = "wild-encounter.png";
 
@@ -160,11 +160,11 @@ async function paint(ctx: Ctx, mod: CanvasMod, input: WildEncounterInput, t: num
 
   // Enemy island (upper-right) + the wild card, centered on its island, sliding
   // in from the right. Raised so it sits clearly ABOVE the menu box, per ref.
-  const epx = 700, epBottom = 286;
-  if (enemyIsland) drawImgBottom(ctx, enemyIsland, epx, epBottom, 350);
-  else drawFallbackPlatform(ctx, epx, epBottom - 20, 172, 44);
-  const cw = 152, ch = 214, cardBottom = 280;
-  const cardCx = lerp(width + 100, epx, slide);
+  const epx = 640, epBottom = 248;
+  if (enemyIsland) drawImgBottom(ctx, enemyIsland, epx, epBottom, 300);
+  else drawFallbackPlatform(ctx, epx, epBottom - 16, 150, 36);
+  const cw = 168, ch = 236, cardBottom = 246;
+  const cardCx = lerp(width + 80, epx, slide);
   const cardX = cardCx - cw / 2, cardY = cardBottom - ch;
   drawRarityGlow(ctx, cardX, cardY, cw, ch, accent, 0.85);
   await drawCardArt(ctx, mod, cardX, cardY, cw, ch, input.cardArtUrl, input.rarity);
@@ -174,16 +174,16 @@ async function paint(ctx: Ctx, mod: CanvasMod, input: WildEncounterInput, t: num
   // (foreground); its grass island is ALMOST HIDDEN — pushed well below the frame
   // so only a hill of grass peeks out at the feet, mostly behind the figure and
   // the dialogue box — mirroring the reference mockup.
-  const ppx = 170, ppBottom = 656;
-  if (playerIsland) drawImgBottom(ctx, playerIsland, ppx, ppBottom, 560);
-  else drawFallbackPlatform(ctx, ppx, 520, 180, 40);
-  const figCx = lerp(-210, 242, slide);
-  if (trainer) drawImgBottom(ctx, trainer, figCx, 540, 322);
+  const ppx = 150, ppBottom = 560;
+  if (playerIsland) drawImgBottom(ctx, playerIsland, ppx, ppBottom, 480);
+  else drawFallbackPlatform(ctx, ppx, 430, 160, 34);
+  const figCx = lerp(-180, 210, slide);
+  if (trainer) drawImgBottom(ctx, trainer, figCx, 430, 280);
 
   // Enemy name/HP box — top-left (fades in with the slide).
   ctx.save();
   ctx.globalAlpha = slide;
-  const bx = 28, by = 20, bw = 420, bh = 92;
+  const bx = 18, by = 14, bw = 380, bh = 78;
   roundRectPath(ctx, bx, by, bw, bh, 11);
   ctx.fillStyle = "rgba(20,18,16,0.9)"; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = hexToRgba(accent, 0.95); ctx.stroke();
@@ -199,7 +199,7 @@ async function paint(ctx: Ctx, mod: CanvasMod, input: WildEncounterInput, t: num
   ctx.save(); roundRectPath(ctx, hbx + 2, hby + 2, hbw - 4, hbh - 4, 5); ctx.clip();
   ctx.fillStyle = "#4caf50"; ctx.fillRect(hbx + 2, hby + 2, hbw - 4, hbh - 4); ctx.restore();
   // The trainer's pokéball tray, bottom-left.
-  drawPokeballTray(ctx, 26, 420, 258, 40, 6);
+  drawPokeballTray(ctx, 18, 360, 220, 34, 6);
   ctx.restore();
 
   // Menu box (bottom-right) listing the shuffled joke options, then the wide
@@ -209,25 +209,25 @@ async function paint(ctx: Ctx, mod: CanvasMod, input: WildEncounterInput, t: num
     ctx.save();
     ctx.globalAlpha = uiAlpha;
     // Joke menu box (the asset carries its own ▶ cursor beside the first option).
-    const mx = 636, my = 300, mw = 344, mh = 150;
+    const mx = 548, my = 262, mw = 354, mh = 148;
     if (menubox) ctx.drawImage(menubox, mx, my, mw, mh);
     else { roundRectPath(ctx, mx, my, mw, mh, 12); ctx.fillStyle = "rgba(240,238,230,0.96)"; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = "#2b2b33"; ctx.stroke(); }
     const opts = ((input.menuLabels && input.menuLabels.length ? input.menuLabels : ["ENGAGE", "THROW CARD", "CARD INFO", "RUN"])).slice(0, 4);
-    const lineH = 28, tx = mx + 56, ty0 = my + 33; // first line aligned to the baked ▶ cursor
+    const lineH = 28, tx = mx + 18, ty0 = my + 18;
     opts.forEach((label, k) => {
-      const line = label.toUpperCase();
+      const line = `${k + 1}. ${label.toUpperCase()}`;
       drawPixelText(ctx, line, tx, ty0 + k * lineH, "#2b2b33",
-        fitText(ctx, line, mw - 80, 12, 8, PIXEL_FONT_FAMILY));
+        fitText(ctx, line, mw - 36, 13, 8, PIXEL_FONT_FAMILY));
     });
 
     // Wide dialogue box.
-    const dx = 20, dw = width - 40, dh = 86, dy = height - dh - 8;
+    const dx = 16, dw = width - 32, dh = 72, dy = height - dh - 8;
     if (textbox) ctx.drawImage(textbox, dx, dy, dw, dh);
     else { roundRectPath(ctx, dx, dy, dw, dh, 12); ctx.fillStyle = "rgba(245,242,235,0.96)"; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = "#2b2b33"; ctx.stroke(); }
     const line1 = `A WILD ${name} APPEARED!`;
-    drawPixelText(ctx, line1, dx + 40, dy + 26, "#2b2b33",
-      fitText(ctx, line1, dw - 96, 16, 9, PIXEL_FONT_FAMILY));
-    drawPixelText(ctx, "PREPARE FOR BATTLE!", dx + 40, dy + 54, "#7a4a2a", 13);
+    drawPixelText(ctx, line1, dx + 24, dy + 16, "#2b2b33",
+      fitText(ctx, line1, dw - 48, 15, 9, PIXEL_FONT_FAMILY));
+    drawPixelText(ctx, "PREPARE FOR BATTLE!", dx + 24, dy + 42, "#7a4a2a", 12);
     ctx.restore();
   }
 }

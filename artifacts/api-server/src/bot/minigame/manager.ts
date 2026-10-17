@@ -51,7 +51,7 @@ export interface StartMiniGameOpts {
   onLose: () => Promise<void>;
 }
 
-function payloadFor(render: MiniGameRender): {
+function payloadFor(render: MiniGameRender, fallbackArt?: string | null): {
   embeds: EmbedBuilder[]; files: AttachmentBuilder[]; components: MiniGameRender["components"];
 } {
   const embed = new EmbedBuilder()
@@ -63,6 +63,9 @@ function payloadFor(render: MiniGameRender): {
   if (render.image) {
     files.push(new AttachmentBuilder(render.image, { name: render.imageName }));
     embed.setImage(`attachment://${render.imageName}`);
+  } else if (fallbackArt) {
+    // Canvas missed — still show the caught card's image on the embed.
+    embed.setImage(fallbackArt);
   }
   return { embeds: [embed], files, components: render.components };
 }
@@ -78,14 +81,21 @@ function armTimeout(session: MiniGameSession, timeoutMs: number): void {
 // text is drawn in the on-canvas menu box; the buttons are numbered 1–4 to match
 // that list (classic "pick option N").
 function encounterMenuRows(sessionId: string, menu: { action: string; label: string }[]): ActionRowBuilder<ButtonBuilder>[] {
-  const row = new ActionRowBuilder<ButtonBuilder>();
-  menu.forEach((m, i) => {
-    row.addComponents(new ButtonBuilder()
-      .setCustomId(`mg:${sessionId}:${m.action}`)
-      .setLabel(`${i + 1}`)
-      .setStyle(ButtonStyle.Secondary));
-  });
-  return [row];
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  // Two per row so the full option text fits and every button answers.
+  for (let i = 0; i < menu.length; i += 2) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+    for (const m of menu.slice(i, i + 2)) {
+      const n = menu.indexOf(m) + 1;
+      const label = `${n}. ${m.label}`.replace(/[“”]/g, "\"").slice(0, 80);
+      row.addComponents(new ButtonBuilder()
+        .setCustomId(`mg:${sessionId}:${m.action}`)
+        .setLabel(label.length > 0 ? label : `${n}`)
+        .setStyle(ButtonStyle.Secondary));
+    }
+    rows.push(row);
+  }
+  return rows;
 }
 
 // Launch a mini-game on the caught card. Opens with the Pokémon-style wild
@@ -141,7 +151,12 @@ export async function startMiniGame(opts: StartMiniGameOpts): Promise<boolean> {
       .setColor(opts.rarityColor)
       .setTimestamp();
     const files: AttachmentBuilder[] = [];
-    if (encImage) { files.push(new AttachmentBuilder(encImage, { name: encName })); embed.setImage(`attachment://${encName}`); }
+    if (encImage) {
+      files.push(new AttachmentBuilder(encImage, { name: encName }));
+      embed.setImage(`attachment://${encName}`);
+    } else if (opts.cardArtUrl) {
+      embed.setImage(opts.cardArtUrl);
+    }
 
     await opts.spawnMessage.edit({
       embeds: [embed], files, attachments: [],
@@ -169,7 +184,7 @@ async function transitionToGame(session: MiniGameSession): Promise<void> {
   if (!game) { await finalize(session, true); return; } // no game → don't strand the catcher
   try {
     const render = await game.start(session);
-    const { embeds, files, components } = payloadFor(render);
+    const { embeds, files, components } = payloadFor(render, session.cardArtUrl);
     if (session.message) await session.message.edit({ embeds, files, components, attachments: [] }).catch(() => {});
     armTimeout(session, game.timeoutMs);
   } catch (err) {
@@ -193,44 +208,45 @@ export async function handleMiniGameInteraction(interaction: ButtonInteraction):
     return;
   }
 
+  // Ack immediately. Canvas renders can outlast Discord's 3s button window,
+  // which made every game button look like it did nothing.
+  await interaction.deferUpdate().catch(() => {});
+
   // ── Encounter phase: the joke battle menu ─────────────────────────────────
   // Every option fails with a funny line, then we drop into the real game.
   if (session.phase === "encounter") {
-    if (!action.startsWith("menu:")) {
-      await interaction.deferUpdate().catch(() => {});
-      return;
-    }
+    if (!action.startsWith("menu:")) return;
     if (session.timer) { clearTimeout(session.timer); session.timer = null; }
     const label = labelForAction(action);
     const embed = new EmbedBuilder()
       .setTitle("❌ That didn't work…")
       .setDescription(menuQuip(label, session.card.name))
       .setColor(session.rarityColor);
-    // Show the funny result (buttons removed), then a beat later start the game.
-    await interaction.update({ embeds: [embed], components: [], attachments: [], files: [] }).catch(() => {});
+    if (session.cardArtUrl) embed.setThumbnail(session.cardArtUrl);
+    await interaction.editReply({ embeds: [embed], components: [], attachments: [], files: [] }).catch(() => {});
     session.message = interaction.message as Message;
-    setTimeout(() => { void transitionToGame(session); }, 1800);
+    setTimeout(() => { void transitionToGame(session); }, 1200);
     return;
   }
 
   const game = pickGameForSession(session);
   if (!game) {
-    await interaction.reply({ content: "⚠️ This game is no longer available.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    await interaction.followUp({ content: "⚠️ This game is no longer available.", flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
 
   // Ignore any stale encounter-menu clicks that arrive after the game started.
-  if (action.startsWith("menu:")) { await interaction.deferUpdate().catch(() => {}); return; }
+  if (action.startsWith("menu:")) return;
 
   // Stop the timeout while we process this action.
   if (session.timer) { clearTimeout(session.timer); session.timer = null; }
 
   try {
     const outcome = await game.handle(session, action);
-    const { embeds, files, components } = payloadFor(outcome.render);
+    const { embeds, files, components } = payloadFor(outcome.render, session.cardArtUrl);
     // Clear the previous frame's attachment before adding the new one so the
     // intro GIF and the result frame never stack on the message.
-    await interaction.update({ embeds, files, components, attachments: [] });
+    await interaction.editReply({ embeds, files, components, attachments: [] });
     if (outcome.done) {
       await finalize(session, outcome.win);
     } else {
@@ -261,7 +277,7 @@ async function resolveTimeout(sessionId: string): Promise<void> {
   try {
     const render = game ? await game.onTimeout(session) : null;
     if (render && session.message) {
-      const { embeds, files, components } = payloadFor(render);
+      const { embeds, files, components } = payloadFor(render, session.cardArtUrl);
       await session.message.edit({ embeds, files, components, attachments: [] }).catch(() => {});
     }
   } catch (err) {
