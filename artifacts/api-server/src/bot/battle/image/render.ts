@@ -25,6 +25,9 @@ import { queueRender } from "../../animations/render-queue.js";
 import { drawAtmosphere, atmosphereForBackground } from "../../animations/atmosphere.js";
 import type { Ctx as AnimCtx } from "../../animations/engine.js";
 import { extractArtColor, blendColors } from "./vibrant-color.js";
+import { stampCardAccent } from "../frame-color.js";
+import { canvasSafeText } from "../../discord-emoji.js";
+import { registerCanvasSans, CANVAS_SANS_STACK } from "../../canvas-fonts.js";
 import { loadArt as loadSharedArt, BACKDROP_MAX_EDGE, CARD_ART_MAX_EDGE } from "../../animations/effects.js";
 
 // The minimal card description the renderer needs. Decoupled from Combatant so
@@ -39,6 +42,14 @@ export interface RenderCard {
   cardType?: string | null;    // drives the element icon
   level?: number | null;
   artUrl?: string | null;      // character artwork
+  accentEmoji?: string | null; // rarity emoji, sampled when the guild picks emoji frames
+  frameMode?: import("../frame-color.js").FrameColorMode;
+  frameColorA?: number | null;
+  frameColorB?: number | null;
+  frameSlot?: "a" | "b";
+  framePaint?: "solid" | "rainbow" | "blend";
+  blendA?: number;
+  blendB?: number;
   attack?: number | null;      // shown under the name
   special?: string | null;     // signature move name, shown under the name
   // Equipped progression (level) frame tier — overrides the rarity frame when set.
@@ -83,6 +94,7 @@ async function getCanvas(): Promise<CanvasMod | null> {
 function registerFonts(mod: CanvasMod) {
   if (_fontsRegistered) return;
   _fontsRegistered = true;
+  registerCanvasSans(mod);
   for (const f of FONT_FILES) {
     if (!f.path) continue;
     try { mod.GlobalFonts.registerFromPath(f.path, f.family); } catch { /* optional */ }
@@ -113,7 +125,24 @@ async function loadArt(
 
 // Family string with graceful fallback to system sans.
 function font(px: number, family: string, weight = "700") {
-  return `${weight} ${px}px "${family}", "Arial", sans-serif`;
+  return `${weight} ${px}px "${family}", ${CANVAS_SANS_STACK}`;
+}
+
+const RAINBOW_STOPS = ["#ff4d4d", "#ff9f1a", "#ffe14d", "#3ddc6a", "#3dc6ff", "#7a5cff", "#ff4fd8"];
+
+function frameStroke(ctx: Ctx, x: number, y: number, w: number, h: number, color: string, card: RenderCard) {
+  if (card.framePaint === "rainbow") {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    RAINBOW_STOPS.forEach((hex, i) => g.addColorStop(i / (RAINBOW_STOPS.length - 1), hex));
+    return g;
+  }
+  if (card.framePaint === "blend" && card.blendA != null && card.blendB != null) {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    g.addColorStop(0, `#${card.blendA.toString(16).padStart(6, "0")}`);
+    g.addColorStop(1, `#${card.blendB.toString(16).padStart(6, "0")}`);
+    return g;
+  }
+  return color;
 }
 
 // ── Shared drawing helpers ───────────────────────────────────────────────────
@@ -233,10 +262,10 @@ async function layerFrameImage(
 }
 
 // Rarity-coloured frame border.
-function layerFrame(ctx: Ctx, x: number, color: string) {
+function layerFrame(ctx: Ctx, x: number, color: string, card: RenderCard) {
   ctx.save();
   ctx.lineWidth = CARD_BOX.borderWidth;
-  ctx.strokeStyle = color;
+  ctx.strokeStyle = frameStroke(ctx, x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height, color, card);
   roundRectPath(ctx, x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height, CARD_BOX.radius);
   ctx.stroke();
   // inner hairline
@@ -279,7 +308,7 @@ function layerRarityBadge(ctx: Ctx, x: number, card: RenderCard, color: string) 
   const rightX = x + CARD_BOX.width - CARD_BOX.borderWidth - 10;
   const y = CARD_BOX.y + CARD_BOX.borderWidth + 10;
   ctx.font = font(15, FONTS.body, "800");
-  const label = card.rarityLabel.toUpperCase();
+  const label = canvasSafeText(card.rarityLabel).toUpperCase();
   const w = Math.max(64, ctx.measureText(label).width + 20);
   ctx.fillStyle = RARITY_BADGE_BG;
   roundRectPath(ctx, rightX - w, y, w, 26, 6);
@@ -367,7 +396,7 @@ async function drawCard(ctx: Ctx, mod: CanvasMod, x: number, card: RenderCard) {
   await layerArt(ctx, mod, x, card);
   // Your frame PNG (if configured) replaces the drawn border.
   const framed = await layerFrameImage(ctx, mod, card.rarity, x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height);
-  if (!framed) layerFrame(ctx, x, color);
+  if (!framed) layerFrame(ctx, x, color, card);
   layerChips(ctx, x, card);
   layerRarityBadge(ctx, x, card, color);
   layerNameplate(ctx, x, card, color);
@@ -481,13 +510,16 @@ export async function renderBattleImage(
   try {
     // Pull dominant colours from each card's art so the glows, frames, and
     // background gradient match the artwork. Vibrant extraction is cached.
-    const [colorA, colorB] = await Promise.all([
-      extractArtColor(a.artUrl),
-      extractArtColor(b.artUrl),
+    const [stampedA, stampedB] = await Promise.all([stampCardAccent(a), stampCardAccent(b)]);
+    const [sampledA, sampledB] = await Promise.all([
+      stampedA.frameMode ? Promise.resolve(stampedA.rarityColor ?? null) : extractArtColor(a.artUrl),
+      stampedB.frameMode ? Promise.resolve(stampedB.rarityColor ?? null) : extractArtColor(b.artUrl),
     ]);
+    const colorA = sampledA;
+    const colorB = sampledB;
 
-    const cardA = { ...a, rarityColor: a.rarityColor ?? colorA };
-    const cardB = { ...b, rarityColor: b.rarityColor ?? colorB };
+    const cardA = { ...stampedA, rarityColor: stampedA.rarityColor ?? colorA };
+    const cardB = { ...stampedB, rarityColor: stampedB.rarityColor ?? colorB };
     const bgGradient = opts.background ? undefined : blendColors(colorA, colorB, "#0b1622");
 
     const canvas = mod.createCanvas(CANVAS.width, CANVAS.height);
@@ -552,7 +584,7 @@ async function drawBigCard(
   const framed = await layerFrameImage(ctx, mod, card.rarity, gx, gy, gw, gh);
   if (!framed) {
     ctx.save();
-    ctx.lineWidth = border; ctx.strokeStyle = color;
+    ctx.lineWidth = border; ctx.strokeStyle = frameStroke(ctx, gx, gy, gw, gh, color, card);
     roundRectPath(ctx, gx, gy, gw, gh, radius); ctx.stroke();
     ctx.lineWidth = 1.5; ctx.strokeStyle = "rgba(255,255,255,0.25)";
     roundRectPath(ctx, gx + border, gy + border, gw - border * 2, gh - border * 2, radius - 4); ctx.stroke();
@@ -562,7 +594,7 @@ async function drawBigCard(
   // rarity badge top-right
   const rx = gx + gw - border - 10, ry = gy + border + 10;
   ctx.font = font(16, FONTS.body, "800");
-  const label = card.rarityLabel.toUpperCase();
+  const label = canvasSafeText(card.rarityLabel).toUpperCase();
   const bw = Math.max(70, ctx.measureText(label).width + 22);
   ctx.fillStyle = RARITY_BADGE_BG; roundRectPath(ctx, rx - bw, ry, bw, 28, 6); ctx.fill();
   ctx.lineWidth = 1.5; ctx.strokeStyle = color; ctx.stroke();

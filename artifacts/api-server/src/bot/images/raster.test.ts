@@ -30,6 +30,23 @@ describe("shrinkArtBuffer", () => {
     expect(smallMeta.height).toBe(60);
   });
 
+  it("reads a saturated vehicle colour sitting at the edge of a wide picture", async () => {
+    const base = await sharp({
+      create: { width: 400, height: 120, channels: 3, background: { r: 40, g: 42, b: 48, alpha: 1 } },
+    }).png().toBuffer();
+    const vehicle = await sharp({
+      create: { width: 70, height: 80, channels: 3, background: { r: 30, g: 170, b: 70, alpha: 1 } },
+    }).png().toBuffer();
+    const png = await sharp(base).composite([{ input: vehicle, left: 8, top: 20 }]).png().toBuffer();
+    const color = await dominantColorFromBuffer(png);
+    expect(color).not.toBeNull();
+    const r = (color! >> 16) & 0xff;
+    const g = (color! >> 8) & 0xff;
+    const b = color! & 0xff;
+    expect(g).toBeGreaterThan(r);
+    expect(g).toBeGreaterThan(b);
+  });
+
   it("reads a saturated accent from the same bytes a canvas would draw", async () => {
     const png = await solidPng(900, 600, 210, 40, 36);
     const color = await dominantColorFromBuffer(png);

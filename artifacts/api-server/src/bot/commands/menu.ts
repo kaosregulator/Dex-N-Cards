@@ -18,6 +18,7 @@
  */
 
 import type { ChatInputCommandInteraction, MessageComponentInteraction, ButtonInteraction, StringSelectMenuInteraction } from "discord.js";
+import { buttonEmoji } from "../discord-emoji.js";
 import { BRAND_NAME } from "../help-banners.js";
 import {
   EmbedBuilder,
@@ -90,7 +91,8 @@ function selectRow(menu: StringSelectMenuBuilder): ActionRowBuilder<MessageActio
 
 function btn(label: string, customId: string, style: ButtonStyle, emoji?: string, disabled = false): ButtonBuilder {
   const b = new ButtonBuilder().setLabel(label).setCustomId(customId).setStyle(style).setDisabled(disabled);
-  if (emoji) b.setEmoji(emoji);
+  const safe = emoji ? buttonEmoji(emoji) : null;
+  if (safe) b.setEmoji(safe);
   return b;
 }
 

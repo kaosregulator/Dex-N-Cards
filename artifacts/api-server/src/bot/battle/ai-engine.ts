@@ -11,6 +11,7 @@ import { getArena } from "./arenas.js";
 import { availableMoves } from "./combat-engine.js";
 import { getBattleItem } from "./items.js";
 import { getMoveset } from "./movesets.js";
+import { aiMoveAllowed } from "./side-rules.js";
 
 // AI tactical skill (0..1) now comes from the chosen ARENA — higher arenas play
 // sharper. `AiDifficulty` is an alias for the arena key.
@@ -46,14 +47,16 @@ export function chooseAiMove(
 
   // Random / dumb play for low skill or on a "mistake" roll.
   if (Math.random() > skill) {
-    const pool: MoveType[] = ["attack", "attack", "charge", "defend", "skip"];
-    if (moves.special) pool.push("special");
-    if (moves.item) pool.push("item");
-    return pool[Math.floor(Math.random() * pool.length)]!;
+    const pool: MoveType[] = (["attack", "attack", "charge", "defend", "skip"] as MoveType[])
+      .filter(m => aiMoveAllowed(settings, m));
+    if (moves.special && aiMoveAllowed(settings, "special")) pool.push("special");
+    if (moves.item && aiMoveAllowed(settings, "item")) pool.push("item");
+    const allowed: MoveType[] = pool.length ? pool : ["attack"];
+    return allowed[Math.floor(Math.random() * allowed.length)]!;
   }
 
   // Use the battle item when it's genuinely the right call.
-  if (item) {
+  if (item && aiMoveAllowed(settings, "item")) {
     const energyPct = actor.energy / Math.max(1, actor.stats.energyMax);
     switch (item.effectType) {
       case "heal":
@@ -86,29 +89,29 @@ export function chooseAiMove(
 
   // Ultimate: cash it unless a plain attack almost certainly finishes the foe
   // (don't waste the meter on a near-dead target).
-  if (moves.ultimate) {
+  if (moves.ultimate && aiMoveAllowed(settings, "ultimate")) {
     if (foeHpPct <= 0.12) return "attack";
     return "ultimate";
   }
 
   // Low HP: prioritise survival — defensive special, else brace.
   if (hpPct < 0.32) {
-    if (moves.special && defensiveSpecial) return "special";
-    if (Math.random() < 0.65) return "defend";
+    if (moves.special && defensiveSpecial && aiMoveAllowed(settings, "special")) return "special";
+    if (Math.random() < 0.65 && aiMoveAllowed(settings, "defend")) return "defend";
   }
 
   // Press the kill with the strongest available offensive tool.
-  if (foeHpPct < 0.4 && moves.special && offensiveSpecial) return "special";
+  if (foeHpPct < 0.4 && moves.special && offensiveSpecial && aiMoveAllowed(settings, "special")) return "special";
 
   // Use a defensive special proactively while healthy-ish and the fight will drag.
-  if (moves.special && defensiveSpecial && hpPct < 0.6 && foeHpPct > 0.5 && Math.random() < 0.5) return "special";
+  if (moves.special && defensiveSpecial && hpPct < 0.6 && foeHpPct > 0.5 && Math.random() < 0.5 && aiMoveAllowed(settings, "special")) return "special";
 
   // Otherwise mix offensive specials into the rotation when energy allows.
-  if (moves.special && offensiveSpecial && Math.random() < 0.55) return "special";
+  if (moves.special && offensiveSpecial && Math.random() < 0.55 && aiMoveAllowed(settings, "special")) return "special";
 
   // Bank energy for the Special when we can't afford it yet.
   const specialCost = (actor.movesetDef ?? getMoveset(actor.moveset))?.energyCost ?? settings.specialCost;
-  if (actor.energy < specialCost && Math.random() < 0.4) return "charge";
+  if (actor.energy < specialCost && Math.random() < 0.4 && aiMoveAllowed(settings, "charge")) return "charge";
   return "attack";
 }
 

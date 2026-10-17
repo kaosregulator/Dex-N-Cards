@@ -10,6 +10,7 @@ import type { Canvas, SKRSContext2D } from "@napi-rs/canvas";
 import type { AnimationSpeed, AnimationResult } from "./types.js";
 import { queueRender } from "./render-queue.js";
 import { logger } from "../../lib/logger.js";
+import { registerCanvasSans } from "../canvas-fonts.js";
 
 export type CanvasMod = typeof import("@napi-rs/canvas");
 
@@ -103,6 +104,7 @@ function registerFonts(mod: CanvasMod): void {
   _fontsRegistered = true;
   try {
     const reg = (mod as unknown as { GlobalFonts?: { registerFromPath(p: string, name?: string): boolean } }).GlobalFonts;
+    registerCanvasSans(mod);
     const fontsDir = resolveFontsDir();
     if (!reg || !fontsDir) return;
     reg.registerFromPath(join(fontsDir, "Orbitron-Black.ttf"), TITLE_FONT_FAMILY);

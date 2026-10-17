@@ -8,7 +8,7 @@
 // path so a fresh server can start battling immediately.
 
 import {
-  EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder,
   StringSelectMenuBuilder, ChannelSelectMenuBuilder, ChannelType,
   ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags,
   type ChatInputCommandInteraction, type ButtonInteraction,
@@ -24,6 +24,12 @@ import { effectiveRarityKey, rarityLadderRank } from "../rarity-runtime.js";
 import { persistBotImage } from "./edit-card.js";
 import { getBattleSettings, updateBattleSettings, RARITY_ORDER } from "../battle/config-engine.js";
 import { statusThemeLabel, statusThemeOf, type StatusTheme } from "../battle/status-hud.js";
+import { aiMoveAllowed, sideCombatRules, sideRuleLabel } from "../battle/side-rules.js";
+import {
+  COLOR_FAMILIES, frameColorModeLabel, frameColorModeOf, hexOf, locateColor, parseHexColor,
+  renderFramePreview, stepColor, familyById, type FrameColorMode,
+} from "../battle/frame-color.js";
+import { buttonEmoji } from "../discord-emoji.js";
 import { resetSeason } from "../battle/season-engine.js";
 import { upsertBattleCardConfig, getBattleCardConfig, resetBattleCardConfig } from "../battle/db.js";
 import { upsertBattleContent, deleteBattleContent, listBattleContent } from "../battle/db.js";
@@ -125,10 +131,12 @@ export async function handleBattleAdminButton(interaction: ButtonInteraction): P
   const action = interaction.customId.split(":")[1];
 
   // Modal-opening actions must call showModal FIRST (can't defer).
-  if (["rules", "formulas", "rewards", "editcard", "bcstats", "itemtext", "movetext", "passtext"].includes(action)) {
+  if (["sharedrules", "userrules", "airules", "formulas", "rewards", "editcard", "bcstats", "itemtext", "movetext", "passtext"].includes(action)) {
     if (!ensureAdminInline(interaction)) { await interaction.reply({ content: "❌ Admins only.", flags: MessageFlags.Ephemeral }); return; }
     const settings = await getBattleSettings(interaction.guild.id);
-    if (action === "rules") await interaction.showModal(buildRulesModal(settings));
+    if (action === "sharedrules") await interaction.showModal(buildRulesModal(settings));
+    if (action === "userrules") await interaction.showModal(buildSideRulesModal(settings, "user"));
+    if (action === "airules") await interaction.showModal(buildSideRulesModal(settings, "ai"));
     if (action === "formulas") await interaction.showModal(buildFormulasModal(settings));
     if (action === "rewards") await interaction.showModal(buildRewardsModal(settings));
     if (action === "editcard") await interaction.showModal(buildCardSearchModal());
@@ -219,8 +227,66 @@ export async function handleBattleAdminButton(interaction: ButtonInteraction): P
       await updateBattleSettings(guildId, { aiEnabled: !s.aiEnabled });
       break;
     }
+    case "rules": {
+      await interaction.editReply(await buildSidesPanel(guildId));
+      return;
+    }
+    case "aiswitch": {
+      const key = interaction.customId.split(":")[2];
+      const s = await getBattleSettings(guildId);
+      const patch =
+        key === "ultimate" ? { aiAllowUltimate: !s.aiAllowUltimate }
+        : key === "special" ? { aiAllowSpecial: !s.aiAllowSpecial }
+        : key === "item" ? { aiAllowItem: !s.aiAllowItem }
+        : key === "defend" ? { aiAllowDefend: !s.aiAllowDefend }
+        : key === "charge" ? { aiAllowCharge: !s.aiAllowCharge }
+        : null;
+      if (patch) await updateBattleSettings(guildId, patch);
+      await interaction.editReply(await buildSidesPanel(guildId));
+      return;
+    }
     case "display": {
       await interaction.editReply(await buildDisplayPanel(guildId));
+      return;
+    }
+    case "framecolor": {
+      await interaction.editReply(await buildFramePanel(guildId, "a"));
+      return;
+    }
+    case "framemode": {
+      const mode = interaction.customId.split(":")[2];
+      if (mode === "image" || mode === "emoji" || mode === "custom" || mode === "rainbow") {
+        await updateBattleSettings(guildId, { battleFrameColorMode: mode });
+      }
+      const slot = interaction.customId.split(":")[3] === "b" ? "b" : "a";
+      await interaction.editReply(await buildFramePanel(guildId, slot));
+      return;
+    }
+    case "frameslot": {
+      const slot = interaction.customId.split(":")[2] === "b" ? "b" : "a";
+      await interaction.editReply(await buildFramePanel(guildId, slot));
+      return;
+    }
+    case "frameswap": {
+      const s = await getBattleSettings(guildId);
+      await updateBattleSettings(guildId, {
+        battleFrameColorMode: "custom",
+        battleFrameColorA: s.battleFrameColorB,
+        battleFrameColorB: s.battleFrameColorA,
+      });
+      await interaction.editReply(await buildFramePanel(guildId, "a"));
+      return;
+    }
+    case "framewalk": {
+      const slot = interaction.customId.split(":")[2] === "b" ? "b" : "a";
+      const dir = interaction.customId.split(":")[3] === "-1" ? -1 : 1;
+      const s = await getBattleSettings(guildId);
+      const current = parseHexColor(slot === "b" ? s.battleFrameColorB : s.battleFrameColorA);
+      const next = hexOf(stepColor(current, dir));
+      await updateBattleSettings(guildId, slot === "b"
+        ? { battleFrameColorMode: "custom", battleFrameColorB: next }
+        : { battleFrameColorMode: "custom", battleFrameColorA: next });
+      await interaction.editReply(await buildFramePanel(guildId, slot));
       return;
     }
     case "layout": {
@@ -423,6 +489,25 @@ export async function handleBattleAdminSelect(interaction: StringSelectMenuInter
     const ms = Math.max(120, Math.min(4000, Number(interaction.values[0]) || 950));
     await updateBattleSettings(guildId, { frameDelayMs: ms });
     await interaction.editReply({ embeds: [await buildHubEmbed(guildId)], components: buildHubComponents(await getBattleSettings(guildId)) }).catch(() => {});
+    return;
+  }
+  if (action === "framefamily" || action === "frameshade") {
+    const slot = parts[2] === "b" ? "b" : "a";
+    const picked = interaction.values[0] ?? "";
+    let color: number | null = null;
+    if (action === "framefamily") {
+      color = familyById(picked).shades[3]?.n ?? familyById(picked).shades[0]!.n;
+    } else {
+      const fam = COLOR_FAMILIES.find(f => f.shades.some(s => s.id === picked));
+      color = fam?.shades.find(s => s.id === picked)?.n ?? null;
+    }
+    if (color != null) {
+      const hex = hexOf(color);
+      await updateBattleSettings(guildId, slot === "b"
+        ? { battleFrameColorMode: "custom", battleFrameColorB: hex }
+        : { battleFrameColorMode: "custom", battleFrameColorA: hex });
+    }
+    await interaction.editReply(await buildFramePanel(guildId, slot)).catch(() => {});
     return;
   }
   if (action === "animspeed") {
@@ -639,7 +724,32 @@ export async function handleBattleAdminModal(interaction: ModalSubmitInteraction
   };
   const settings = await getBattleSettings(guildId);
 
-  if (action === "rules") {
+  if (action === "userrules" || action === "airules") {
+    const blank = (id: string, min: number, max: number): number | null | undefined => {
+      const raw = interaction.fields.getTextInputValue(id).trim();
+      if (raw === "") return null;
+      const n = Math.round(Number(raw));
+      if (!Number.isFinite(n)) return undefined;
+      return Math.max(min, Math.min(max, n));
+    };
+    const miss = blank("miss", 0, 90);
+    const dodge = blank("dodge", 0, 90);
+    const crit = blank("crit", 0, 100);
+    if (action === "userrules") {
+      await updateBattleSettings(guildId, {
+        ...(miss !== undefined ? { userMissChancePct: miss } : {}),
+        ...(dodge !== undefined ? { userDodgeChancePct: dodge } : {}),
+        ...(crit !== undefined ? { userCritChancePct: crit } : {}),
+      });
+    } else {
+      await updateBattleSettings(guildId, {
+        ...(miss !== undefined ? { aiMissChancePct: miss } : {}),
+        ...(dodge !== undefined ? { aiDodgeChancePct: dodge } : {}),
+        ...(crit !== undefined ? { aiCritChancePct: crit } : {}),
+      });
+    }
+    await interaction.editReply(await buildSidesPanel(guildId));
+  } else if (action === "rules") {
     await updateBattleSettings(guildId, {
       turnTimerSeconds: num("turn", 10, 300, settings.turnTimerSeconds),
       critChancePct: num("crit", 0, 100, settings.critChancePct),
@@ -647,7 +757,7 @@ export async function handleBattleAdminModal(interaction: ModalSubmitInteraction
       dodgeChancePct: num("dodge", 0, 90, settings.dodgeChancePct),
       shieldStrengthPct: num("shield", 0, 100, settings.shieldStrengthPct),
     });
-    await interaction.editReply("✅ Combat rules updated.");
+    await interaction.editReply(await buildSidesPanel(guildId));
   } else if (action === "formulas") {
     await updateBattleSettings(guildId, {
       hpBase: num("hp", 100, 100000, settings.hpBase),
@@ -748,7 +858,7 @@ async function buildHubEmbed(guildId: string): Promise<EmbedBuilder> {
       { name: "Status", value: `${onoff(s.enabled)} · Setup ${s.setupComplete ? "✅ complete" : "❌ pending"}`, inline: true },
       { name: "Battle Channel", value: s.battleChannelId ? `<#${s.battleChannelId}>` : "Any channel", inline: true },
       { name: "Log Channel", value: s.logChannelId ? `<#${s.logChannelId}>` : "None", inline: true },
-      { name: "Rules", value: `⏱️ ${s.turnTimerSeconds}s · 💥 ${s.critChancePct}% crit · 💨 ${s.missChancePct}% miss · 🌀 ${s.dodgeChancePct}% dodge`, inline: false },
+      { name: "Rules", value: `⏱️ ${s.turnTimerSeconds}s · shared 💥 ${s.critChancePct}% · 💨 ${s.missChancePct}% · 🌀 ${s.dodgeChancePct}%\nPlayer ${sideRuleLabel(s.userMissChancePct, s.missChancePct)} miss · AI ${sideRuleLabel(s.aiMissChancePct, s.missChancePct)} miss`, inline: false },
       { name: "Speed", value: `${speedLabel(s.frameDelayMs)} (${s.frameDelayMs}ms/frame) — set below`, inline: false },
       { name: "Cards", value: `${rd.label(s.minRarity as Rarity)} → ${rd.label(s.maxRarity as Rarity)} · Types: ${s.allowedTypes?.length ? s.allowedTypes.join(", ") : "All"} · Special ${onoff(s.specialCardsEnabled)} · Stake ${onoff(s.stakingEnabled)}`, inline: false },
       { name: "Rewards", value: `💠 Win ${s.rewardWinShards} / Loss ${s.rewardLossShards} · ✨ ${s.rewardWinXp} XP · Daily cap ${s.dailyRewardLimit} · 🎁 pack every ${s.freePackStreak || "—"} streak`, inline: false },
@@ -791,7 +901,10 @@ async function buildDisplayPanel(guildId: string) {
     new ButtonBuilder().setCustomId("battleadmin:animtoggle").setLabel("Battle Visuals").setEmoji("🎞️").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("battleadmin:hub").setLabel("Back").setStyle(ButtonStyle.Secondary),
   );
-  return { embeds: [embed], components: [row] };
+  const frameRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("battleadmin:framecolor").setLabel("Frame Color").setEmoji("🎨").setStyle(ButtonStyle.Primary),
+  );
+  return { embeds: [embed], components: [row, frameRow] };
 }
 
 function nearestSpeedPreset(ms: number) {
@@ -873,9 +986,10 @@ async function buildCardsEmbed(guildId: string): Promise<EmbedBuilder> {
 async function buildCardsComponents(guildId: string): Promise<ActionRowBuilder<any>[]> {
   const s = await getBattleSettings(guildId);
   const rd = await rarityDisplay(guildId);
-  const rarityOptions = (selected: string) => RARITY_ORDER.map(r => ({
-    label: rd.label(r), emoji: rd.emoji(r), value: r, default: selected === r,
-  }));
+  const rarityOptions = (selected: string) => RARITY_ORDER.map(r => {
+    const emoji = buttonEmoji(rd.emoji(r));
+    return { label: rd.label(r), ...(emoji ? { emoji } : {}), value: r, default: selected === r };
+  });
 
   const minRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
     new StringSelectMenuBuilder().setCustomId("battleadmin:minrarity").setPlaceholder("Minimum rarity").addOptions(rarityOptions(s.minRarity)),
@@ -1315,6 +1429,136 @@ function shortInput(id: string, label: string, value: string | number, ph?: stri
     new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(TextInputStyle.Short)
       .setRequired(false).setValue(String(value)).setPlaceholder(ph ?? String(value)),
   );
+}
+
+function optionalPct(id: string, label: string, value: number | null): ActionRowBuilder<TextInputBuilder> {
+  const input = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(TextInputStyle.Short)
+    .setRequired(false).setPlaceholder("Blank uses the shared rule");
+  if (value != null) input.setValue(String(value));
+  return new ActionRowBuilder<TextInputBuilder>().addComponents(input);
+}
+
+function buildSideRulesModal(s: Awaited<ReturnType<typeof getBattleSettings>>, side: "user" | "ai"): ModalBuilder {
+  const miss = side === "ai" ? s.aiMissChancePct : s.userMissChancePct;
+  const dodge = side === "ai" ? s.aiDodgeChancePct : s.userDodgeChancePct;
+  const crit = side === "ai" ? s.aiCritChancePct : s.userCritChancePct;
+  return new ModalBuilder()
+    .setCustomId(side === "ai" ? "battleadmin:airules" : "battleadmin:userrules")
+    .setTitle(side === "ai" ? "AI combat numbers" : "Player combat numbers")
+    .addComponents(
+      optionalPct("miss", "Miss chance % (blank = shared)", miss),
+      optionalPct("dodge", "Dodge chance % (blank = shared)", dodge),
+      optionalPct("crit", "Crit chance % (blank = shared)", crit),
+    );
+}
+
+function onOff(on: boolean): string {
+  return on ? "On" : "Off";
+}
+
+async function buildSidesPanel(guildId: string) {
+  const s = await getBattleSettings(guildId);
+  const player = sideCombatRules(s, false);
+  const ai = sideCombatRules(s, true);
+  const toggle = (key: "ultimate" | "special" | "item" | "defend" | "charge", label: string) => {
+    const on = aiMoveAllowed(s, key);
+    return new ButtonBuilder()
+      .setCustomId(`battleadmin:aiswitch:${key}`)
+      .setLabel(`${label} ${onOff(on)}`)
+      .setStyle(on ? ButtonStyle.Success : ButtonStyle.Secondary);
+  };
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("⚔️ Player rules and AI rules")
+    .setDescription(
+      "The shared numbers are the baseline both sides use until you type a number for one side. " +
+      "Leave a box blank to go back to the shared rule. The AI toggles only change what the computer is allowed to do.",
+    )
+    .addFields(
+      { name: "Shared baseline", value: `💨 Miss **${s.missChancePct}%** · 🌀 Dodge **${s.dodgeChancePct}%** · 💥 Crit **${s.critChancePct}%** · ⏱️ ${s.turnTimerSeconds}s`, inline: false },
+      { name: "Player", value: `Miss **${sideRuleLabel(s.userMissChancePct, s.missChancePct)}**\nDodge **${sideRuleLabel(s.userDodgeChancePct, s.dodgeChancePct)}**\nCrit **${sideRuleLabel(s.userCritChancePct, s.critChancePct)}**\n_Using ${player.missChancePct}% miss · ${player.dodgeChancePct}% dodge · ${player.critChancePct}% crit_`, inline: true },
+      { name: "AI", value: `Miss **${sideRuleLabel(s.aiMissChancePct, s.missChancePct)}**\nDodge **${sideRuleLabel(s.aiDodgeChancePct, s.dodgeChancePct)}**\nCrit **${sideRuleLabel(s.aiCritChancePct, s.critChancePct)}**\n_Using ${ai.missChancePct}% miss · ${ai.dodgeChancePct}% dodge · ${ai.critChancePct}% crit_`, inline: true },
+      { name: "What the AI may do", value: `Ultimate **${onOff(s.aiAllowUltimate)}** · Special **${onOff(s.aiAllowSpecial)}** · Items **${onOff(s.aiAllowItem)}** · Defend **${onOff(s.aiAllowDefend)}** · Charge **${onOff(s.aiAllowCharge)}**`, inline: false },
+    );
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("battleadmin:userrules").setLabel("Player numbers").setEmoji("🧍").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("battleadmin:airules").setLabel("AI numbers").setEmoji("🤖").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("battleadmin:sharedrules").setLabel("Shared baseline").setEmoji("⚙️").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("battleadmin:hub").setLabel("Back").setStyle(ButtonStyle.Secondary),
+  );
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    toggle("ultimate", "Ultimate"),
+    toggle("special", "Special"),
+    toggle("item", "Items"),
+    toggle("defend", "Defend"),
+    toggle("charge", "Charge"),
+  );
+  return { embeds: [embed], components: [row1, row2] };
+}
+
+async function buildFramePanel(guildId: string, slot: "a" | "b") {
+  const s = await getBattleSettings(guildId);
+  const mode = frameColorModeOf(s.battleFrameColorMode);
+  const colorA = parseHexColor(s.battleFrameColorA);
+  const colorB = parseHexColor(s.battleFrameColorB);
+  const active = slot === "b" ? colorB : colorA;
+  const at = locateColor(active);
+  const family = COLOR_FAMILIES[at.family]!;
+  const png = await renderFramePreview({ mode, colorA, colorB });
+  const embed = new EmbedBuilder()
+    .setColor(active ?? 0x5865f2)
+    .setTitle("🎨 Battle frame color")
+    .setDescription(
+      `**${frameColorModeLabel(mode)}**\n` +
+      "Whole picture reads the entire card, vehicle included. Rarity emoji reads the emoji that rarity already uses. " +
+      "Custom blends Color A and Color B into the frame. Rainbow paints the frame in a spectrum.\n\n" +
+      `Editing **Color ${slot.toUpperCase()}** · A ${colorA == null ? "unset" : hexOf(colorA)} · B ${colorB == null ? "unset" : hexOf(colorB)}`,
+    );
+  if (png) embed.setImage("attachment://frame-preview.png");
+  const modeBtn = (id: FrameColorMode, label: string) =>
+    new ButtonBuilder().setCustomId(`battleadmin:framemode:${id}:${slot}`).setLabel(label)
+      .setStyle(mode === id ? ButtonStyle.Success : ButtonStyle.Secondary);
+  const rows = [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      modeBtn("image", "Picture"),
+      modeBtn("emoji", "Emoji"),
+      modeBtn("custom", "Custom"),
+      modeBtn("rainbow", "Rainbow"),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("battleadmin:frameslot:a").setLabel("Color A").setStyle(slot === "a" ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("battleadmin:frameslot:b").setLabel("Color B").setStyle(slot === "b" ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("battleadmin:frameswap").setLabel("Swap").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`battleadmin:framewalk:${slot}:-1`).setLabel("Previous").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`battleadmin:framewalk:${slot}:1`).setLabel("Next").setStyle(ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder().setCustomId(`battleadmin:framefamily:${slot}`).setPlaceholder("Color family")
+        .addOptions(COLOR_FAMILIES.map((fam, i) => ({
+          label: fam.label,
+          value: fam.id,
+          description: fam.shades[3]?.hex ?? fam.shades[0]!.hex,
+          default: i === at.family,
+        }))),
+    ),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder().setCustomId(`battleadmin:frameshade:${slot}`).setPlaceholder(`${family.label} shades`)
+        .addOptions(family.shades.map((shade, i) => ({
+          label: `${family.label} ${shade.label}`,
+          value: shade.id,
+          description: shade.hex,
+          default: i === at.shade,
+        }))),
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("battleadmin:display").setLabel("Back").setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+  return {
+    embeds: [embed],
+    components: rows,
+    files: png ? [new AttachmentBuilder(png, { name: "frame-preview.png" })] : [],
+  };
 }
 
 function buildRulesModal(s: Awaited<ReturnType<typeof getBattleSettings>>): ModalBuilder {

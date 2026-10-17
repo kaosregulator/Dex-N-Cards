@@ -46,54 +46,70 @@ export async function shrinkArtBuffer(input: Buffer, maxEdge: number): Promise<B
 }
 
 /**
- * A single accent colour from a small cover-sample of the image.
- * Prefers a saturated mid-tone so near-black borders don't win.
- * Falls back to the average when the sample is all highlights or shadows.
+ * Dominant colour of the whole picture.
+ * The sample is stretched to a 24×24 grid (`fit: fill`) so a vehicle at the
+ * edge is included, not cropped away by a center cover. Center cells count
+ * twice so a centred subject still leads a big flat sky. Saturated mid-tones
+ * beat near-black borders.
  */
 export async function dominantColorFromBuffer(input: Buffer): Promise<number | null> {
   try {
-    const { data } = await sharp(input, {
+    const size = 24;
+    const { data, info } = await sharp(input, {
       animated: false,
       limitInputPixels: MAX_INPUT_PIXELS,
       pages: 1,
     })
       .rotate()
-      .resize(16, 16, { fit: "cover" })
+      .resize(size, size, { fit: "fill" })
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
 
-    let best = 0;
-    let bestScore = -1;
-    let sumR = 0;
-    let sumG = 0;
-    let sumB = 0;
-    let count = 0;
-    for (let i = 0; i + 2 < data.length; i += 3) {
-      const r = data[i] ?? 0;
-      const g = data[i + 1] ?? 0;
-      const b = data[i + 2] ?? 0;
-      sumR += r;
-      sumG += g;
-      sumB += b;
-      count++;
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const sat = max === 0 ? 0 : (max - min) / max;
-      const lum = (r + g + b) / 3;
-      if (lum < 16 || lum > 245) continue;
-      const score = sat * 3 + (1 - Math.abs(lum - 140) / 140);
-      if (score > bestScore) {
-        bestScore = score;
-        best = (r << 16) | (g << 8) | b;
+    const buckets = new Map<number, { r: number; g: number; b: number; w: number }>();
+    const cols = info.width || size;
+    const rows = info.height || size;
+    let fallbackR = 0;
+    let fallbackG = 0;
+    let fallbackB = 0;
+    let fallbackW = 0;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const i = (y * cols + x) * 3;
+        const r = data[i] ?? 0;
+        const g = data[i + 1] ?? 0;
+        const b = data[i + 2] ?? 0;
+        const cx = Math.abs(x - (cols - 1) / 2) / cols;
+        const cy = Math.abs(y - (rows - 1) / 2) / rows;
+        const center = cx < 0.22 && cy < 0.22 ? 2 : 1;
+        fallbackR += r * center;
+        fallbackG += g * center;
+        fallbackB += b * center;
+        fallbackW += center;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const sat = max === 0 ? 0 : (max - min) / max;
+        const lum = (r + g + b) / 3;
+        if (lum < 18 || lum > 242 || sat < 0.18) continue;
+        const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+        const weight = center * (0.45 + sat);
+        const bucket = buckets.get(key) ?? { r: 0, g: 0, b: 0, w: 0 };
+        bucket.r += r * weight;
+        bucket.g += g * weight;
+        bucket.b += b * weight;
+        bucket.w += weight;
+        buckets.set(key, bucket);
       }
     }
-    if (!count) return null;
-    if (bestScore >= 0) return best;
-    const r = Math.round(sumR / count);
-    const g = Math.round(sumG / count);
-    const b = Math.round(sumB / count);
-    return (r << 16) | (g << 8) | b;
+    let best: { r: number; g: number; b: number; w: number } | null = null;
+    for (const bucket of buckets.values()) {
+      if (!best || bucket.w > best.w) best = bucket;
+    }
+    if (best && best.w > 0) {
+      return (Math.round(best.r / best.w) << 16) | (Math.round(best.g / best.w) << 8) | Math.round(best.b / best.w);
+    }
+    if (!fallbackW) return null;
+    return (Math.round(fallbackR / fallbackW) << 16) | (Math.round(fallbackG / fallbackW) << 8) | Math.round(fallbackB / fallbackW);
   } catch (err) {
     logger.debug({ err }, "raster: dominant colour failed");
     return null;
