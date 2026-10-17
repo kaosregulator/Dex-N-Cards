@@ -1174,9 +1174,6 @@ function drawFloatingText(ctx: Ctx, cx: number, y: number, text: string, color: 
 
 function drawMoveBanner(ctx: Ctx, input: SiegeFieldInput): void {
   const actor = input.actingSide === 0 ? input.attacker : input.defender;
-  // Bullet (U+2022) not middle-dot (U+00B7): Orbitron ships the former, and
-  // @napi-rs/canvas renders a missing glyph as a tofu box rather than falling
-  // back per-glyph the way the old cairo backend did.
   const text = `${actor.name} • ${input.moveName}`;
   const w = Math.min(540, 64 + text.length * 12);
   // The move caption floats above the turn bar, between the two stand bases.

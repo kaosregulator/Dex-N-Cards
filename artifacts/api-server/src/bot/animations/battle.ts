@@ -6,7 +6,7 @@ import type { RenderCard } from "../battle/image/render.js";
 import type { BattleAnimationInput, VictoryAnimationInput, AnimationSpeed, AnimationResult } from "./types.js";
 import {
   encodeAnimation, BATTLE_CANVAS, lerp, easeOutBack, easeInOutCubic, clamp01,
-  hexToRgba, drawGradientBackground, roundRectPath, type CanvasMod, type Ctx,
+  hexToRgba, drawGradientBackground, roundRectPath, getCanvas, type CanvasMod, type Ctx,
 } from "./engine.js";
 import {
   createBurst, drawParticles, drawDamageNumber, drawHealthBar,
@@ -14,13 +14,14 @@ import {
   drawTextWithShadow, fitText, getRarityEffectColor,
 } from "./effects.js";
 import { drawAtmosphere, atmospherePreset } from "./atmosphere.js";
-import { drawArenaBackground, drawImageBackground } from "./arena-bg.js";
+import { drawImageBackground } from "./arena-bg.js";
+import { warmCanvasText } from "../unbelievaboat/canvas-emoji-text.js";
 import { drawImpactDebris, physicsShake } from "./physics.js";
 import { extractArtColor } from "../battle/image/vibrant-color.js";
 import { stampCardAccent } from "../battle/frame-color.js";
 import { applyRarityAccent } from "./card-frames.js";
 
-// ── Encode tuning (ANIMATED arena mode) ──────────────────────────────────────
+// ── Encode tuning (animated fight) ───────────────────────────────────────────
 // GIF encoding dominates the cost of an animated turn, and it scales with the
 // PIXEL COUNT of the encoded frames (NeuQuant builds a palette and then maps
 // every pixel through it, per frame). Measured on this renderer, one turn at the
@@ -66,6 +67,7 @@ export async function renderBattleTurn(
     resolveColor(attacker),
     resolveColor(defender),
   ]);
+  await warmFighterText([attacker, defender, input.moveName]);
   return encodeAnimation({
     width: BATTLE_CANVAS.width,
     height: BATTLE_CANVAS.height,
@@ -88,6 +90,7 @@ export async function renderBattleVictory(
     resolveColor(winner),
     resolveColor(loser),
   ]);
+  await warmFighterText([winner, loser]);
   return encodeAnimation({
     width: BATTLE_CANVAS.width,
     height: BATTLE_CANVAS.height,
@@ -114,6 +117,7 @@ export async function renderBattleIdle(
     resolveColor(attacker),
     resolveColor(defender),
   ]);
+  await warmFighterText([attacker, defender]);
   return encodeAnimation({
     width: BATTLE_CANVAS.width,
     height: BATTLE_CANVAS.height,
@@ -134,7 +138,7 @@ async function renderBattleIdleFrame(
 ): Promise<void> {
   const { ctx, t, mod } = frame;
   const { width, height } = BATTLE_CANVAS;
-  await drawBattleBackground(ctx, mod, width, height, colorA, colorB, t, `${input.attacker.name}-idle`, input.background, input.backgroundImage);
+  await drawBattleBackground(ctx, mod, width, height, colorA, colorB, t, `${input.attacker.name}-idle`, input.backgroundImage);
 
   const left = { x: 70, y: 45, w: 340, h: 470 };
   const right = { x: 590, y: 45, w: 340, h: 470 };
@@ -162,7 +166,7 @@ async function renderBattleTurnFrame(
   const { width, height } = BATTLE_CANVAS;
 
   // Draw the battlefield background + advancing arena atmosphere (behind cards).
-  await drawBattleBackground(ctx, mod, width, height, colorA, colorB, t, `${input.attacker.name}-turn`, input.background, input.backgroundImage);
+  await drawBattleBackground(ctx, mod, width, height, colorA, colorB, t, `${input.attacker.name}-turn`, input.backgroundImage);
 
   const left = { x: 70, y: 45, w: 340, h: 470 };
   const right = { x: 590, y: 45, w: 340, h: 470 };
@@ -263,7 +267,7 @@ async function renderVictoryFrame(
 ): Promise<void> {
   const { ctx, t, mod } = frame;
   const { width, height } = BATTLE_CANVAS;
-  await drawBattleBackground(ctx, mod, width, height, colorA, colorB, t, `${input.winner.name}-win`, input.background);
+  await drawBattleBackground(ctx, mod, width, height, colorA, colorB, t, `${input.winner.name}-win`, input.backgroundImage);
   // Embers + sparks rising behind the champion (behind the card).
   drawAtmosphere(ctx, width, height, atmospherePreset("ember"), { seed: `${input.winner.name}-victory`, t, color: colorA });
 
@@ -292,6 +296,18 @@ async function renderVictoryFrame(
   drawParticles(ctx, particles);
 }
 
+async function warmFighterText(parts: Array<import("../battle/image/render.js").RenderCard | string | null | undefined>): Promise<void> {
+  const mod = await getCanvas();
+  if (!mod) return;
+  const texts: Array<string | null | undefined> = [];
+  for (const part of parts) {
+    if (!part) continue;
+    if (typeof part === "string") { texts.push(part); continue; }
+    texts.push(part.name, part.series, part.rarityLabel, part.special, part.accentEmoji);
+  }
+  await warmCanvasText(mod, texts);
+}
+
 async function drawBattleBackground(
   ctx: Ctx,
   mod: CanvasMod,
@@ -299,21 +315,11 @@ async function drawBattleBackground(
   colorA: number, colorB: number,
   t: number,
   seed: string,
-  arenaKey?: string | null,
-  backgroundImage?: Buffer | null,
+  backgroundImage?: Buffer | string | null,
 ): Promise<void> {
-  // A caller-supplied backdrop image (the siege castle) wins over everything:
-  // the fighters trade blows over that scene. Falls through if it can't decode.
+  // An admin-uploaded image (or the siege castle) is the backdrop. When it
+  // cannot be decoded, the fight keeps the gradient.
   if (await drawImageBackground(ctx, mod, backgroundImage, width, height)) {
-    drawAtmosphere(ctx, width, height, atmospherePreset("battlefield"), { seed, t, color: colorA, density: 0.4 });
-    return;
-  }
-  // Pixel-art arena backdrop, if one is chosen and available. When it draws we
-  // skip the gradient (the art IS the background) and layer only a LIGHT
-  // procedural atmosphere for depth. Otherwise fall back to the classic
-  // gradient + full battlefield ambience — existing look, unchanged.
-  const drewArena = await drawArenaBackground(ctx, mod, arenaKey, t, width, height);
-  if (drewArena) {
     drawAtmosphere(ctx, width, height, atmospherePreset("battlefield"), { seed, t, color: colorA, density: 0.4 });
     return;
   }

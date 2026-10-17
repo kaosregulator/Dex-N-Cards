@@ -1,137 +1,73 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Animated arena backgrounds — draws a looping pixel-art atmospheric backdrop
-// behind the battle scene. Frames come from a bundled horizontal strip
-// (assets/arenas/<key>.png, FRAMES tiles of FRAME_W×FRAME_H) built by
-// scripts/build-arenas.mjs. The strip is decoded ONCE per arena and cached; each
-// GIF frame just blits the current tile scaled to fill, so it adds negligible
-// cost on top of the existing battle render.
-//
-// Every helper degrades gracefully: unknown key, missing file, or canvas-off →
-// returns false so the caller keeps the procedural atmosphere fallback. It never
-// throws and never blocks a battle.
-// ─────────────────────────────────────────────────────────────────────────────
+// Admin-uploaded battle backgrounds. Cover-fit an image the server chose and
+// wash it so cards and HUD stay readable. Animated scene strips (Ember Field,
+// Thunderstorm, and the rest) are not loaded or stored.
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { CanvasMod, Ctx } from "./engine.js";
 import { logger } from "../../lib/logger.js";
 
 type LoadedImage = import("@napi-rs/canvas").Image;
 
-interface ArenaManifest { frameW: number; frameH: number; frames: number; }
-
-// Resolve the bundled arenas dir across dev (tsx from src) and prod (bundled
-// dist), mirroring engine.ts resolveFontsDir.
-function resolveArenasDir(): string | null {
-  const candidates = [
-    fileURLToPath(new URL("../../../assets/arenas/", import.meta.url)),
-    join(process.cwd(), "assets/arenas"),
-    join(process.cwd(), "artifacts/api-server/assets/arenas"),
-  ];
-  for (const dir of candidates) {
-    if (existsSync(join(dir, "manifest.json"))) return dir;
-  }
-  return null;
-}
-
-let _manifest: ArenaManifest | null | undefined;
-function manifest(): ArenaManifest | null {
-  if (_manifest !== undefined) return _manifest;
-  const dir = resolveArenasDir();
-  if (!dir) { _manifest = null; return null; }
-  try {
-    _manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as ArenaManifest;
-  } catch (err) {
-    logger.debug({ err }, "arena-bg: failed to read manifest");
-    _manifest = null;
-  }
-  return _manifest;
-}
-
-// Decoded strip image per arena key (promise cached so concurrent renders share
-// one decode). null = unavailable → caller falls back.
-const stripCache = new Map<string, Promise<LoadedImage | null>>();
-
-function loadStrip(mod: CanvasMod, key: string): Promise<LoadedImage | null> {
-  const cached = stripCache.get(key);
-  if (cached) return cached;
-  const p = (async (): Promise<LoadedImage | null> => {
-    const dir = resolveArenasDir();
-    if (!dir) return null;
-    const file = join(dir, `${key}.png`);
-    if (!existsSync(file)) return null;
-    try {
-      return await mod.loadImage(readFileSync(file));
-    } catch (err) {
-      logger.debug({ err, key }, "arena-bg: failed to decode arena strip");
-      return null;
-    }
-  })();
-  stripCache.set(key, p);
-  return p;
-}
-
-/**
- * Draw the arena's looping backdrop for phase t∈[0,1], cover-fit to (width,
- * height), with a dark readability wash on top. Returns false if the arena
- * couldn't be drawn (caller should fall back to the procedural atmosphere).
- */
-export async function drawArenaBackground(
-  ctx: Ctx, mod: CanvasMod, key: string | null | undefined, t: number, width: number, height: number,
-): Promise<boolean> {
-  if (!key) return false;
-  const m = manifest();
-  const strip = await loadStrip(mod, key);
-  if (!m || !strip) return false;
-
-  const frame = Math.min(m.frames - 1, Math.max(0, Math.floor((t % 1) * m.frames)));
-  const sx = frame * m.frameW;
-
-  // Cover-fit the single tile to fill the canvas.
-  const s = Math.max(width / m.frameW, height / m.frameH);
-  const dw = m.frameW * s, dh = m.frameH * s;
-  const dx = (width - dw) / 2, dy = (height - dh) / 2;
-
-  ctx.save();
-  // Keep the pixel art crisp when upscaled. `imageSmoothingEnabled` exists on the
-  // Skia context at runtime but is under-declared on the project's Ctx type.
-  (ctx as unknown as { imageSmoothingEnabled: boolean }).imageSmoothingEnabled = false;
-  // @napi-rs/canvas supports the 9-arg source-rect drawImage.
-  (ctx as unknown as {
-    drawImage(img: LoadedImage, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void;
-  }).drawImage(strip, sx, 0, m.frameW, m.frameH, dx, dy, dw, dh);
-  // Readability wash so foreground cards + HUD stay legible over any backdrop.
-  ctx.fillStyle = "rgba(6,8,14,0.42)";
-  ctx.fillRect(0, 0, width, height);
-  ctx.restore();
-  return true;
-}
-
-// Decoded custom backdrop image, cached by the SAME Buffer instance so one
-// render's frames share a single decode (the caller passes one buffer for the
-// whole animation). WeakMap → no manual eviction; the entry dies with the buffer.
 const imageCache = new WeakMap<object, Promise<LoadedImage | null>>();
+const urlCache = new Map<string, Promise<LoadedImage | null>>();
+const URL_CACHE_MAX = 32;
+
+function rememberUrl(url: string, pending: Promise<LoadedImage | null>): void {
+  urlCache.set(url, pending);
+  while (urlCache.size > URL_CACHE_MAX) {
+    const oldest = urlCache.keys().next().value;
+    if (oldest === undefined) break;
+    urlCache.delete(oldest);
+  }
+}
+
+async function loadBackdrop(mod: CanvasMod, image: Buffer | string): Promise<LoadedImage | null> {
+  if (typeof image === "string") {
+    const url = image.trim();
+    if (!url) return null;
+    const cached = urlCache.get(url);
+    if (cached) return cached;
+    const pending = (async () => {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+        if (!res.ok) return null;
+        return await mod.loadImage(Buffer.from(await res.arrayBuffer()));
+      } catch (err) {
+        logger.debug({ err }, "arena-bg: failed to decode backdrop image");
+        return null;
+      }
+    })();
+    rememberUrl(url, pending);
+    return pending;
+  }
+
+  let pending = imageCache.get(image);
+  if (!pending) {
+    pending = (async () => {
+      try { return await mod.loadImage(image); }
+      catch (err) {
+        logger.debug({ err }, "arena-bg: failed to decode backdrop image");
+        return null;
+      }
+    })();
+    imageCache.set(image, pending);
+  }
+  return pending;
+}
 
 /**
- * Draw an ARBITRARY image (e.g. the siege castle scene) as the backdrop, cover-
- * fit to (width, height) with the same dark readability wash the arena strips
- * use, so foreground cards + HUD stay legible. Returns false if it couldn't be
- * decoded (caller falls back to the arena key / procedural background).
+ * Draw an admin-uploaded (or siege) image as the backdrop, cover-fit to
+ * (width, height) with a dark readability wash. `image` is raw bytes or a URL.
+ * Returns false when it cannot be decoded so the caller keeps the gradient.
  */
 export async function drawImageBackground(
-  ctx: Ctx, mod: CanvasMod, image: Buffer | null | undefined, width: number, height: number,
+  ctx: Ctx,
+  mod: CanvasMod,
+  image: Buffer | string | null | undefined,
+  width: number,
+  height: number,
 ): Promise<boolean> {
   if (!image) return false;
-  let p = imageCache.get(image);
-  if (!p) {
-    p = (async () => {
-      try { return await mod.loadImage(image); }
-      catch (err) { logger.debug({ err }, "arena-bg: failed to decode backdrop image"); return null; }
-    })();
-    imageCache.set(image, p);
-  }
-  const img = await p;
+  const img = await loadBackdrop(mod, image);
   if (!img) return false;
 
   const s = Math.max(width / img.width, height / img.height);
@@ -145,9 +81,4 @@ export async function drawImageBackground(
   ctx.fillRect(0, 0, width, height);
   ctx.restore();
   return true;
-}
-
-/** True if the bundled arena assets are present (used to gate UI/features). */
-export function arenaAssetsAvailable(): boolean {
-  return manifest() !== null;
 }

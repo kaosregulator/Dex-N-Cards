@@ -7,8 +7,7 @@
 // "castle" in code; that meaning lives in the data + (later) an asset pack keyed
 // by `spritePrefix`. Add a theme = append to HQ_THEMES.
 //
-// Mirrors bot/battle/scene-arenas.ts (registry) and bot/cards/frames.ts
-// (Map index + resolve-to-default).
+// Registry shape matches bot/cards/frames.ts (Map index + resolve-to-default).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { AtmospherePreset } from "../../animations/atmosphere.js";

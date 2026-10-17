@@ -11,9 +11,13 @@ import { ObjectStorageService } from "../../lib/objectStorage.js";
 import { frameArtWindow, drawFrameOverlay, progressionArtWindow, drawProgressionOverlay, accentForRarity, type ProgTier } from "./card-frames.js";
 import { logger } from "../../lib/logger.js";
 import { shrinkArtBuffer, CARD_ART_MAX_EDGE } from "../images/raster.js";
-import { canvasSafeText } from "../discord-emoji.js";
+import { canvasPaintableText } from "../discord-emoji.js";
+import { CANVAS_SANS_STACK, withEmojiFonts } from "../canvas-fonts.js";
+import { measureCustomEmojiText } from "../unbelievaboat/canvas-emoji-text.js";
 
 export { CARD_ART_MAX_EDGE, BACKDROP_MAX_EDGE } from "../images/raster.js";
+
+const BODY_STACK = CANVAS_SANS_STACK;
 
 export interface Particle {
   x: number;
@@ -147,7 +151,7 @@ export function drawDamageNumber(
   ctx.globalAlpha = 1 - fadeT;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `bold ${crit ? 52 : 38}px "DejaVu Sans", Arial, sans-serif`;
+  ctx.font = `bold ${crit ? 52 : 38}px ${BODY_STACK}`;
   ctx.lineWidth = 6; ctx.strokeStyle = "rgba(0,0,0,0.8)";
   const text = miss ? "MISS" : (crit ? `${amount.toLocaleString()}!` : `-${amount.toLocaleString()}`);
   ctx.strokeText(text, 0, 0);
@@ -221,7 +225,7 @@ export function fitText(
 ): number {
   // Measure in the SAME family it'll be drawn in — Orbitron is wider than the
   // system sans, so measuring with the wrong font would overflow the box.
-  const family = font ? `"${font}", "DejaVu Sans", Arial, sans-serif` : `"DejaVu Sans", Arial, sans-serif`;
+  const family = font ? withEmojiFonts(`"${font}", ${BODY_STACK}`) : BODY_STACK;
   ctx.font = `bold ${maxPx}px ${family}`;
   const w = ctx.measureText(text).width;
   if (w <= maxWidth || maxPx <= minPx) return maxPx;
@@ -232,7 +236,6 @@ export function fitText(
 // Falls through to the system sans if Orbitron isn't registered, so nothing
 // breaks when the font is unavailable.
 export const TITLE_FONT = "Orbitron";
-const BODY_STACK = `"DNSans", "DejaVu Sans", Arial, sans-serif`;
 
 export function drawTextWithShadow(
   ctx: Ctx,
@@ -244,10 +247,10 @@ export function drawTextWithShadow(
   ctx.save();
   ctx.textAlign = align;
   ctx.textBaseline = "middle";
-  const family = font ? `"${font}", ${BODY_STACK}` : BODY_STACK;
+  const family = font ? withEmojiFonts(`"${font}", ${BODY_STACK}`) : BODY_STACK;
   ctx.font = `bold ${fontSize}px ${family}`;
   ctx.lineWidth = 5; ctx.strokeStyle = "rgba(0,0,0,0.85)";
-  const safe = canvasSafeText(text);
+  const safe = canvasPaintableText(text);
   ctx.strokeText(safe, x, y);
   ctx.fillStyle = color;
   ctx.fillText(safe, x, y);
@@ -484,10 +487,10 @@ export async function drawCardArt(
     const cx = x + w / 2, cy = y + h / 2;
     const fs = Math.max(9, Math.min(15, Math.round(w * 0.085)));
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = `600 ${fs}px "DejaVu Sans", Arial, sans-serif`;
+    ctx.font = `600 ${fs}px ${BODY_STACK}`;
     ctx.fillStyle = "rgba(200,205,215,0.72)";
     ctx.fillText("⚠ image missing", cx, cy - fs * 0.7);
-    ctx.font = `600 ${Math.max(8, fs - 2)}px "DejaVu Sans", Arial, sans-serif`;
+    ctx.font = `600 ${Math.max(8, fs - 2)}px ${BODY_STACK}`;
     ctx.fillStyle = "rgba(160,166,178,0.62)";
     ctx.fillText("please notify staff", cx, cy + fs * 0.7);
   }
@@ -550,8 +553,9 @@ export function drawRarityBadge(
   x: number, y: number, label: string, color: number,
 ): void {
   ctx.save();
-  ctx.font = 'bold 16px "DejaVu Sans", Arial, sans-serif';
-  const bw = Math.max(76, ctx.measureText(label).width + 22);
+  ctx.font = `bold 16px ${BODY_STACK}`;
+  const shown = canvasPaintableText(label);
+  const bw = Math.max(76, measureCustomEmojiText(ctx, shown) + 22);
   ctx.fillStyle = "rgba(20,20,24,0.85)";
   roundRectPath(ctx, x - bw, y, bw, 30, 6);
   ctx.fill();
@@ -560,7 +564,7 @@ export function drawRarityBadge(
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(canvasSafeText(label), x - bw / 2, y + 15);
+  ctx.fillText(shown, x - bw / 2, y + 15);
   ctx.restore();
 }
 

@@ -265,7 +265,7 @@ function frameMs(s: SiegeSession): number {
 }
 /**
  * LIVE vs STATIC — locked on the session for the whole fight (same convention
- * as /battle arena scenes). Never mix GIF and PNG mid-siege.
+ * as /battle's animated card GIF). Never mix GIF and PNG mid-siege.
  */
 function sceneAnimated(s: SiegeSession): boolean {
   return s.liveVisuals;

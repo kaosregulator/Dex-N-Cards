@@ -926,7 +926,7 @@ async function finishRaid(session: RaidSession, outcome: "clear" | "wipe" | "tim
       // just recorded above, so this reflects the boss they beat this run).
       const prog = await getCampaignProgress(session.guildId, session.starterId);
       storyLine = buildRaidClearLine(boss, Math.max(0, prog.total - prog.defeated));
-      // Plain labels — the canvas font has no emoji glyphs.
+      // Reward labels for the campaign end screen.
       const rewards: string[] = [];
       if (boss.cardId != null) rewards.push("Boss Card");
       rewards.push(`${raidFrameForBoss(boss.rewardFrameId).name} Frame`);

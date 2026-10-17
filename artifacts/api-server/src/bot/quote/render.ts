@@ -4,6 +4,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCanvas, type CanvasMod, type Ctx } from "../animations/engine.js";
+import { withEmojiFonts } from "../canvas-fonts.js";
+import { warmCanvasText } from "../unbelievaboat/canvas-emoji-text.js";
 import { queueRender } from "../animations/render-queue.js";
 import { BRAND_NAME } from "../help-banners.js";
 import { fitFontSize, wrapLines } from "./text.js";
@@ -111,12 +113,12 @@ function drawImage(ctx: Ctx, img: unknown, x: number, y: number): void {
 
 function fontFamily(tone: QuoteTheme["fontTone"]): string {
   switch (tone) {
-    case "display": return '"Orbitron", "Arial Black", Arial, sans-serif';
-    case "impact": return '"Arial Black", Impact, Arial, sans-serif';
-    case "serif": return 'Georgia, "Times New Roman", "Palatino Linotype", serif';
-    case "mono": return '"Courier New", Courier, monospace';
-    case "grunge": return '"Arial Black", Impact, Arial, sans-serif';
-    default: return 'Arial, "Helvetica Neue", Helvetica, sans-serif';
+    case "display": return withEmojiFonts('"Orbitron", "Arial Black", Arial, sans-serif');
+    case "impact": return withEmojiFonts('"Arial Black", Impact, Arial, sans-serif');
+    case "serif": return withEmojiFonts('Georgia, "Times New Roman", "Palatino Linotype", serif');
+    case "mono": return withEmojiFonts('"Courier New", Courier, monospace');
+    case "grunge": return withEmojiFonts('"Arial Black", Impact, Arial, sans-serif');
+    default: return withEmojiFonts('Arial, "Helvetica Neue", Helvetica, sans-serif');
   }
 }
 
@@ -1176,6 +1178,7 @@ export async function renderQuoteCard(raw: QuoteRenderInput): Promise<Buffer | n
   return queueRender("quote-card", async () => {
     const mod = await getCanvas();
     if (!mod) return null;
+    await warmCanvasText(mod, [input.text, input.displayName, input.handle, input.watermark]);
     const theme = input.theme;
     const { width: w, height: h } = theme;
     try {

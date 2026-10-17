@@ -35,18 +35,19 @@ export interface BattleAnimationInput {
   defenderWon: boolean;  // (should not happen on a single hit, but kept for symmetry)
   background?: string | null;
   /**
-   * Raw PNG bytes to use as the scene backdrop — the fighters dash and trade
-   * blows over THIS image (cover-fit, with a readability wash). Takes precedence
-   * over `background` (a bundled arena key). The HQ siege passes its castle
-   * frame here so the assault plays out on the castle itself.
+   * Admin-uploaded backdrop (raw bytes or a URL). Fighters trade blows over
+   * this image, cover-fit with a readability wash. The HQ siege passes its
+   * castle frame here. When it is missing, the fight uses the gradient.
    */
-  backgroundImage?: Buffer | null;
+  backgroundImage?: Buffer | string | null;
 }
 
 export interface VictoryAnimationInput {
   winner: RenderCard;
   loser: RenderCard;
   background?: string | null;
+  /** Admin-uploaded battle image (bytes or URL). Wins over the gradient. */
+  backgroundImage?: Buffer | string | null;
 }
 
 export interface AnimationResult {

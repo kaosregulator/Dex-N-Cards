@@ -327,8 +327,7 @@ export async function handleBattleAdminButton(interaction: ButtonInteraction): P
     }
     case "animtoggle": {
       // Cycle battle visuals: Off → Classic (light single-frame) → Animated
-      // (arena scene) → Off. Lets admins instantly dial back if the animated
-      // scene is too heavy on their server.
+      // card GIF → Off. The backdrop stays the admin image or the gradient.
       const s = await getBattleSettings(guildId);
       const patch = !s.battleAnimationEnabled
         ? { battleAnimationEnabled: true, battleSceneAnimated: false }   // Off → Classic
@@ -906,7 +905,7 @@ async function buildHubEmbed(guildId: string): Promise<EmbedBuilder> {
 // Battle visual mode label for the 3-state "Battle Visuals" cycle.
 function battleVisualMode(s: { battleAnimationEnabled: boolean; battleSceneAnimated?: boolean }): string {
   if (!s.battleAnimationEnabled) return "⏸️ Off (static)";
-  return s.battleSceneAnimated ? "🎬 Animated arenas" : "🖼️ Classic (light)";
+  return s.battleSceneAnimated ? "🎬 Animated" : "🖼️ Classic (light)";
 }
 
 async function buildDisplayPanel(guildId: string) {

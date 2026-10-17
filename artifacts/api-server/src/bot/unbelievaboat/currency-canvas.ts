@@ -26,6 +26,19 @@ function rememberSymbol(key: string, img: CurrencyImg | null): void {
   }
 }
 
+/** Sync cache lookup. `undefined` means this symbol has not been warmed yet. */
+export function peekCurrencyImage(symbol: string): CurrencyImg | null | undefined {
+  const key = symbol.trim();
+  if (!key) return null;
+  if (!SYMBOL_IMG_CACHE.has(key)) return undefined;
+  return SYMBOL_IMG_CACHE.get(key) ?? null;
+}
+
+/** Test and preload helper. Puts an already-decoded image in the sync cache. */
+export function primeCurrencyImage(symbol: string, img: CurrencyImg | null): void {
+  rememberSymbol(symbol.trim(), img);
+}
+
 export function parseDiscordEmoji(symbol: string): {
   animated: boolean;
   name: string;
