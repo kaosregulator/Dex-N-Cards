@@ -57,8 +57,14 @@ import { logBattleResult } from "./logging-engine.js";
 import { grantFreePack } from "./pack-grant.js";
 import {
   buildBattleLogEmbed, buildBattleStatusEmbed, buildIntroFrame, buildCoinFlipEmbed, buildWinnerEmbed,
+  currentTurnLine,
   type BattleView,
 } from "./embeds.js";
+import {
+  statusThemeOf, hudFighter, renderStatusStill, renderStatusDrain,
+  DRAIN_SETTLE_MS, HUD_FILE_PNG, HUD_FILE_GIF,
+  type StatusTheme, type HudBoard, type HudFighter,
+} from "./status-hud.js";
 import { formatAchievementLine } from "./achievement-engine.js";
 import { rarityLabel, rarityEmoji, rarityColor, type RarityDisplayMap } from "../cards-data.js";
 import { getRarityContext, getRarityDisplayOverrides } from "../db.js";
@@ -174,6 +180,19 @@ interface BattleRuntime {
   // than a static PNG — Discord only animates an embed image whose ATTACHMENT
   // FILENAME ends in .gif, so the end-screen attach must match.
   vsImageIsGif: boolean;
+  // Last HP shown on the status picture, so a drain GIF starts from the previous
+  // value. The settle timer swaps that GIF for a still during its hold.
+  hudShown?: { a: number; b: number } | null;
+  hudGen?: number;
+  hudSettle?: ReturnType<typeof setTimeout> | null;
+  hudSnapshot?: {
+    gen: number;
+    embeds: EmbedBuilder[];
+    hudEmbed: EmbedBuilder;
+    components: ActionRowBuilder<ButtonBuilder>[];
+    combat: { buffer: Buffer; name: string } | null;
+    still: Buffer;
+  } | null;
   // Set when a player triggers a 💀 Fatality finisher; drives the cinematic
   // end-screen. `null` for every normal ending (which stays byte-for-byte as-is).
   fatality: { side: 0 | 1; userName: string } | null;
@@ -374,6 +393,7 @@ export async function startChallenge(
     displayMap,
     ctx,
     vsImage: null, battleBgUrl: null, sceneArenaKey: null, vsImageIsGif: false, fatality: null,
+    hudShown: null, hudGen: 0, hudSettle: null, hudSnapshot: null,
   };
   battles.set(id, rt);
 
@@ -1161,9 +1181,14 @@ async function finishBattle(rt: BattleRuntime, winnerSide: 0 | 1 | null, reason:
   // Settle escrowed staked cards exactly once (winner takes both, draw returns).
   await settleEscrow(rt, winnerSide);
 
+  cancelHudSettle(rt);
   const rewardLines = buildRewardLines(rt, outcomes);
   const view = toView(rt);
   const winner = winnerSide === null ? null : (winnerSide === 0 ? rt.a : rt.b);
+  const endTheme = statusThemeOf(rt.settings.battleStatusTheme);
+  const endHud = endTheme === "classic" ? null : await renderStatusStill(battleHudBoard(
+    rt, view, endTheme === "gauges" ? "gauges" : "drain", winner ? "VICTORY" : "DRAW",
+  ));
 
   // End-screen image. A Fatality finisher plays the full cinematic GIF; every
   // other ending keeps its existing victory GIF exactly as before.
@@ -1188,7 +1213,7 @@ async function finishBattle(rt: BattleRuntime, winnerSide: 0 | 1 | null, reason:
   // is reused as the big embed image so it isn't wasted, plus an "HP left" line.
   // Animated end-screens MUST attach under a .gif name or Discord freezes them.
   const endFileName = rt.vsImageIsGif ? VS_IMAGE_NAME_GIF : VS_IMAGE_NAME;
-  const winnerEmbed = buildWinnerEmbed(view, winnerSide, rewardLines);
+  const winnerEmbed = buildWinnerEmbed(view, winnerSide, rewardLines, { hideMeters: !!endHud });
   if (rt.vsImage) winnerEmbed.setImage(`attachment://${endFileName}`);
   if (winner) {
     const pct = Math.max(0, Math.round((winner.hp / Math.max(1, winner.stats.maxHealth)) * 100));
@@ -1199,9 +1224,14 @@ async function finishBattle(rt: BattleRuntime, winnerSide: 0 | 1 | null, reason:
     });
   }
   const winnerFiles = rt.vsImage ? [new AttachmentBuilder(rt.vsImage, { name: endFileName })] : [];
+  const winnerEmbeds = [winnerEmbed];
+  if (endHud) {
+    winnerEmbeds.push(new EmbedBuilder().setColor(winnerEmbed.data.color ?? 0xed4245).setImage(`attachment://${HUD_FILE_PNG}`));
+    winnerFiles.push(new AttachmentBuilder(endHud, { name: HUD_FILE_PNG }));
+  }
 
   if (rt.message) {
-    await rt.message.edit({ embeds: [winnerEmbed], components: [], files: winnerFiles }).catch(() => {});
+    await rt.message.edit({ embeds: winnerEmbeds, components: [], files: winnerFiles }).catch(() => {});
   }
 
   // Achievement toasts + battle log channel.
@@ -1449,7 +1479,103 @@ function rarityColorOfSide(rt: BattleRuntime): number {
   return rarityColor(active?.cardRarity ?? "common", null, rt.displayMap) ?? 0xed4245;
 }
 
+function cancelHudSettle(rt: BattleRuntime): void {
+  if (rt.hudSettle) clearTimeout(rt.hudSettle);
+  rt.hudSettle = null;
+  rt.hudGen = (rt.hudGen ?? 0) + 1;
+}
+
+function battleHudBoard(rt: BattleRuntime, view: BattleView, style: "drain" | "gauges", headline?: string): HudBoard {
+  const prev = rt.hudShown;
+  const active = view.currentSide === 0 ? view.a : view.b;
+  const title = headline ?? (active.isAi ? "AI IS DECIDING" : "YOUR MOVE");
+  const mapSide = (c: BattleView["a"], side: 0 | 1): HudFighter => hudFighter(c, {
+    tag: c.isAi ? "AI" : "YOU",
+    tagTone: c.isAi ? "ai" : "you",
+    sub: c.isAi ? "AI" : c.displayName,
+    active: view.currentSide === side,
+    fromHp: prev ? (side === 0 ? prev.a : prev.b) : c.hp,
+  });
+  return {
+    style,
+    headline: title,
+    turnLabel: `TURN ${view.turnNumber}`,
+    fighters: [mapSide(view.a, 0), mapSide(view.b, 1)],
+  };
+}
+
+async function renderThemedCombat(
+  rt: BattleRuntime, opts: { currentMove?: string; turnEndsAt?: number } | undefined, theme: StatusTheme, gen: number,
+): Promise<void> {
+  if (!rt.message || !rt.a || !rt.b || theme === "classic") return;
+  const view = toView(rt, opts?.turnEndsAt);
+  const style = theme === "gauges" ? "gauges" : "drain";
+  const board = battleHudBoard(rt, view, style);
+  const changed = board.fighters.some(f => Math.round(f.fromHp) !== Math.round(f.hp));
+  rt.hudShown = { a: view.a.hp, b: view.b.hp };
+  const stillBoard: HudBoard = {
+    ...board,
+    fighters: board.fighters.map(f => ({ ...f, fromHp: f.hp })),
+  };
+  const animated = style === "drain" && changed ? await renderStatusDrain(board) : null;
+  const still = animated?.still ?? await renderStatusStill(stillBoard);
+  const gif = animated?.gif ?? null;
+  if (rt.hudGen !== gen || !rt.message) return;
+  if (!still) {
+    await renderClassicCombat(rt, opts);
+    return;
+  }
+  const actor = rt.currentSide === 0 ? rt.a : rt.b;
+  const components = actor.isAi ? [] : buildMoveComponents(rt, actor);
+  const logEmbed = buildBattleLogEmbed(view);
+  const color = rarityColorOfSide(rt);
+  const hudEmbed = new EmbedBuilder().setColor(color).setDescription(currentTurnLine(view));
+  const hudName = gif ? HUD_FILE_GIF : HUD_FILE_PNG;
+  hudEmbed.setImage(`attachment://${hudName}`);
+  const files: AttachmentBuilder[] = [new AttachmentBuilder(gif ?? still, { name: hudName })];
+  const turnImg = rt.turnAnimation;
+  rt.turnAnimation = null;
+  const combatImg = turnImg ?? rt.vsImage;
+  const isGif = turnImg ? sceneAnimated(rt) : rt.vsImageIsGif;
+  const embeds = [logEmbed, hudEmbed];
+  let combat: { buffer: Buffer; name: string } | null = null;
+  if (combatImg) {
+    const name = combatImageName(isGif);
+    const battleEmbed = new EmbedBuilder().setColor(color).setImage(`attachment://${name}`);
+    embeds.push(battleEmbed);
+    combat = { buffer: combatImg, name };
+    files.push(new AttachmentBuilder(combatImg, { name }));
+  }
+  if (opts?.currentMove) hudEmbed.setFooter({ text: opts.currentMove });
+  if (rt.hudGen !== gen) return;
+  if (gif && still) {
+    rt.hudSnapshot = { gen, embeds, hudEmbed, components, combat, still };
+    rt.hudSettle = setTimeout(() => {
+      if (rt.hudGen !== gen || !rt.message || !rt.hudSnapshot || rt.hudSnapshot.gen !== gen) return;
+      const snap = rt.hudSnapshot;
+      snap.hudEmbed.setImage(`attachment://${HUD_FILE_PNG}`);
+      const next: AttachmentBuilder[] = [new AttachmentBuilder(snap.still, { name: HUD_FILE_PNG })];
+      if (snap.combat) next.push(new AttachmentBuilder(snap.combat.buffer, { name: snap.combat.name }));
+      rt.message.edit({ embeds: snap.embeds, components: snap.components, files: next }).catch(() => {});
+    }, DRAIN_SETTLE_MS);
+  }
+  await rt.message.edit({ content: null, embeds, components, files }).catch(() => {});
+}
+
 async function renderCombat(rt: BattleRuntime, opts?: { currentMove?: string; turnEndsAt?: number }) {
+  if (!rt.message || !rt.a || !rt.b) return;
+  cancelHudSettle(rt);
+  const fresh = await getBattleSettings(rt.guildId).catch(() => null);
+  if (fresh) rt.settings = { ...rt.settings, battleStatusTheme: fresh.battleStatusTheme };
+  const theme = statusThemeOf(rt.settings.battleStatusTheme);
+  if (theme !== "classic") {
+    await renderThemedCombat(rt, opts, theme, rt.hudGen ?? 0);
+    return;
+  }
+  await renderClassicCombat(rt, opts);
+}
+
+async function renderClassicCombat(rt: BattleRuntime, opts?: { currentMove?: string; turnEndsAt?: number }) {
   if (!rt.message || !rt.a || !rt.b) return;
   const view = toView(rt, opts?.turnEndsAt);
   const actor = rt.currentSide === 0 ? rt.a : rt.b;

@@ -150,7 +150,7 @@ export function buildCombatEmbed(v: BattleView, opts?: { currentMove?: string })
 }
 
 // The "whose turn is it" line, shared by the layout below.
-function currentTurnLine(v: BattleView): string {
+export function currentTurnLine(v: BattleView): string {
   const active = v.currentSide === 0 ? v.a : v.b;
   const turnLine = active.isAi
     ? `🤖 **AI** is deciding…`
@@ -238,6 +238,7 @@ export function buildCoinFlipEmbed(v: BattleView, firstSide: 0 | 1, call: string
 // ── Victory screen ───────────────────────────────────────────────────────────
 export function buildWinnerEmbed(
   v: BattleView, winnerSide: 0 | 1 | null, rewardLines: string[],
+  opts?: { hideMeters?: boolean },
 ): EmbedBuilder {
   const e = new EmbedBuilder();
   if (winnerSide === null) {
@@ -254,10 +255,12 @@ export function buildWinnerEmbed(
        .setImage(w.cardImageUrl);
     }
   }
-  e.addFields(
-    combatantField(v.a, false, v.displayMap),
-    combatantField(v.b, false, v.displayMap),
-  );
+  if (!opts?.hideMeters) {
+    e.addFields(
+      combatantField(v.a, false, v.displayMap),
+      combatantField(v.b, false, v.displayMap),
+    );
+  }
   if (rewardLines.length) e.addFields({ name: "🎁 Rewards", value: rewardLines.join("\n").slice(0, 1024), inline: false });
   e.setFooter({ text: `Battle lasted ${v.turnNumber} turn${v.turnNumber === 1 ? "" : "s"}` });
   return e;

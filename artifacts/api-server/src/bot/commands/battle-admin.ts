@@ -23,6 +23,7 @@ import {
 import { effectiveRarityKey, rarityLadderRank } from "../rarity-runtime.js";
 import { persistBotImage } from "./edit-card.js";
 import { getBattleSettings, updateBattleSettings, RARITY_ORDER } from "../battle/config-engine.js";
+import { statusThemeLabel, statusThemeOf, type StatusTheme } from "../battle/status-hud.js";
 import { resetSeason } from "../battle/season-engine.js";
 import { upsertBattleCardConfig, getBattleCardConfig, resetBattleCardConfig } from "../battle/db.js";
 import { upsertBattleContent, deleteBattleContent, listBattleContent } from "../battle/db.js";
@@ -201,6 +202,18 @@ export async function handleBattleAdminButton(interaction: ButtonInteraction): P
       await updateBattleSettings(guildId, { aiEnabled: !s.aiEnabled });
       break;
     }
+    case "display": {
+      await interaction.editReply(await buildDisplayPanel(guildId));
+      return;
+    }
+    case "layout": {
+      const next = interaction.customId.split(":")[2];
+      if (next === "classic" || next === "drain" || next === "gauges") {
+        await updateBattleSettings(guildId, { battleStatusTheme: next });
+      }
+      await interaction.editReply(await buildDisplayPanel(guildId));
+      return;
+    }
     case "animtoggle": {
       // Cycle battle visuals: Off → Classic (light single-frame) → Animated
       // (arena scene) → Off. Lets admins instantly dial back if the animated
@@ -212,7 +225,8 @@ export async function handleBattleAdminButton(interaction: ButtonInteraction): P
           ? { battleSceneAnimated: true }                               // Classic → Animated
           : { battleAnimationEnabled: false };                          // Animated → Off
       await updateBattleSettings(guildId, patch);
-      break;
+      await interaction.editReply(await buildDisplayPanel(guildId));
+      return;
     }
     case "cards": {
       await interaction.editReply({ embeds: [await buildCardsEmbed(guildId)], components: await buildCardsComponents(guildId) });
@@ -721,7 +735,7 @@ async function buildHubEmbed(guildId: string): Promise<EmbedBuilder> {
       { name: "Speed", value: `${speedLabel(s.frameDelayMs)} (${s.frameDelayMs}ms/frame) — set below`, inline: false },
       { name: "Cards", value: `${rd.label(s.minRarity as Rarity)} → ${rd.label(s.maxRarity as Rarity)} · Types: ${s.allowedTypes?.length ? s.allowedTypes.join(", ") : "All"} · Special ${onoff(s.specialCardsEnabled)} · Stake ${onoff(s.stakingEnabled)}`, inline: false },
       { name: "Rewards", value: `💠 Win ${s.rewardWinShards} / Loss ${s.rewardLossShards} · ✨ ${s.rewardWinXp} XP · Daily cap ${s.dailyRewardLimit} · 🎁 pack every ${s.freePackStreak || "—"} streak`, inline: false },
-      { name: "Toggles", value: `AI ${onoff(s.aiEnabled)} · Global LB ${onoff(s.globalLeaderboardOptIn)} · Battle Visuals **${battleVisualMode(s)}**`, inline: false },
+      { name: "Toggles", value: `AI ${onoff(s.aiEnabled)} · Global LB ${onoff(s.globalLeaderboardOptIn)} · Battle Visuals **${battleVisualMode(s)}**\nStatus layout **${statusThemeLabel(s.battleStatusTheme)}**`, inline: false },
     );
 }
 
@@ -729,6 +743,38 @@ async function buildHubEmbed(guildId: string): Promise<EmbedBuilder> {
 function battleVisualMode(s: { battleAnimationEnabled: boolean; battleSceneAnimated?: boolean }): string {
   if (!s.battleAnimationEnabled) return "⏸️ Off (static)";
   return s.battleSceneAnimated ? "🎬 Animated arenas" : "🖼️ Classic (light)";
+}
+
+async function buildDisplayPanel(guildId: string) {
+  const s = await getBattleSettings(guildId);
+  const theme = statusThemeOf(s.battleStatusTheme);
+  const pick = (id: StatusTheme, label: string) =>
+    new ButtonBuilder()
+      .setCustomId(`battleadmin:layout:${id}`)
+      .setLabel(label)
+      .setStyle(theme === id ? ButtonStyle.Success : ButtonStyle.Secondary);
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle("📊 Battle status layout")
+    .setDescription(
+      "The battle log stays as its own embed. This only changes the health block under it. " +
+      "Card battles, the victory screen, sieges, and boss raids share the choice.\n\n" +
+      "**Current columns** — the original text meters.\n" +
+      "**Drain, then still** — the health bar falls when a hit lands, holds on the new value, then locks to a still picture so it does not replay.\n" +
+      "**Circle gauges** — a health bar plus Energy, Ultimate, and Shield circles, with the name under each circle.",
+    )
+    .addFields(
+      { name: "Status layout", value: `**${statusThemeLabel(theme)}**`, inline: true },
+      { name: "Battle visuals", value: `**${battleVisualMode(s)}**`, inline: true },
+    );
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    pick("classic", "Current"),
+    pick("drain", "Drain"),
+    pick("gauges", "Circles"),
+    new ButtonBuilder().setCustomId("battleadmin:animtoggle").setLabel("Battle Visuals").setEmoji("🎞️").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("battleadmin:hub").setLabel("Back").setStyle(ButtonStyle.Secondary),
+  );
+  return { embeds: [embed], components: [row] };
 }
 
 function speedLabel(ms: number): string {
@@ -758,7 +804,7 @@ function buildHubComponents(s?: { frameDelayMs: number; battleAnimationSpeed?: s
     new ButtonBuilder().setCustomId("battleadmin:passivemgr").setLabel("Passives").setEmoji("✨").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("battleadmin:resetlb").setLabel("Reset Leaderboard").setEmoji("🏆").setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId("battleadmin:season").setLabel("New Season").setEmoji("🔄").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("battleadmin:animtoggle").setLabel("Battle Visuals").setEmoji("🎞️").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("battleadmin:display").setLabel("Status Layout").setEmoji("📊").setStyle(ButtonStyle.Secondary),
   );
   const cur = s?.frameDelayMs ?? 950;
   const speedRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
