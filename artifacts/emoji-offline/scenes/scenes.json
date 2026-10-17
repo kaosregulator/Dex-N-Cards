@@ -1,6 +1,6 @@
 {
-  "note": "Green/blue-screen scene packs for /emoji. The user's target image is composited into the chroma region at native size (no crop); foreground actors/effects/text stay on top. chroma auto-detected per source; effect + fit hand-tagged. Order below is the featured order shown at the front of the style board.",
-  "fitModes": "cover = fill the region + slight crop (default); stretch = whole image distorted to fill (theater/movie).",
+  "note": "Green/blue-screen scene packs for /emoji. The user's target image is composited into the chroma region; foreground actors/effects/text stay on top. chroma auto-detected per source; effect + fit hand-tagged. Order below is the featured order shown at the front of the style board.",
+  "fitModes": "cover = show the whole image, filling the screen only when that hides a sliver; stretch = whole image distorted to fill (theater/movie).",
   "effects": "none | explode | shake | fuzzytv | cut | rip | punch | channel",
   "scenes": [
     { "id": "mission-passed",  "label": "Mission Passed",   "chroma": "green", "effect": "none",    "fit": "cover" },

@@ -1,10 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DN Cards — Card entrance animations (spawn pre-intro)
 //
-// A short "the card enters" motion played BEFORE the plain card image, used only
-// when the spawn reveal is set to "off" (image-only) — the blur/puzzle/silhouette
-// reveals already have their own presentation. Admins pick the motion and the
-// skin drawn behind the card in /config.
+// A short "the card enters" motion used only when the spawn reveal is set to
+// "off" (image-only). The GIF stays on the spawn and loops: the motion plays,
+// holds on the card for about a second, then replays. Catch and escape play
+// that same motion backwards and finish in a smoke vanish. Admins pick the
+// motion and the skin in /config. "Off" keeps a truly static card image.
 //
 //   Motions:  Fly In · Teleport In · Bounce In · Warp In · Flip In  (+ Random)
 //   Skins:    rarity (backdrop tinted by the card's rarity) · tactical · holo
@@ -297,28 +298,34 @@ async function drawEntranceCard(
   ctx.restore();
 }
 
+/** Motion length follows the speed setting, then the card holds for a second. */
+export function entranceTimeline(speed: AnimationSpeed = "normal"): { durationMs: number; motionEnd: number; holdMs: number } {
+  const motionMs = speed === "slow" ? 2200 : speed === "fast" ? 1200 : 1700;
+  const holdMs = 1000;
+  const durationMs = motionMs + holdMs;
+  return { durationMs, motionEnd: motionMs / durationMs, holdMs };
+}
+
+/** How long the catch/escape vanish plays before the message shows its final embed. */
+export const CARD_EXIT_MS = 2000;
+
 export async function renderCardEntrance(input: CardEntranceInput): Promise<Buffer | null> {
   const mod = await getCanvas();
   if (!mod) return null;
 
   const color = input.rarityColor ?? getRarityEffectColor(input.rarity);
   const skin = skinFor(input.skin ?? "rarity", color);
-
-  // ~1.25s of motion, then a short hold on the resting card. encodeAnimation
-  // coalesces the identical hold frames into one long-delay frame, so the loop
-  // pauses on the finished card before replaying — and the spawn manager swaps
-  // to the plain image shortly after, so it never loops distractingly.
-  const MOTION_END = 0.78; // fraction of frames spent moving; rest = hold
+  const { durationMs, motionEnd } = entranceTimeline(input.speed ?? "normal");
   try {
     const result = await encodeAnimation({
       width: WIDTH,
       height: HEIGHT,
       speed: input.speed ?? "normal",
-      durationMs: 1600,
-      maxFrames: 22,
+      durationMs,
+      maxFrames: 28,
       quality: 18,
       render: async ({ ctx, t, mod: m }) => {
-        const mt = clamp01(t / MOTION_END); // motion progress (holds at 1 during the tail)
+        const mt = clamp01(t / motionEnd); // holds at 1 through the pause, then the GIF loops
         skin.background(ctx);
         drawEntranceFx(ctx, input.type, mt, skin.accent);
         await drawEntranceCard(ctx, m, input.artUrl, poseFor(input.type, mt), color, skin.accent, input.rarity);
@@ -330,4 +337,75 @@ export async function renderCardEntrance(input: CardEntranceInput): Promise<Buff
     logger.debug({ err }, "card-entrance: encode failed");
     return null;
   }
+}
+
+/**
+ * The entrance played backwards, then a smoke poof as the card teleports away.
+ * Used for both a catch and an escape. Best-effort: null falls back to the
+ * plain caught/escaped embed.
+ */
+export async function renderCardExit(input: CardEntranceInput): Promise<Buffer | null> {
+  const mod = await getCanvas();
+  if (!mod) return null;
+
+  const color = input.rarityColor ?? getRarityEffectColor(input.rarity);
+  const skin = skinFor(input.skin ?? "rarity", color);
+  const MOTION_END = 0.62;
+  try {
+    const result = await encodeAnimation({
+      width: WIDTH,
+      height: HEIGHT,
+      speed: input.speed ?? "normal",
+      durationMs: CARD_EXIT_MS,
+      maxFrames: 24,
+      quality: 18,
+      render: async ({ ctx, t, mod: m }) => {
+        const mt = clamp01(1 - t / MOTION_END);
+        const vanish = clamp01((t - 0.4) / 0.28);
+        const smoke = clamp01((t - 0.36) / 0.64);
+        skin.background(ctx);
+        const pose = poseFor(input.type, mt);
+        pose.alpha *= 1 - vanish;
+        const shrink = 1 - vanish * 0.55;
+        pose.sx *= shrink;
+        pose.sy *= shrink;
+        drawEntranceFx(ctx, input.type, mt, skin.accent);
+        await drawEntranceCard(ctx, m, input.artUrl, pose, color, skin.accent, input.rarity);
+        skin.overlay(ctx, mt);
+        if (smoke > 0.02) {
+          // Cloud where the card rested, plus a trail if the motion carries it off-screen.
+          drawVanishSmoke(ctx, smoke, CX, CY);
+          if (Math.hypot(pose.ox, pose.oy) > 24) drawVanishSmoke(ctx, smoke * 0.7, CX + pose.ox, CY + pose.oy);
+        }
+      },
+    });
+    return result?.buffer ?? null;
+  } catch (err) {
+    logger.debug({ err }, "card-exit: encode failed");
+    return null;
+  }
+}
+
+/** Expanding cloud that fades out — the card's teleport-away. */
+function drawVanishSmoke(ctx: Ctx, p: number, x: number, y: number): void {
+  const puff = Math.sin(Math.min(1, p) * Math.PI);
+  ctx.save();
+  const spots = 8;
+  for (let i = 0; i < spots; i++) {
+    const ang = (i / spots) * Math.PI * 2 + 0.5;
+    const dist = lerp(6, 110, p) * (0.45 + (i % 3) * 0.22);
+    const rad = lerp(16, 78, p) * (0.65 + (i % 2) * 0.4);
+    const a = puff * 0.62;
+    const px = x + Math.cos(ang) * dist;
+    const py = y + Math.sin(ang) * dist * 0.7 - p * 28;
+    const g = ctx.createRadialGradient(px, py, 2, px, py, rad);
+    g.addColorStop(0, `rgba(250,250,252,${a})`);
+    g.addColorStop(0.4, `rgba(186,188,198,${a * 0.72})`);
+    g.addColorStop(1, "rgba(120,122,132,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(px, py, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
