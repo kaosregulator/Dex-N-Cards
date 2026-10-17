@@ -11,6 +11,7 @@ import { ObjectStorageService } from "../../lib/objectStorage.js";
 import { frameArtWindow, drawFrameOverlay, progressionArtWindow, drawProgressionOverlay, type ProgTier } from "./card-frames.js";
 import { logger } from "../../lib/logger.js";
 import { shrinkArtBuffer, CARD_ART_MAX_EDGE } from "../images/raster.js";
+import { canvasSafeText } from "../discord-emoji.js";
 
 export { CARD_ART_MAX_EDGE, BACKDROP_MAX_EDGE } from "../images/raster.js";
 
@@ -231,7 +232,7 @@ export function fitText(
 // Falls through to the system sans if Orbitron isn't registered, so nothing
 // breaks when the font is unavailable.
 export const TITLE_FONT = "Orbitron";
-const BODY_STACK = `"DejaVu Sans", Arial, sans-serif`;
+const BODY_STACK = `"DNSans", "DejaVu Sans", Arial, sans-serif`;
 
 export function drawTextWithShadow(
   ctx: Ctx,
@@ -246,9 +247,10 @@ export function drawTextWithShadow(
   const family = font ? `"${font}", ${BODY_STACK}` : BODY_STACK;
   ctx.font = `bold ${fontSize}px ${family}`;
   ctx.lineWidth = 5; ctx.strokeStyle = "rgba(0,0,0,0.85)";
-  ctx.strokeText(text, x, y);
+  const safe = canvasSafeText(text);
+  ctx.strokeText(safe, x, y);
   ctx.fillStyle = color;
-  ctx.fillText(text, x, y);
+  ctx.fillText(safe, x, y);
   ctx.restore();
 }
 
@@ -492,12 +494,35 @@ export async function drawCardArt(
   ctx.restore();
 }
 
+const RAINBOW_STOPS = ["#ff4d4d", "#ff9f1a", "#ffe14d", "#3ddc6a", "#3dc6ff", "#7a5cff", "#ff4fd8"];
+
+function frameStrokeStyle(
+  ctx: Ctx, x: number, y: number, w: number, h: number, color: number,
+  paint?: "solid" | "rainbow" | "blend", blendA?: number, blendB?: number,
+) {
+  if (paint === "rainbow") {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    RAINBOW_STOPS.forEach((hex, i) => g.addColorStop(i / (RAINBOW_STOPS.length - 1), hex));
+    return g;
+  }
+  if (paint === "blend" && blendA != null && blendB != null) {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    g.addColorStop(0, hexToRgba(blendA, 1));
+    g.addColorStop(1, hexToRgba(blendB, 1));
+    return g;
+  }
+  return hexToRgba(color, 1);
+}
+
 export function drawCardFrame(
   ctx: Ctx,
   x: number, y: number, w: number, h: number,
   color: number, thickness = 6,
   rarity?: Rarity | string | null,
   progTier?: ProgTier | null,
+  paint?: "solid" | "rainbow" | "blend",
+  blendA?: number,
+  blendB?: number,
 ): void {
   // A card's equipped progression (level) frame wins; then the rarity image
   // frame; otherwise fall through to the drawn border (frames off/unmapped).
@@ -505,7 +530,7 @@ export function drawCardFrame(
   if (drawFrameOverlay(ctx, x, y, w, h, rarity)) return;
   ctx.save();
   ctx.lineWidth = thickness;
-  ctx.strokeStyle = hexToRgba(color, 1);
+  ctx.strokeStyle = frameStrokeStyle(ctx, x, y, w, h, color, paint, blendA, blendB);
   roundRectPath(ctx, x, y, w, h, 18);
   ctx.stroke();
   ctx.lineWidth = 1.5;
@@ -530,7 +555,7 @@ export function drawRarityBadge(
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(label, x - bw / 2, y + 15);
+  ctx.fillText(canvasSafeText(label), x - bw / 2, y + 15);
   ctx.restore();
 }
 

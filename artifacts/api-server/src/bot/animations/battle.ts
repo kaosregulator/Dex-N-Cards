@@ -17,6 +17,7 @@ import { drawAtmosphere, atmospherePreset } from "./atmosphere.js";
 import { drawArenaBackground, drawImageBackground } from "./arena-bg.js";
 import { drawImpactDebris, physicsShake } from "./physics.js";
 import { extractArtColor } from "../battle/image/vibrant-color.js";
+import { stampCardAccent } from "../battle/frame-color.js";
 
 // ── Encode tuning (ANIMATED arena mode) ──────────────────────────────────────
 // GIF encoding dominates the cost of an animated turn, and it scales with the
@@ -43,16 +44,25 @@ const QUALITY = 26;
 // combatant up-front rather than on every frame. Falls back to the card's
 // rarity colour when extraction yields nothing.
 async function resolveColor(card: RenderCard): Promise<number> {
+  if (card.framePaint && card.rarityColor != null) return card.rarityColor;
+  const stamped = await stampCardAccent(card);
+  if (stamped.frameMode && stamped.rarityColor != null) return stamped.rarityColor;
   return (await extractArtColor(card.artUrl)) ?? card.rarityColor ?? getRarityEffectColor(card.rarity);
+}
+
+async function stampPair(a: RenderCard, b: RenderCard): Promise<[RenderCard, RenderCard]> {
+  return Promise.all([stampCardAccent(a), stampCardAccent(b)]);
 }
 
 export async function renderBattleTurn(
   input: BattleAnimationInput,
   speed: AnimationSpeed,
 ): Promise<AnimationResult | null> {
+  const [attacker, defender] = await stampPair(input.attacker, input.defender);
+  const stamped = { ...input, attacker, defender };
   const [colorA, colorB] = await Promise.all([
-    resolveColor(input.attacker),
-    resolveColor(input.defender),
+    resolveColor(attacker),
+    resolveColor(defender),
   ]);
   return encodeAnimation({
     width: BATTLE_CANVAS.width,
@@ -62,7 +72,7 @@ export async function renderBattleTurn(
     maxFrames: 18,
     quality: QUALITY,
     renderScale: RENDER_SCALE,
-    render: (frame) => renderBattleTurnFrame(frame, input, colorA, colorB),
+    render: (frame) => renderBattleTurnFrame(frame, stamped, colorA, colorB),
   });
 }
 
@@ -70,9 +80,11 @@ export async function renderBattleVictory(
   input: VictoryAnimationInput,
   speed: AnimationSpeed,
 ): Promise<AnimationResult | null> {
+  const [winner, loser] = await stampPair(input.winner, input.loser);
+  const stamped = { ...input, winner, loser };
   const [colorA, colorB] = await Promise.all([
-    resolveColor(input.winner),
-    resolveColor(input.loser),
+    resolveColor(winner),
+    resolveColor(loser),
   ]);
   return encodeAnimation({
     width: BATTLE_CANVAS.width,
@@ -82,7 +94,7 @@ export async function renderBattleVictory(
     maxFrames: 20,
     quality: QUALITY,
     renderScale: RENDER_SCALE,
-    render: (frame) => renderVictoryFrame(frame, input, colorA, colorB),
+    render: (frame) => renderVictoryFrame(frame, stamped, colorA, colorB),
   });
 }
 
@@ -94,9 +106,11 @@ export async function renderBattleIdle(
   input: BattleAnimationInput,
   speed: AnimationSpeed,
 ): Promise<AnimationResult | null> {
+  const [attacker, defender] = await stampPair(input.attacker, input.defender);
+  const stamped = { ...input, attacker, defender };
   const [colorA, colorB] = await Promise.all([
-    resolveColor(input.attacker),
-    resolveColor(input.defender),
+    resolveColor(attacker),
+    resolveColor(defender),
   ]);
   return encodeAnimation({
     width: BATTLE_CANVAS.width,
@@ -106,7 +120,7 @@ export async function renderBattleIdle(
     maxFrames: 12,
     quality: QUALITY,
     renderScale: IDLE_RENDER_SCALE,
-    render: (frame) => renderBattleIdleFrame(frame, input, colorA, colorB),
+    render: (frame) => renderBattleIdleFrame(frame, stamped, colorA, colorB),
   });
 }
 
@@ -329,7 +343,7 @@ async function drawBattleCard(
   const color = card.rarityColor ?? getRarityEffectColor(card.rarity);
   drawRarityGlow(ctx, x, y, w, h, color, 0.6);
   await drawCardArt(ctx, mod, x + 8, y + 8, w - 16, h - 16, card.artUrl, card.rarity, card.progTier);
-  drawCardFrame(ctx, x, y, w, h, color, 7, card.rarity, card.progTier);
+  drawCardFrame(ctx, x, y, w, h, color, 7, card.rarity, card.progTier, card.framePaint, card.blendA, card.blendB);
   if (card.rarity === "legendary" || card.rarity === "mythic") {
     drawRarityGlow(ctx, x, y, w, h, color, 0.3);
   }

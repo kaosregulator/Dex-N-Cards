@@ -11,9 +11,10 @@
 // one-shot GIF is only for a card battle, which owns a single message and can
 // swap the attachment after the hold.
 
-import { existsSync } from "fs";
 import { GlobalFonts } from "@napi-rs/canvas";
 import { encodeAnimation, getCanvas, type Ctx } from "../animations/engine.js";
+import { registerCanvasSans, CANVAS_SANS_STACK } from "../canvas-fonts.js";
+import { loadCurrencyImage, type CurrencyImg } from "../unbelievaboat/currency-canvas.js";
 
 export const STATUS_THEMES = ["classic", "drain", "gauges"] as const;
 export type StatusTheme = (typeof STATUS_THEMES)[number];
@@ -74,13 +75,25 @@ let fontsReady = false;
 function ensureFonts(): void {
   if (fontsReady) return;
   fontsReady = true;
-  const regular = "/usr/share/fonts/truetype/macos/Inter-Regular.ttf";
-  const bold = "/usr/share/fonts/truetype/macos/Inter-Bold.ttf";
-  if (existsSync(regular)) GlobalFonts.registerFromPath(regular, "HudSans");
-  if (existsSync(bold)) GlobalFonts.registerFromPath(bold, "HudSans");
+  registerCanvasSans({ GlobalFonts });
 }
 
-const FONT = "HudSans, sans-serif";
+const FONT = CANVAS_SANS_STACK;
+
+type GaugeIcons = { energy: CurrencyImg | null; ultimate: CurrencyImg | null; shield: CurrencyImg | null };
+let gaugeIcons: GaugeIcons | null = null;
+
+async function loadGaugeIcons(): Promise<GaugeIcons | null> {
+  if (gaugeIcons) return gaugeIcons;
+  const mod = await getCanvas();
+  if (!mod) return null;
+  gaugeIcons = {
+    energy: await loadCurrencyImage(mod, "⚡").catch(() => null),
+    ultimate: await loadCurrencyImage(mod, "💀").catch(() => null),
+    shield: await loadCurrencyImage(mod, "🛡️").catch(() => null),
+  };
+  return gaugeIcons;
+}
 
 export function hudPct(value: number, max: number): number {
   if (max <= 0) return 0;
@@ -257,7 +270,7 @@ function drawHpBar(ctx: Ctx, x: number, y: number, w: number, hp: number, max: n
   ctx.textAlign = "left";
 }
 
-function drawGauges(ctx: Ctx, board: HudBoard): void {
+function drawGauges(ctx: Ctx, board: HudBoard, icons: GaugeIcons | null): void {
   ctx.fillStyle = "#2b2d31";
   ctx.fillRect(0, 0, W, boardHeight(board));
   drawHeader(ctx, board);
@@ -297,10 +310,15 @@ function drawGauges(ctx: Ctx, board: HudBoard): void {
       const cx = W - 16 - circlesW + 26 + n * 58;
       const cy = y + 40;
       ring(ctx, cx, cy, 22, spec.pct, spec.color);
-      ctx.fillStyle = spec.color;
-      if (spec.icon === "bolt") drawBolt(ctx, cx, cy - 8, 12);
-      else if (spec.icon === "diamond") drawDiamond(ctx, cx, cy - 8, 11);
-      else drawShield(ctx, cx, cy - 8, 12);
+      const glyph = spec.icon === "bolt" ? icons?.energy : spec.icon === "diamond" ? icons?.ultimate : icons?.shield;
+      if (glyph) {
+        ctx.drawImage(glyph as never, cx - 8, cy - 18, 16, 16);
+      } else {
+        ctx.fillStyle = spec.color;
+        if (spec.icon === "bolt") drawBolt(ctx, cx, cy - 8, 12);
+        else if (spec.icon === "diamond") drawDiamond(ctx, cx, cy - 8, 11);
+        else drawShield(ctx, cx, cy - 8, 12);
+      }
       ctx.font = `700 10px ${FONT}`;
       ctx.fillStyle = "#f2f3f5";
       ctx.textAlign = "center";
@@ -367,19 +385,20 @@ function largestDrop(board: HudBoard): number {
   return board.fighters.reduce((max, f) => Math.max(max, Math.abs(Math.round(f.hp - f.fromHp))), 0);
 }
 
-function paint(ctx: Ctx, board: HudBoard, t: number): void {
+function paint(ctx: Ctx, board: HudBoard, t: number, icons: GaugeIcons | null): void {
   ensureFonts();
-  if (board.style === "gauges") drawGauges(ctx, board);
+  if (board.style === "gauges") drawGauges(ctx, board, icons);
   else drawDrain(ctx, board, t);
 }
 
 export async function renderStatusStill(board: HudBoard): Promise<Buffer | null> {
   const mod = await getCanvas();
   if (!mod) return null;
+  const icons = board.style === "gauges" ? await loadGaugeIcons() : null;
   const height = boardHeight(board);
   const canvas = mod.createCanvas(W, height);
   const ctx = canvas.getContext("2d") as unknown as Ctx;
-  paint(ctx, board, 1);
+  paint(ctx, board, 1, icons);
   return (canvas as unknown as { toBuffer(mime: "image/png"): Buffer }).toBuffer("image/png");
 }
 
@@ -387,6 +406,7 @@ export async function renderStatusDrain(board: HudBoard): Promise<{ gif: Buffer 
   const still = await renderStatusStill(board);
   if (!still) return null;
   const height = boardHeight(board);
+  const icons = board.style === "gauges" ? await loadGaugeIcons() : null;
   const gif = await encodeAnimation({
     width: W,
     height,
@@ -394,7 +414,7 @@ export async function renderStatusDrain(board: HudBoard): Promise<{ gif: Buffer 
     durationMs: DRAIN_DURATION_MS,
     maxFrames: 12,
     quality: 18,
-    render: ({ ctx, t }) => paint(ctx, board, t),
+    render: ({ ctx, t }) => paint(ctx, board, t, icons),
   });
   if (!gif) return { gif: null, still };
   return { gif: gif.buffer, still };

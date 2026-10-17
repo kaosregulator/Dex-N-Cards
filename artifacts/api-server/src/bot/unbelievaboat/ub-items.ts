@@ -112,7 +112,7 @@ export function emojiFromUbItem(item: UbStoreItem): {
 } {
   if (item.emoji_id) {
     return {
-      emoji: `<:_:${item.emoji_id}>`,
+      emoji: `<:emoji:${item.emoji_id}>`,
       imageUrl: discordEmojiCdnUrl(item.emoji_id, false),
       animated: false,
     };
@@ -161,7 +161,7 @@ export function resolveUbItemVisual(
   if (item.emoji_id) {
     // Unknown animation — prefer png; Discord still shows custom emoji in text.
     return {
-      emoji: `<:_:${item.emoji_id}>`,
+      emoji: `<:emoji:${item.emoji_id}>`,
       imageUrl: discordEmojiCdnUrl(item.emoji_id, false),
       animated: false,
     };

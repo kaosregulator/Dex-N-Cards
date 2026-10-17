@@ -19,15 +19,32 @@ export { RARITY_ORDER, rarityRank };
 const _cache = new Map<string, { value: BattleSettings; expiresAt: number }>();
 const TTL_MS = 5_000;
 
-const BATTLE_STATUS_THEME_SQL =
-  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_status_theme text NOT NULL DEFAULT 'classic'`;
+const BATTLE_SETTING_COLUMN_SQL = [
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_status_theme text NOT NULL DEFAULT 'classic'`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_mode text NOT NULL DEFAULT 'image'`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_a text`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_b text`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_miss_chance_pct integer`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_dodge_chance_pct integer`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_crit_chance_pct integer`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_miss_chance_pct integer`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_dodge_chance_pct integer`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_crit_chance_pct integer`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_ultimate boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_special boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_item boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_defend boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_charge boolean NOT NULL DEFAULT true`,
+];
 
 let statusThemeColumnReady: Promise<void> | null = null;
 
 /** Same statement as the boot migration, so a live process can recover if the column is still missing. */
 export function ensureBattleStatusThemeColumn(): Promise<void> {
   if (!statusThemeColumnReady) {
-    statusThemeColumnReady = pool.query(BATTLE_STATUS_THEME_SQL).then(() => undefined).catch((err) => {
+    statusThemeColumnReady = (async () => {
+      for (const sql of BATTLE_SETTING_COLUMN_SQL) await pool.query(sql);
+    })().catch((err) => {
       statusThemeColumnReady = null;
       throw err;
     });
@@ -46,7 +63,11 @@ function errorText(err: unknown): string {
 
 function missingBattleStatusTheme(err: unknown): boolean {
   const text = errorText(err);
-  return text.includes("battle_status_theme") && /does not exist|42703/i.test(text);
+  if (!/does not exist|42703/i.test(text)) return false;
+  return BATTLE_SETTING_COLUMN_SQL.some(sql => {
+    const name = sql.match(/ADD COLUMN IF NOT EXISTS ([a-z0-9_]+)/)?.[1];
+    return Boolean(name && text.includes(name));
+  });
 }
 
 async function loadBattleSettings(guildId: string): Promise<BattleSettings> {

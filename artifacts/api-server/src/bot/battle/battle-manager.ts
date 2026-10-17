@@ -67,6 +67,8 @@ import {
 } from "./status-hud.js";
 import { formatAchievementLine } from "./achievement-engine.js";
 import { rarityLabel, rarityEmoji, rarityColor, type RarityDisplayMap } from "../cards-data.js";
+import { frameColorModeOf, parseHexColor } from "./frame-color.js";
+import { buttonEmoji } from "../discord-emoji.js";
 import { getRarityContext, getRarityDisplayOverrides } from "../db.js";
 import { getCardDisplayRarity, BUILTIN_POSITIONS, effectiveRarityKey, rarityLadderRank, type RarityContext } from "../rarity-runtime.js";
 
@@ -863,8 +865,8 @@ async function beginCombat(rt: BattleRuntime) {
     // Classic / Off modes (or a failed GIF render): the static VS image.
     if (!rt.vsImage) {
       rt.vsImage = await renderBattleImage(
-        combatantToRenderCard(rt, rt.a),
-        combatantToRenderCard(rt, rt.b),
+        combatantToRenderCard(rt, rt.a, "a"),
+        combatantToRenderCard(rt, rt.b, "b"),
         { backgroundUrl: rt.battleBgUrl },
       ).catch(() => null);
       rt.vsImageIsGif = false;
@@ -1404,13 +1406,18 @@ const VS_IMAGE_NAME = "battle-vs.png";
 const VS_IMAGE_NAME_GIF = "battle-vs.gif";
 
 // Map a live Combatant to the renderer's card description.
-function combatantToRenderCard(rt: BattleRuntime, c: Combatant): RenderCard {
+function combatantToRenderCard(rt: BattleRuntime, c: Combatant, slot: "a" | "b" = c.side === 1 ? "b" : "a"): RenderCard {
   const display = c.cardRarityDisplay;
   return {
     name: c.cardName,
     rarity: c.cardRarity,
-    rarityLabel: display ? `${display.emoji} ${display.label}` : (rarityLabel(c.cardRarity, null, rt.displayMap) ?? c.cardRarity),
+    rarityLabel: display?.label ?? (rarityLabel(c.cardRarity, null, rt.displayMap) ?? c.cardRarity),
     rarityColor: display?.color ?? rarityColor(c.cardRarity, null, rt.displayMap),
+    accentEmoji: display?.emoji ?? rarityEmoji(c.cardRarity, null, rt.displayMap),
+    frameMode: frameColorModeOf(rt.settings.battleFrameColorMode),
+    frameColorA: parseHexColor(rt.settings.battleFrameColorA),
+    frameColorB: parseHexColor(rt.settings.battleFrameColorB),
+    frameSlot: slot,
     cardId: c.cardId,
     cardType: c.cardType,
     artUrl: c.cardImageUrl,
@@ -1436,8 +1443,8 @@ function buildAnimInput(
   const actor = actorSide === 0 ? rt.a! : rt.b!;
   const foe = actorSide === 0 ? rt.b! : rt.a!;
   return {
-    attacker: combatantToRenderCard(rt, actor),
-    defender: combatantToRenderCard(rt, foe),
+    attacker: combatantToRenderCard(rt, actor, actorSide === 0 ? "a" : "b"),
+    defender: combatantToRenderCard(rt, foe, actorSide === 0 ? "b" : "a"),
     attackerHp: Math.max(0, actor.hp),
     attackerMaxHp: actor.stats.maxHealth,
     defenderHp: Math.max(0, foe.hp),
@@ -1881,9 +1888,11 @@ function buildMoveComponents(rt: BattleRuntime, actor: Combatant): ActionRowBuil
   );
   const item = actor.item ?? getBattleItem(actor.itemId, rt.guildId);
   const itemLabel = item ? item.name.slice(0, 40) : "Use Item";
-  const itemEmoji = item?.emoji ?? "🎒";
+  const itemBtn = mk("item", itemLabel, "🎒", ButtonStyle.Success);
+  const itemGlyph = buttonEmoji(item?.emoji);
+  if (itemGlyph) itemBtn.setEmoji(itemGlyph);
   const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    mk("item", itemLabel, itemEmoji, ButtonStyle.Success),
+    itemBtn,
     mk("ultimate", "Ultimate", "💀", ButtonStyle.Danger),
     // Quick-view of THIS fighter's move set — a private floating popup you can
     // dismiss. Never disabled: it's read-only and doesn't spend the turn.

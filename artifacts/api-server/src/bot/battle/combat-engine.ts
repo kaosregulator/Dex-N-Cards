@@ -13,6 +13,7 @@ import { getEffectDef } from "./special-cards.js";
 import { getMoveset } from "./movesets.js";
 import { getBattleItem, applyItemEffect } from "./items.js";
 import { applyTurnStartPassive } from "./passives.js";
+import { sideCombatRules } from "./side-rules.js";
 
 // Apply a moveset's effect. Reuses the shared special-effects registry for the
 // common effects; "stealth" and "weaken" are combat-engine-native mechanics.
@@ -110,13 +111,17 @@ function strike(
   }
 
   // Miss / dodge (skipped for guaranteed-hit ultimates).
+  // Each fighter uses its own side's numbers. A blank side falls back to the
+  // shared rule, which is what both fighters used before the split.
   if (!opts.guaranteedHit) {
-    const missPct = Math.max(0, settings.missChancePct - attacker.stats.accuracy + 90);
+    const atkRules = sideCombatRules(settings, attacker.isAi);
+    const defRules = sideCombatRules(settings, defender.isAi);
+    const missPct = Math.max(0, atkRules.missChancePct - attacker.stats.accuracy + 90);
     if (chance(missPct)) {
       events.push({ text: `💨 **${attacker.cardName}**'s ${opts.label} misses!`, flash: "miss" });
       return { events, koed: false };
     }
-    const dodgePct = Math.min(70, defender.stats.dodge + defender.stats.luck / 4);
+    const dodgePct = Math.min(70, defender.stats.dodge - settings.dodgeChancePct + defRules.dodgeChancePct + defender.stats.luck / 4);
     if (chance(dodgePct)) {
       events.push({ text: `🌀 **${defender.cardName}** dodges the ${opts.label}!`, flash: "dodge" });
       maybeCounter(defender, attacker, settings, events);
@@ -137,8 +142,9 @@ function strike(
   const effDef = defender.stats.defense * (defender.defending ? 2 : 1);
   let dmg = rawAtk * (rawAtk / (rawAtk + effDef * 0.9));
 
-  // Critical hit.
-  const critPct = Math.min(80, attacker.stats.critChance + attacker.stats.luck / 3);
+  // Critical hit. The attacker's side shifts the derived crit the same way dodge does.
+  const atkCrit = sideCombatRules(settings, attacker.isAi);
+  const critPct = Math.min(80, attacker.stats.critChance - settings.critChancePct + atkCrit.critChancePct + attacker.stats.luck / 3);
   let crit = false;
   if (!opts.ultimate && chance(critPct)) {
     crit = true;

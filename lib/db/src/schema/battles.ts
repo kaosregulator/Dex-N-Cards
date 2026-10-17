@@ -55,6 +55,27 @@ export const battleSettingsTable = pgTable("battle_settings", {
   //             to a still so Discord does not replay the GIF
   //   gauges  — health bar plus Energy, Ultimate, and Shield circles
   battleStatusTheme: text("battle_status_theme").notNull().default("classic"),
+  // How battle card frames pick their colour.
+  //   image   — dominant colour of the whole card picture (default)
+  //   emoji   — colour sampled from that card's rarity emoji
+  //   custom  — two admin-picked colours blended across the frame
+  //   rainbow — a rainbow frame
+  battleFrameColorMode: text("battle_frame_color_mode").notNull().default("image"),
+  battleFrameColorA: text("battle_frame_color_a"),
+  battleFrameColorB: text("battle_frame_color_b"),
+  // Per-side combat rules. Null means "use the shared rule" so existing servers
+  // keep one number for both fighters until an admin sets a side.
+  userMissChancePct: integer("user_miss_chance_pct"),
+  userDodgeChancePct: integer("user_dodge_chance_pct"),
+  userCritChancePct: integer("user_crit_chance_pct"),
+  aiMissChancePct: integer("ai_miss_chance_pct"),
+  aiDodgeChancePct: integer("ai_dodge_chance_pct"),
+  aiCritChancePct: integer("ai_crit_chance_pct"),
+  aiAllowUltimate: boolean("ai_allow_ultimate").notNull().default(true),
+  aiAllowSpecial: boolean("ai_allow_special").notNull().default(true),
+  aiAllowItem: boolean("ai_allow_item").notNull().default(true),
+  aiAllowDefend: boolean("ai_allow_defend").notNull().default(true),
+  aiAllowCharge: boolean("ai_allow_charge").notNull().default(true),
   // ── Combat formula coefficients (all tunable) ────────────────────────────────
   hpBase: integer("hp_base").notNull().default(750),
   hpPerRarity: integer("hp_per_rarity").notNull().default(220),

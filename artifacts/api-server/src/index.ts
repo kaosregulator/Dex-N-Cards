@@ -234,6 +234,20 @@ async function runBootMigrations() {
   // from these boot statements. Without this one, /battle_admin selects a missing
   // column after deferReply and Discord shows the command as not responding.
   await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_status_theme text NOT NULL DEFAULT 'classic'`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_mode text NOT NULL DEFAULT 'image'`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_a text`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS battle_frame_color_b text`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_miss_chance_pct integer`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_dodge_chance_pct integer`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS user_crit_chance_pct integer`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_miss_chance_pct integer`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_dodge_chance_pct integer`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_crit_chance_pct integer`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_ultimate boolean NOT NULL DEFAULT true`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_special boolean NOT NULL DEFAULT true`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_item boolean NOT NULL DEFAULT true`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_defend boolean NOT NULL DEFAULT true`);
+  await pool.query(`ALTER TABLE battle_settings ADD COLUMN IF NOT EXISTS ai_allow_charge boolean NOT NULL DEFAULT true`);
   // Raid stats on battle_profiles (feed the /top Raid leaderboard). Self-healing.
   await pool.query(`ALTER TABLE battle_profiles ADD COLUMN IF NOT EXISTS raids_won integer NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE battle_profiles ADD COLUMN IF NOT EXISTS raids_lost integer NOT NULL DEFAULT 0`);
