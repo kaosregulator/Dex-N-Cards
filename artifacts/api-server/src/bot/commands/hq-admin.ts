@@ -34,6 +34,7 @@ import {
   SIEGE_MODES, SIEGE_LIMITS,
 } from "../hq/settings.js";
 import { getBattleSettings } from "../battle/config-engine.js";
+import { statusThemeLabel } from "../battle/status-hud.js";
 
 const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
 
@@ -101,7 +102,7 @@ async function buildServerPanel(guildId: string, notice?: string) {
       { name: "🎥 Opening film", value: cfg.intro ? "**On** — plays before the assault" : "**Off**", inline: true },
       { name: "⏱️ Turn clock", value: `**${cfg.turnSeconds}s**`, inline: true },
       { name: "🎒 Field items", value: `**${cfg.itemUses}** per assault`, inline: true },
-      { name: "🖼️ Turn visuals", value: `**${visualStyle}**\n_Style follows your \`/battle_admin\` animation settings._`, inline: true },
+      { name: "🖼️ Turn visuals", value: `**${visualStyle}**\n_Style follows your \`/battle_admin\` animation settings._\nStatus layout **${statusThemeLabel(battle?.battleStatusTheme)}**`, inline: true },
       { name: "🔁 Turn cap", value: `**${cfg.maxTurns}** turns`, inline: true },
     );
   if (cfg.mode === "turn" && battle && !battle.enabled) {

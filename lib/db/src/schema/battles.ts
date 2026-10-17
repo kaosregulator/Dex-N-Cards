@@ -48,6 +48,13 @@ export const battleSettingsTable = pgTable("battle_settings", {
   //   false = "Classic" cheap single-frame attack cards (the lighter, pre-arena
   //           style). Admins toggle Off → Classic → Animated via /battle_admin.
   battleSceneAnimated: boolean("battle_scene_animated").notNull().default(true),
+  // How the live HP / energy / ultimate block is drawn. The battle log embed
+  // stays the same in every mode.
+  //   classic — the original two text columns (default)
+  //   drain   — a picture scoreboard; the bar falls on a hit, holds, then locks
+  //             to a still so Discord does not replay the GIF
+  //   gauges  — health bar plus Energy, Ultimate, and Shield circles
+  battleStatusTheme: text("battle_status_theme").notNull().default("classic"),
   // ── Combat formula coefficients (all tunable) ────────────────────────────────
   hpBase: integer("hp_base").notNull().default(750),
   hpPerRarity: integer("hp_per_rarity").notNull().default(220),

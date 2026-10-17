@@ -25,6 +25,7 @@ import { progTierForFrameId } from "../cards/frames.js";
 import { getRarityContext } from "../db.js";
 import type { OwnedBattleCard } from "../battle/db.js";
 import { bar, WHITE_LINE } from "../battle/embeds.js";
+import { statusThemeOf, hudFighter, renderStatusStill, HUD_FILE_PNG } from "../battle/status-hud.js";
 import { starString } from "../cards/leveling.js";
 import { getStarRankMap } from "../cards/stars.js";
 import { toAbsoluteImageUrl } from "../image-url.js";
@@ -769,8 +770,16 @@ async function playRaidBeats(session: RaidSession, beats: RaidBeat[]): Promise<v
     }
 
     const files = image ? [new AttachmentBuilder(image, { name: RAID_ATTACK_FILE })] : [];
+    const hud = await raidStatusHud(session, beat.bossHp, beat.partyHp);
+    if (hud) files.push(hud.file);
+    const embeds = buildFightEmbeds(session, {
+      bossHp: beat.bossHp, partyHp: beat.partyHp,
+      attackFile: image ? RAID_ATTACK_FILE : undefined,
+      metersInImage: !!hud,
+    });
+    if (hud) embeds.splice(1, 0, hud.embed);
     await session.message.edit({
-      embeds: buildFightEmbeds(session, { bossHp: beat.bossHp, partyHp: beat.partyHp, attackFile: image ? RAID_ATTACK_FILE : undefined }),
+      embeds,
       components: [],
       files,
     }).catch(() => {});
@@ -1215,9 +1224,39 @@ async function refreshLobby(session: RaidSession): Promise<void> {
 // arena image). Same shape battles use, so it reads identically. When `opts`
 // carries HP snapshots + an attack image (during beat replay), the board shows
 // that historical moment plus the current attack frame instead of the arena.
+async function raidStatusHud(
+  session: RaidSession, bossHp: number, partyHp?: Record<string, number>,
+): Promise<{ embed: EmbedBuilder; file: AttachmentBuilder } | null> {
+  const theme = statusThemeOf(session.settings.battleStatusTheme);
+  const boss = session.bossCombatant;
+  if (theme === "classic" || !boss) return null;
+  const party = [...session.party.values()].filter(s => s.combatant).slice(0, 4);
+  const fighters = [
+    hudFighter(boss, { tag: "BOSS", tagTone: "boss", sub: "Boss", active: true, hp: bossHp }),
+    ...party.map(s => hudFighter(s.combatant!, {
+      tag: "PARTY",
+      tagTone: "you" as const,
+      sub: "",
+      hp: partyHp?.[s.member.userId] ?? s.combatant!.hp,
+      active: false,
+    })),
+  ];
+  const png = await renderStatusStill({
+    style: theme === "gauges" ? "gauges" : "drain",
+    headline: `ROUND ${session.roundNumber}`,
+    turnLabel: "RAID",
+    fighters,
+  }).catch(() => null);
+  if (!png) return null;
+  return {
+    embed: new EmbedBuilder().setColor(0xe74c3c).setDescription("❤️ **Boss and party**").setImage(`attachment://${HUD_FILE_PNG}`),
+    file: new AttachmentBuilder(png, { name: HUD_FILE_PNG }),
+  };
+}
+
 function buildFightEmbeds(
   session: RaidSession,
-  opts?: { bossHp?: number; partyHp?: Record<string, number>; attackFile?: string },
+  opts?: { bossHp?: number; partyHp?: Record<string, number>; attackFile?: string; metersInImage?: boolean },
 ): EmbedBuilder[] {
   const boss = session.bossCombatant!;
   const replaying = !!opts?.attackFile;
@@ -1239,14 +1278,18 @@ function buildFightEmbeds(
     .setTitle(`🐉 ${boss.cardName}`)
     .setColor(0xe74c3c)
     .setDescription(
-      `**Boss HP**\n${bar(bossHp, boss.stats.maxHealth, 16)}  **${bossHp.toLocaleString()}** / ${boss.stats.maxHealth.toLocaleString()} HP (${hpPct}%)` +
-      (boss.status.length ? `\n${boss.status.map(s => `${s.emoji} ${s.label} (${s.turns})`).join(" ")}` : ""),
+      opts?.metersInImage
+        ? `**${boss.cardName}** · **${bossHp.toLocaleString()}** / ${boss.stats.maxHealth.toLocaleString()} HP (${hpPct}%)` +
+          (boss.status.length ? `\n${boss.status.map(s => `${s.emoji} ${s.label} (${s.turns})`).join(" ")}` : "")
+        : `**Boss HP**\n${bar(bossHp, boss.stats.maxHealth, 16)}  **${bossHp.toLocaleString()}** / ${boss.stats.maxHealth.toLocaleString()} HP (${hpPct}%)` +
+          (boss.status.length ? `\n${boss.status.map(s => `${s.emoji} ${s.label} (${s.turns})`).join(" ")}` : ""),
     );
   const partyLines = [...session.party.values()].map(s => {
     const c = s.combatant!;
     const hp = opts?.partyHp?.[s.member.userId] ?? c.hp;
     const acted = !replaying && session.pendingActions.has(s.member.userId) ? " ✅" : "";
     if (hp <= 0) return `💀 <@${s.member.userId}> **${c.cardName}** — *downed*`;
+    if (opts?.metersInImage) return `❤️ <@${s.member.userId}> **${c.cardName}**${acted} — ${hp}/${c.stats.maxHealth}`;
     const shield = c.shield > 0 ? ` 🛡️${c.shield}` : "";
     return `❤️ <@${s.member.userId}> **${c.cardName}**${acted}\n${bar(hp, c.stats.maxHealth, 10)} ${hp}/${c.stats.maxHealth}${shield} · ⚡${c.energy}`;
   });
@@ -1290,10 +1333,17 @@ function buildFightComponents(session: RaidSession): ActionRowBuilder<ButtonBuil
 
 async function renderFight(session: RaidSession): Promise<void> {
   if (!session.message) return;
+  const fresh = await getBattleSettings(session.guildId).catch(() => null);
+  if (fresh) session.settings = { ...session.settings, battleStatusTheme: fresh.battleStatusTheme };
   const files = session.introImage
     ? [new AttachmentBuilder(session.introImage, { name: RAID_INTRO_FILE })]
     : [];
-  await session.message.edit({ embeds: buildFightEmbeds(session), components: buildFightComponents(session), files }).catch(() => {});
+  const bossHp = Math.max(0, session.bossCombatant?.hp ?? 0);
+  const hud = await raidStatusHud(session, bossHp);
+  if (hud) files.push(hud.file);
+  const embeds = buildFightEmbeds(session, { metersInImage: !!hud });
+  if (hud) embeds.splice(1, 0, hud.embed);
+  await session.message.edit({ embeds, components: buildFightComponents(session), files }).catch(() => {});
 }
 
 function buildEndEmbed(

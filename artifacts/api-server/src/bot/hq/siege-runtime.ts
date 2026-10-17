@@ -26,6 +26,8 @@ import type { Combatant, MoveType, AiDifficulty } from "../battle/types.js";
 import { availableMoves } from "../battle/combat-engine.js";
 import { powerRating } from "../battle/stat-engine.js";
 import { WHITE_LINE } from "../battle/embeds.js";
+import { getBattleSettings } from "../battle/config-engine.js";
+import { statusThemeOf, hudFighter, renderStatusStill, HUD_FILE_PNG } from "../battle/status-hud.js";
 import { getMoveset } from "../battle/movesets.js";
 import {
   listBattleItems, getBattleItem, loadGuildBattleItems, applyItemUse, isOffensiveItem,
@@ -1907,10 +1909,39 @@ async function render(s: SiegeSession, opts?: { currentMove?: string; turnEndsAt
   // Ping the commander only at the START of their turn (the render that arms the
   // turn clock), so they get exactly one notification per turn instead of one
   // per intermediate re-render.
+  const embeds: EmbedBuilder[] = [battleEmbed];
+  if (s.phase === "assault") {
+    const fresh = await getBattleSettings(s.guildId).catch(() => null);
+    const theme = statusThemeOf(fresh?.battleStatusTheme ?? s.settings.battleStatusTheme);
+    if (theme !== "classic") {
+      const sides = [active(s, 0), active(s, 1)];
+      const fighters = sides.flatMap((c, i) => c ? [hudFighter(c, {
+        tag: i === 0 ? "YOU" : "FOE",
+        tagTone: i === 0 ? "you" : "foe",
+        sub: i === 0 ? s.attackerName : s.targetName,
+        active: s.currentSide === i,
+      })] : []);
+      if (fighters.length) {
+        const png = await renderStatusStill({
+          style: theme === "gauges" ? "gauges" : "drain",
+          headline: s.currentSide === 0 ? "YOUR MOVE" : "GARRISON",
+          turnLabel: `TURN ${s.turnNumber}`,
+          fighters,
+        }).catch(() => null);
+        if (png) {
+          files.push(new AttachmentBuilder(png, { name: HUD_FILE_PNG }));
+          embeds.push(new EmbedBuilder().setColor(s.accent)
+            .setDescription(s.currentSide === 0 ? "🔹 **Your move**" : "🛡️ **Garrison's move**")
+            .setImage(`attachment://${HUD_FILE_PNG}`));
+        }
+      }
+    }
+  }
+  embeds.push(buildTurnStripEmbed(s, opts));
   const ping = opts?.turnEndsAt && s.currentSide === 0 && s.phase === "assault";
   const payload = {
     content: ping ? `<@${s.starterId}>` : "",
-    embeds: [battleEmbed, buildTurnStripEmbed(s, opts)],
+    embeds,
     components: buildControls(s),
     files,
     allowedMentions: { users: ping ? [s.starterId] : [] },
