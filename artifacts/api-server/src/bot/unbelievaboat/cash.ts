@@ -52,21 +52,24 @@ export async function spendFunds(
   userId: string,
   amount: number,
   reason: string,
+  opts?: { cashOnly?: boolean },
 ): Promise<SpendBreakdown> {
   if (amount <= 0) throw new CashError("Amount must be positive.");
   const { ubGuildId, symbol } = await requireEconomy(guildId);
   const bal = await ubApi.getUserBalance(ubGuildId, userId);
   const cash = bal.cash ?? 0;
   const bank = bal.bank ?? 0;
-  const total = cash + bank;
+  const total = opts?.cashOnly ? cash : cash + bank;
   if (total < amount) {
     throw new CashError(
-      `Not enough UnbelievaBoat funds. Need **${fmtCash(amount)}** ${symbol}, ` +
-      `have **${fmtCash(cash)}** cash + **${fmtCash(bank)}** bank = **${fmtCash(total)}**.`,
+      opts?.cashOnly
+        ? `Not enough cash. Need **${fmtCash(amount)}** ${symbol}, have **${fmtCash(cash)}** cash. Bank is not used for this bet.`
+        : `Not enough UnbelievaBoat funds. Need **${fmtCash(amount)}** ${symbol}, ` +
+          `have **${fmtCash(cash)}** cash + **${fmtCash(bank)}** bank = **${fmtCash(total)}**.`,
     );
   }
   const fromCash = Math.min(cash, amount);
-  const fromBank = amount - fromCash;
+  const fromBank = opts?.cashOnly ? 0 : amount - fromCash;
   const patch: { cash?: number; bank?: number; reason: string } = { reason };
   if (fromCash > 0) patch.cash = -fromCash;
   if (fromBank > 0) patch.bank = -fromBank;

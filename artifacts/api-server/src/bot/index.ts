@@ -484,6 +484,11 @@ export async function startBot() {
         await handleRobloxCreateButton(interaction);
         return;
       }
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith("rbxcreate:")) {
+        const { handleRobloxCreateSelect } = await import("./commands/roblox-cards.js");
+        await handleRobloxCreateSelect(interaction);
+        return;
+      }
       // ── Vault batch create (vaultbatch:*) ──────────────────────────────────
       if (interaction.isButton() && interaction.customId.startsWith("vaultbatch:")) {
         const { handleVaultBatchButton } = await import("./commands/vault-batch.js");

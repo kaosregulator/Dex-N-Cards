@@ -200,13 +200,29 @@ export async function handleUbPrefixCommand(msg: Message, gamesPrefix: string): 
       return true;
     }
     if (cmd === "roulette") {
-      const bet = parseBet(args[0]);
-      if (!bet) { await msg.reply(`Usage: \`${gamesPrefix}roulette <bet> [red|black|green]\``); return true; }
+      const stake = parseAmountToken(args[0]);
       const color = args[1]?.toLowerCase();
+      if (stake === null) {
+        await msg.reply(`Usage: \`${gamesPrefix}roul all\` or \`${gamesPrefix}roulette <bet> [red|black|green]\``);
+        return true;
+      }
+      let bet = stake === "all" ? 0 : stake;
+      let cashOnly = false;
+      if (stake === "all") {
+        const { getCashBalance } = await import("./cash.js");
+        const bal = await getCashBalance(msg.guild.id, msg.author.id);
+        bet = Math.floor(bal.cash ?? 0);
+        cashOnly = true;
+        if (bet <= 0) {
+          await msg.reply(`No cash to bet. \`${gamesPrefix}roul all\` uses cash only — bank stays put.`);
+          return true;
+        }
+      }
       const { handleRoulette } = await import("./live-roulette.js");
       await run(handleRoulette, {
         integers: { bet },
-        strings: { color: color ?? null },
+        strings: { color: color && ["red", "black", "green"].includes(color) ? color : null },
+        booleans: { cash_only: cashOnly },
       });
       return true;
     }

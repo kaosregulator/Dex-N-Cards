@@ -51,7 +51,6 @@ export const codeBreakGame: MiniGameDefinition = {
       cardName: session.card.name,
       rarityLabel: session.rarityLabel,
       rarityColor: session.rarityColor,
-      hideCardArt: true,
       cardBadge: "LOCKED",
     }, {
       animateIntro: true,

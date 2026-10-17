@@ -70,6 +70,72 @@ export function looksLikeCompleteUsername(q: string): boolean {
   return /^[A-Za-z0-9_]{3,20}$/.test(q);
 }
 
+/**
+ * Bloxlink writes the Roblox name into the Discord nickname.
+ * This only prepares that string — it does not call Roblox.
+ */
+export function robloxSearchName(
+  nickname: string | null | undefined,
+  displayName: string | null | undefined,
+  username?: string | null,
+): string {
+  const nick = nickname?.trim();
+  const base = (nick || displayName?.trim() || username?.trim() || "").replace(/^@/, "");
+  return base.replace(/\s+/g, " ").trim().slice(0, 50);
+}
+
+export type RoleSearchSource = {
+  id: string;
+  bot?: boolean;
+  nickname?: string | null;
+  displayName?: string | null;
+  username?: string | null;
+};
+
+/** One Discord member whose nickname is a Roblox search, not yet fetched. */
+export type RoleSearchEntry = {
+  id: string;
+  query: string;
+  label: string;
+  discord: string;
+};
+
+/** Build the ready-to-search list. Skips bots and names shorter than 2 characters. */
+export function roleSearchEntries(members: RoleSearchSource[]): RoleSearchEntry[] {
+  const out: RoleSearchEntry[] = [];
+  for (const m of members) {
+    if (m.bot) continue;
+    const query = robloxSearchName(m.nickname, m.displayName, m.username);
+    if (query.length < 2) continue;
+    out.push({
+      id: m.id,
+      query,
+      label: (m.nickname?.trim() || m.displayName?.trim() || query).replace(/^@/, "").slice(0, 80),
+      discord: (m.username ?? "").replace(/^@/, "").slice(0, 32),
+    });
+  }
+  out.sort((a, b) => a.query.localeCompare(b.query, undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id));
+  return out;
+}
+
+/**
+ * Username exact-match wins (Bloxlink writes the Roblox username).
+ * One exact hit can open a preview immediately. Anything else stays a picker.
+ */
+export function readyRobloxHits(
+  hits: RobloxSearchHit[],
+  query: string,
+): { auto: RobloxSearchHit | null; choices: RobloxSearchHit[] } {
+  const q = query.trim().toLowerCase();
+  const byName = hits.filter(h => h.name.toLowerCase() === q);
+  if (byName.length === 1) return { auto: byName[0]!, choices: byName };
+  if (byName.length > 1) return { auto: null, choices: byName };
+  const byDisplay = hits.filter(h => h.displayName.toLowerCase() === q);
+  if (byDisplay.length === 1) return { auto: byDisplay[0]!, choices: byDisplay };
+  if (byDisplay.length > 1) return { auto: null, choices: byDisplay };
+  return { auto: null, choices: hits };
+}
+
 export function rankSearchHits(hits: RobloxSearchHit[], q: string): RobloxSearchHit[] {
   const needle = q.toLowerCase();
   const scoreOf = (hit: RobloxSearchHit) => {

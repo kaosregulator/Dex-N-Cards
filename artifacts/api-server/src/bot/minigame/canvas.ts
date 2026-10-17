@@ -28,7 +28,7 @@ import type { AnimationSpeed } from "../animations/types.js";
 import type { Rarity } from "../cards-data.js";
 import { logger } from "../../lib/logger.js";
 
-export const MG_CANVAS = { width: 1000, height: 560 } as const;
+export const MG_CANVAS = { width: 920, height: 500 } as const;
 export const MG_FILE = "minigame.png";
 export const MG_GIF_FILE = "minigame.gif";
 export const MG_MEMORY_FILE = "minigame-memory.png";
@@ -97,7 +97,7 @@ async function paint(ctx: Ctx, mod: CanvasMod, spec: MiniGameScreenSpec, anim: P
   });
 
   // Dark inner panel with an accent left-edge bar (the mockup "embed" body).
-  const px = 26, py = 26, pw = width - 52, ph = height - 52;
+  const px = 14, py = 14, pw = width - 28, ph = height - 28;
   ctx.save();
   roundRectPath(ctx, px, py, pw, ph, 20);
   ctx.fillStyle = "rgba(10,11,15,0.82)";
@@ -110,7 +110,7 @@ async function paint(ctx: Ctx, mod: CanvasMod, spec: MiniGameScreenSpec, anim: P
   ctx.restore();
 
   // ── Card on the right ──────────────────────────────────────────────────────
-  const cw = 300, ch = 420, cx0 = width - cw - 70, cy = (height - ch) / 2;
+  const cw = 248, ch = 348, cx0 = width - cw - 36, cy = (height - ch) / 2 - 8;
   const cx = cx0 + (anim.cardShiftX ?? 0);
   // Motion streaks trailing the escaping card (drawn behind it).
   if (anim.speedLines) {
@@ -152,12 +152,12 @@ async function paint(ctx: Ctx, mod: CanvasMod, spec: MiniGameScreenSpec, anim: P
     fitText(ctx, drawSafe(spec.cardName), cw + 40, 22, 12, TITLE_FONT), "center", TITLE_FONT);
 
   // ── Left column ────────────────────────────────────────────────────────────
-  const lx = 62;
-  let ly = 96;
+  const lx = 44;
+  let ly = 72;
   // Title (accent word + white tail), scaled to fit the left half.
   const titleText = drawSafe(spec.title);
   const titleTail = spec.titleTail ? drawSafe(spec.titleTail) : "";
-  const titleSize = fitText(ctx, `${titleText} ${titleTail}`, 500, 52, 24, TITLE_FONT);
+  const titleSize = fitText(ctx, `${titleText} ${titleTail}`, 460, 44, 22, TITLE_FONT);
   drawTitle(ctx, titleText, lx, ly, hexToRgba(accent, 1), titleSize, "left");
   if (titleTail) {
     ctx.save();
@@ -176,15 +176,15 @@ async function paint(ctx: Ctx, mod: CanvasMod, spec: MiniGameScreenSpec, anim: P
   ctx.save();
   ctx.strokeStyle = hexToRgba(accent, 0.6);
   ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 380, ly); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 340, ly); ctx.stroke();
   ctx.restore();
-  drawTitle(ctx, "★", lx + 190, ly, hexToRgba(accent, 1), 20);
-  ly += 40;
+  drawTitle(ctx, "★", lx + 170, ly, hexToRgba(accent, 1), 18);
+  ly += 32;
 
   // Prompt lines.
   for (const line of spec.lines.slice(0, 5)) {
-    drawTextWithShadow(ctx, drawSafe(line), lx, ly, "#e8ebf0", 22, "left");
-    ly += 34;
+    drawTextWithShadow(ctx, drawSafe(line), lx, ly, "#e8ebf0", 20, "left");
+    ly += 28;
   }
 
   // Status box.
@@ -308,7 +308,7 @@ export async function renderMemoryBoard(input: MemoryBoardInput): Promise<Buffer
       const cols = input.cols;
       const rows = Math.ceil(n / cols);
       const gap = 22;
-      const areaTop = 104, areaBottom = height - 28;
+      const areaTop = 96, areaBottom = height - 40;
       const availH = areaBottom - areaTop;
       const ch = Math.min(190, Math.floor((availH - (rows - 1) * gap) / rows));
       const cw = Math.round(ch * 0.72);

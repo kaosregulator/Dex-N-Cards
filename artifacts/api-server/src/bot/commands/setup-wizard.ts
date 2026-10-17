@@ -152,7 +152,7 @@ export async function handleSetupButton(interaction: ButtonInteraction): Promise
             `Drops are live in <#${settings.spawnChannelId}>.\n\n` +
             `**👈 What to do next**\n` +
             `• **Welcome board:** \`/setup\` → **Channels** → **Post welcome board**, or \`/welcome\` in the info channel\n` +
-            `• **Add your own cards:** \`/add_card\` with an image, \`/create_card_from_roblox\` for a Roblox avatar, \`/create_card_from_mttv\` for one Vault item, or \`/create_cards_from_mttv\` to batch up to 5\n` +
+            `• **Add your own cards:** \`/add_card\` with an image, \`/create_card_from_roblox\` for a Roblox avatar or a Bloxlink role, \`/create_card_from_mttv\` for one Vault item, or \`/create_cards_from_mttv\` to batch up to 5\n` +
             `• **Test drops:** \`/drop\` (force one) · \`/mass_drop\` (batch)\n` +
             `• **Players need help?** \`/help\` (admins: open the **Admin** topic)\n\n` +
             `Re-open anytime: \`${settings.commandPrefix}setup\` or \`/setup\``,
