@@ -27,8 +27,9 @@ import type { Ctx as AnimCtx } from "../../animations/engine.js";
 import { extractArtColor, blendColors } from "./vibrant-color.js";
 import { stampCardAccent } from "../frame-color.js";
 import { applyRarityAccent } from "../../animations/card-frames.js";
-import { canvasSafeText } from "../../discord-emoji.js";
+import { canvasPaintableText } from "../../discord-emoji.js";
 import { registerCanvasSans, CANVAS_SANS_STACK } from "../../canvas-fonts.js";
+import { measureCustomEmojiText, segmentCustomEmoji, warmCanvasText } from "../../unbelievaboat/canvas-emoji-text.js";
 import { loadArt as loadSharedArt, BACKDROP_MAX_EDGE, CARD_ART_MAX_EDGE } from "../../animations/effects.js";
 
 // The minimal card description the renderer needs. Decoupled from Combatant so
@@ -87,6 +88,7 @@ async function getCanvas(): Promise<CanvasMod | null> {
   if (_canvas !== undefined) return _canvas;
   try {
     _canvas = await import("@napi-rs/canvas");
+    try { await import("../../unbelievaboat/canvas-emoji-text.js"); } catch { /* painter optional */ }
     registerFonts(_canvas);
   } catch {
     _canvas = null; // not installed — callers fall back to the plain embed
@@ -129,6 +131,16 @@ async function loadArt(
 // Family string with graceful fallback to system sans.
 function font(px: number, family: string, weight = "700") {
   return `${weight} ${px}px "${family}", ${CANVAS_SANS_STACK}`;
+}
+
+function badgeLabel(raw: string): string {
+  return segmentCustomEmoji(canvasPaintableText(raw))
+    .map(seg => seg.kind === "text" ? seg.value.toUpperCase() : seg.value)
+    .join("");
+}
+
+function cardGlyphs(card: RenderCard): Array<string | null | undefined> {
+  return [card.name, card.series, card.rarityLabel, card.special, card.accentEmoji];
 }
 
 const RAINBOW_STOPS = ["#ff4d4d", "#ff9f1a", "#ffe14d", "#3ddc6a", "#3dc6ff", "#7a5cff", "#ff4fd8"];
@@ -311,8 +323,8 @@ function layerRarityBadge(ctx: Ctx, x: number, card: RenderCard, color: string) 
   const rightX = x + CARD_BOX.width - CARD_BOX.borderWidth - 10;
   const y = CARD_BOX.y + CARD_BOX.borderWidth + 10;
   ctx.font = font(15, FONTS.body, "800");
-  const label = canvasSafeText(card.rarityLabel).toUpperCase();
-  const w = Math.max(64, ctx.measureText(label).width + 20);
+  const label = badgeLabel(card.rarityLabel);
+  const w = Math.max(64, measureCustomEmojiText(ctx, label) + 20);
   ctx.fillStyle = RARITY_BADGE_BG;
   roundRectPath(ctx, rightX - w, y, w, 26, 6);
   ctx.fill();
@@ -511,6 +523,7 @@ export async function renderBattleImage(
   const mod = await getCanvas();
   if (!mod) return null;
   try {
+    await warmCanvasText(mod, [...cardGlyphs(a), ...cardGlyphs(b), combat?.moveName]);
     // Pull dominant colours from each card's art so the glows, frames, and
     // background gradient match the artwork. Vibrant extraction is cached.
     const [stampedA, stampedB] = await Promise.all([
@@ -600,8 +613,8 @@ async function drawBigCard(
   // rarity badge top-right
   const rx = gx + gw - border - 10, ry = gy + border + 10;
   ctx.font = font(16, FONTS.body, "800");
-  const label = canvasSafeText(card.rarityLabel).toUpperCase();
-  const bw = Math.max(70, ctx.measureText(label).width + 22);
+  const label = badgeLabel(card.rarityLabel);
+  const bw = Math.max(70, measureCustomEmojiText(ctx, label) + 22);
   ctx.fillStyle = RARITY_BADGE_BG; roundRectPath(ctx, rx - bw, ry, bw, 28, 6); ctx.fill();
   ctx.lineWidth = 1.5; ctx.strokeStyle = color; ctx.stroke();
   ctx.fillStyle = RARITY_BADGE_FG; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -661,6 +674,7 @@ export async function renderWinnerImage(card: RenderCard, opts: RenderOpts = {})
   const mod = await getCanvas();
   if (!mod) return null;
   try {
+    await warmCanvasText(mod, cardGlyphs(card));
     const canvas = mod.createCanvas(CANVAS.width, CANVAS.height);
     const ctx = canvas.getContext("2d") as unknown as Ctx;
     await layerBackground(ctx, mod, opts);
@@ -744,6 +758,7 @@ export async function renderShowcaseImage(card: RenderCard, opts: ShowcaseOpts =
   const mod = await getCanvas();
   if (!mod) return null;
   try {
+    await warmCanvasText(mod, cardGlyphs(card));
     const { width: W } = CANVAS;
     const canvas = mod.createCanvas(W, CANVAS.height);
     const ctx = canvas.getContext("2d") as unknown as Ctx;

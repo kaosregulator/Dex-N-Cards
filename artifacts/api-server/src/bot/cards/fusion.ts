@@ -426,7 +426,7 @@ export async function renderFusionAnimation(
         }
       }
 
-      // Header + payoff text. (Canvas font has no emoji glyphs — keep it text.)
+      // Header + payoff text. Stars use the shared symbol font.
       drawTextWithShadow(ctx, "CARD FUSION", cx, 30, hexToRgba(color, 1), 16);
       drawTextWithShadow(ctx, entry.name, cx, 54, "#ffffff", 24);
       if (burst > 0.25) {

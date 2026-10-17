@@ -48,3 +48,14 @@ export function canvasSafeText(text: string): string {
     return safeEmojiName(name) === "emoji" && (name === "_" || name.length < 2) ? "" : safeEmojiName(name);
   }).replace(/\s{2,}/g, " ").trim();
 }
+
+/**
+ * Text for the canvas painter. Real `<:name:id>` markup stays so the image
+ * drawer can paint the custom emoji. A broken `_` placeholder is dropped.
+ */
+export function canvasPaintableText(text: string): string {
+  return text.replace(CUSTOM_GLOBAL, (all, _animated, name: string) => {
+    if (!name || name === "_" || name.length < 2) return "";
+    return all;
+  }).replace(/\s{2,}/g, " ").trim();
+}

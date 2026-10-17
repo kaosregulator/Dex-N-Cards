@@ -65,13 +65,10 @@ export function seededRng(seed: number): () => number {
   };
 }
 
-// Canvas text has no emoji font available (the bundled pack is Orbitron plus the
-// system sans), so an emoji drawn onto a canvas renders as a tofu box. Anything
-// painted into an image goes through this first; emoji stay in the Discord embed
-// text, where the client renders them properly.
-const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{1F1E6}-\u{1F1FF}\u{200D}\u{20E3}\u{2190}-\u{21FF}\u{2300}-\u{23FF}]/gu;
+// Keeps emoji in canvas labels. The shared font hook draws unicode emoji, and
+// the text painter draws Discord custom emoji once their images are warmed.
 export function stripEmoji(s: string): string {
-  return s.replace(EMOJI_RE, "").replace(/\s{2,}/g, " ").trim();
+  return s.replace(/\s{2,}/g, " ").trim();
 }
 
 export function hashString(s: string): number {

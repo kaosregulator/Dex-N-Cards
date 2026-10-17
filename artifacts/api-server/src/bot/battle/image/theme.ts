@@ -114,8 +114,9 @@ export function resolveFrameAsset(rarity: Rarity): FrameAsset | null {
 }
 
 // ── Element icons (modular — maps card type → drawn glyph) ────────────────────
-// Canvas can't render Discord custom emojis, so each element is a small drawn
-// icon: a coloured disc + a unicode glyph. Add a type by adding an entry.
+// Each element is a coloured disc plus a unicode glyph. Those glyphs use the
+// shared symbol font. Discord custom emoji in names and rarity labels is drawn
+// from the emoji image cache. Add a type by adding an entry.
 export interface ElementIcon {
   glyph: string;    // unicode drawn in the disc
   disc: string;     // disc fill colour

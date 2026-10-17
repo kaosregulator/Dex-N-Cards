@@ -44,7 +44,7 @@ export interface WildEncounterInput {
   menuLabels?: string[];          // the shuffled joke options shown in the menu box
 }
 
-// ── Bundled pixel-art assets (resolved like animations/arena-bg.ts) ───────────
+// ── Bundled pixel-art assets ──────────────────────────────────────────────────
 let _assetsDir: string | null | undefined;
 function assetsDir(): string | null {
   if (_assetsDir !== undefined) return _assetsDir;
@@ -71,7 +71,7 @@ function localImg(mod: CanvasMod, name: string): Promise<Img | null> {
 }
 
 function safe(s: string): string {
-  return s.replace(/[\u{1F000}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{2190}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, "").replace(/\s{2,}/g, " ").trim();
+  return s.replace(/\s{2,}/g, " ").trim();
 }
 
 // Crisp pixel-font text with a 2px drop shadow (no heavy outline — keeps the

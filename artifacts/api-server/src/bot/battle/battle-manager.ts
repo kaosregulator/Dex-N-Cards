@@ -25,8 +25,6 @@ import { renderBattleImage, type RenderCard } from "./image/render.js";
 import { renderAttackFrame, renderBattleVictory, renderBattleTurn, renderBattleIdle } from "../animations/index.js";
 import { withGuildFrames } from "../animations/card-frames.js";
 import type { BattleAnimationInput } from "../animations/index.js";
-import { DEFAULT_SCENE_ARENA, isSceneArenaKey, SCENE_ARENAS, SCENE_ARENA_KEYS, sceneArenaLabel } from "./scene-arenas.js";
-import { arenaAssetsAvailable } from "../animations/arena-bg.js";
 import { computeMoveVisual } from "./turn-visual.js";
 import { renderFatalityCinematic } from "../animations/cinematic/index.js";
 import type { AnimationSpeed } from "../animations/types.js";
@@ -176,10 +174,6 @@ interface BattleRuntime {
   // the themed gradient). Reused by every combat frame so the battlefield never
   // changes mid-fight — keeping the VS→combat→result sequence continuous.
   battleBgUrl: string | null;
-  // The pickable VISUAL arena (animated pixel-art backdrop, see scene-arenas.ts)
-  // for this fight's animated scene. Chosen by the challenger at setup; drives
-  // renderBattleTurn/Idle `background`. null → procedural fallback.
-  sceneArenaKey: string | null;
   // True once vsImage holds an animated GIF (victory / fatality cinematic) rather
   // than a static PNG — Discord only animates an embed image whose ATTACHMENT
   // FILENAME ends in .gif, so the end-screen attach must match.
@@ -401,7 +395,7 @@ export async function startChallenge(
     displayMap,
     ctx,
     cardFrames: guildSettings ? assignedFrameColors(guildSettings as unknown as Record<string, unknown>) : {},
-    vsImage: null, battleBgUrl: null, sceneArenaKey: null, vsImageIsGif: false, fatality: null,
+    vsImage: null, battleBgUrl: null, vsImageIsGif: false, fatality: null,
     hudShown: null, hudGen: 0, hudSettle: null, hudSnapshot: null,
   };
   battles.set(id, rt);
@@ -472,7 +466,6 @@ export async function handleBattleComponent(
       switch (action) {
         case "pcard": return void await onSelectCard(rt, interaction);
         case "pitem": return void await onSelectItem(rt, interaction);
-        case "arena": return void await onPickArena(rt, interaction);
         default: return void await safeEphemeral(interaction, "Unknown selection.");
       }
     }
@@ -858,11 +851,8 @@ async function beginCombat(rt: BattleRuntime) {
     rt.battleBgUrl = backgrounds.length
       ? toAbsoluteImageUrl(backgrounds[Math.floor(Math.random() * backgrounds.length)]!)
       : null;
-    // Default the visual arena if the challenger didn't pick one at setup.
-    if (!isSceneArenaKey(rt.sceneArenaKey)) rt.sceneArenaKey = DEFAULT_SCENE_ARENA;
-    // Animated "arena scene" mode only: a looping battlefield (both cards + the
-    // chosen arena) that stays alive between turns because Discord loops the GIF.
-    // Classic / Off modes use the cheap static VS image below.
+    // Animated mode is the card GIF (idle, strikes, victory) over the admin
+    // image when one is set, otherwise the gradient. Classic stays a still.
     if (sceneAnimated(rt)) {
       const idle = await withGuildFrames(await getOrCreateGuildSettings(rt.guildId).catch(() => null), () => renderBattleIdle(
         buildAnimInput(rt, 0), rt.settings.battleAnimationSpeed as AnimationSpeed,
@@ -1212,7 +1202,7 @@ async function finishBattle(rt: BattleRuntime, winnerSide: 0 | 1 | null, reason:
     const victory = await withGuildFrames(await getOrCreateGuildSettings(rt.guildId).catch(() => null), () => renderBattleVictory({
       winner: combatantToRenderCard(rt, w),
       loser: combatantToRenderCard(rt, winnerSide === 0 ? lb : la),
-      background: rt.sceneArenaKey,
+      backgroundImage: rt.battleBgUrl,
     }, rt.settings.battleAnimationSpeed as AnimationSpeed)).catch(() => null);
     if (victory) { rt.vsImage = victory.buffer; rt.vsImageIsGif = true; }
   }
@@ -1473,14 +1463,12 @@ function buildAnimInput(
     moveName: move?.moveName ?? "",
     attackerWon: move?.ended ?? false,
     defenderWon: false,
-    background: rt.sceneArenaKey,
+    backgroundImage: rt.battleBgUrl,
   };
 }
 
-// True when this fight uses the heavy ANIMATED arena scene (both cards dashing
-// over a looping backdrop). Requires the master GIF switch AND the arena-scene
-// style. When false the fight is either CLASSIC (cheap single-frame attack
-// cards) or fully static — both far lighter to render.
+// True when this fight plays the animated card GIF. The backdrop is the admin
+// image for the fight, or the gradient when the server has not uploaded one.
 function sceneAnimated(rt: BattleRuntime): boolean {
   return rt.settings.battleAnimationEnabled && rt.settings.battleSceneAnimated;
 }
@@ -1727,44 +1715,16 @@ function buildPrepEmbed(rt: BattleRuntime): EmbedBuilder {
   if (rt.settings.stakingEnabled && !rt.isAi) {
     e.addFields({ name: "💰 Staking", value: "If **both** players stake, the winner takes the loser's card!", inline: false });
   }
-  if (arenaAssetsAvailable()) {
-    e.addFields({ name: "🌌 Battlefield", value: `${sceneArenaLabel(rt.sceneArenaKey ?? DEFAULT_SCENE_ARENA)} — challenger picks below.`, inline: false });
-  }
   return e;
 }
 
 function buildPrepSharedComponents(rt: BattleRuntime): ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] {
   const rows: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
-  // Battlefield backdrop picker (challenger chooses the animated arena for this
-  // fight). Only shown when the bundled arena assets are present.
-  if (arenaAssetsAvailable()) {
-    const current = rt.sceneArenaKey ?? DEFAULT_SCENE_ARENA;
-    const arenaSelect = new StringSelectMenuBuilder()
-      .setCustomId(`battle:arena:${rt.id}`)
-      .setPlaceholder("🌌 Choose the battlefield")
-      .addOptions(SCENE_ARENA_KEYS.map(k => ({
-        label: SCENE_ARENAS[k]!.name,
-        value: k,
-        emoji: SCENE_ARENAS[k]!.emoji,
-        default: k === current,
-      })));
-    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(arenaSelect));
-  }
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`battle:prep:${rt.id}`).setLabel("Prepare").setEmoji("🎴").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`battle:cancel:${rt.id}`).setLabel("Cancel").setStyle(ButtonStyle.Secondary),
   ));
   return rows;
-}
-
-// Challenger-only: set the animated battlefield backdrop for this fight.
-async function onPickArena(rt: BattleRuntime, interaction: StringSelectMenuInteraction) {
-  if (interaction.user.id !== rt.challengerId) {
-    return safeEphemeral(interaction, "Only the challenger picks the battlefield.");
-  }
-  const key = interaction.values[0];
-  if (isSceneArenaKey(key)) rt.sceneArenaKey = key;
-  await interaction.update({ embeds: [buildPrepEmbed(rt)], components: buildPrepSharedComponents(rt) }).catch(() => {});
 }
 
 function buildPersonalPrepEmbed(rt: BattleRuntime, userId: string): EmbedBuilder {

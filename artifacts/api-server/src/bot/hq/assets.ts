@@ -8,9 +8,8 @@
 // pack (Military, Anime, Fantasy, …) replace the procedural look with zero code
 // changes, and it means Phase 1 ships with no art at all.
 //
-// Directory resolution copies the dev/prod pattern from
-// animations/arena-bg.ts:resolveArenasDir (assets ship from the repo tree, not
-// the esbuild bundle, so cwd-relative fallbacks carry production).
+// Directory resolution tries the source tree and cwd (assets ship from the
+// repo tree, not the esbuild bundle, so cwd-relative fallbacks carry production).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync, readFileSync } from "node:fs";
@@ -146,7 +145,7 @@ export function spriteFor(theme: HqTheme, key: string): string | null {
 
 // Decoded-image cache shared across renders (a busy channel re-renders the same
 // theme repeatedly). Keyed by absolute path; promise-cached so concurrent
-// renders share one decode, matching arena-bg.ts:stripCache.
+// renders share one decode.
 type LoadedImage = import("@napi-rs/canvas").Image;
 const spriteCache = new Map<string, Promise<LoadedImage | null>>();
 const SPRITE_CACHE_MAX = 128;

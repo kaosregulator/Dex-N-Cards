@@ -12,7 +12,7 @@
 //
 // All three take pre-computed data (stats are resolved by the caller via the
 // existing stat engine) so this module does no DB work and renders offline.
-// Canvas text avoids emoji — the bundled font has no emoji glyphs.
+// Stars, emoji, and custom emoji are drawn with the shared canvas font stack.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
@@ -32,6 +32,7 @@ import { queueRender } from "../animations/render-queue.js";
 import { toAbsoluteImageUrl } from "../image-url.js";
 import type { Rarity } from "../cards-data.js";
 import { logger } from "../../lib/logger.js";
+import { warmCanvasText } from "../unbelievaboat/canvas-emoji-text.js";
 
 const BOARD_CANVAS = { width: 1000, height: 560 } as const;
 const CONFIRM_CANVAS = { width: 900, height: 520 } as const;
@@ -66,6 +67,7 @@ export async function renderPrepBoard(
     const mod = await getCanvas();
     if (!mod) return null;
     try {
+      await warmCanvasText(mod, [ownerName, ...cards.flatMap(c => [c.name, c.rarityLabel])]);
       const { width, height } = BOARD_CANVAS;
       const canvas = mod.createCanvas(width, height);
       const ctx = canvas.getContext("2d") as unknown as Ctx;
@@ -155,6 +157,9 @@ export async function renderCardConfirm(
     const mod = await getCanvas();
     if (!mod) return null;
     try {
+      await warmCanvasText(mod, [
+        card.name, card.rarityLabel, move?.name, move?.emoji, special?.name, special?.emoji, itemName,
+      ]);
       const { width, height } = CONFIRM_CANVAS;
       const canvas = mod.createCanvas(width, height);
       const ctx = canvas.getContext("2d") as unknown as Ctx;

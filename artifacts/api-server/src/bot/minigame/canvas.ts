@@ -62,15 +62,9 @@ export interface MiniGameScreenSpec {
   cardBadge?: string;
 }
 
-// The canvas only has the Orbitron + DejaVu fonts registered (no color-emoji
-// font), so color emoji render as tofu. Strip them from anything drawn on the
-// canvas — the Discord embed text keeps its emoji and renders them natively.
-// ★/☆ (U+2605/2606) and punctuation stay; they render fine in DejaVu.
+// Emoji and custom emoji stay. The shared canvas font hook draws them.
 function drawSafe(s: string): string {
-  return s
-    .replace(/[\u{1F000}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{2460}-\u{24FF}\u{2600}-\u{2604}\u{2607}-\u{26FF}\u{2700}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+  return s.replace(/\s{2,}/g, " ").trim();
 }
 
 interface PaintAnim {

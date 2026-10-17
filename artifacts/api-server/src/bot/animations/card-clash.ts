@@ -777,9 +777,8 @@ function drawKoStamp(ctx: Ctx, cx: number, k: number): void {
 }
 
 /**
- * The school mark on a hand card. The bundled Orbitron carries no emoji glyphs,
- * so an emoji would draw as a tofu box — this is a drawn stand-in: a filled
- * diamond over a soft disc, tinted to the card's school.
+ * The school mark on a hand card: a filled diamond over a soft disc, tinted to
+ * the card's school.
  */
 function drawSchoolBadge(ctx: Ctx, cx: number, cy: number, color: number): void {
   ctx.save();
@@ -923,22 +922,9 @@ function ellipsize(ctx: Ctx, text: string, w: number, size?: number, weight = 90
   return out;
 }
 
-/**
- * The bundled Orbitron covers Latin only, so an emoji or a typographic symbol
- * renders as a tofu box. Anything outside its coverage is dropped (emoji) or
- * folded to an ASCII equivalent, since these strings come from card copy and
- * battle-log lines that are free to contain either.
- */
+/** Collapse spacing. Emoji and symbols stay for the shared canvas font fallback. */
 function safeText(s: string): string {
-  return s
-    .replace(/[·•]/g, "-")
-    .replace(/[—–]/g, "-")
-    .replace(/[""]/g, '"')
-    .replace(/['']/g, "'")
-    // Drop pictographic scalar values entirely (emoji, symbols, dingbats).
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{2BFF}\u{FE00}-\u{FE0F}\u{2600}-\u{27BF}]/gu, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+  return s.replace(/\s{2,}/g, " ").trim();
 }
 function cover(iw: number, ih: number, w: number, h: number): { dw: number; dh: number; dx: number; dy: number } {
   if (!iw || !ih) return { dw: w, dh: h, dx: 0, dy: 0 };

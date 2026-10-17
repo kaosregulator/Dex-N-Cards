@@ -68,6 +68,8 @@ export async function getCanvas(): Promise<CanvasMod | null> {
   if (_canvas !== undefined) return _canvas;
   try {
     _canvas = await import("@napi-rs/canvas");
+    try { await import("../unbelievaboat/canvas-emoji-text.js"); }
+    catch (err) { logger.debug({ err }, "animation engine: emoji text painter skipped"); }
     registerFonts(_canvas);
   } catch (err) {
     logger.debug({ err }, "animation engine: @napi-rs/canvas not available");

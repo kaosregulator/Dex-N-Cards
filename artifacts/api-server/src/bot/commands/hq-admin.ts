@@ -87,7 +87,7 @@ async function buildServerPanel(guildId: string, notice?: string) {
   const mode = siegeModeMeta(cfg.mode);
   const visualStyle = !cfg.turnVisuals ? "off"
     : battle?.battleAnimationEnabled === false ? "off (battles have animation disabled)"
-    : battle?.battleSceneAnimated ? "animated arena scenes"
+    : battle?.battleSceneAnimated ? "animated fight"
     : "classic single frames";
 
   const embed = new EmbedBuilder()

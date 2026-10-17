@@ -4,7 +4,13 @@
  */
 
 import type { CanvasMod, Ctx } from "../animations/engine.js";
-import { loadCurrencyImage, type CurrencyImg } from "./currency-canvas.js";
+import {
+  setCanvasEmojiPainter,
+  type EmojiPaintCtx,
+  type EmojiPaintMode,
+  type EmojiPaintOriginals,
+} from "../canvas-fonts.js";
+import { loadCurrencyImage, peekCurrencyImage, type CurrencyImg } from "./currency-canvas.js";
 
 const CUSTOM_IN_TEXT_RE = /<(a)?:([\w~]+):(\d+)>/g;
 const EMOJI_RE =
@@ -145,6 +151,139 @@ export function drawTextWithEmojis(
   ctx.restore();
   return width;
 }
+
+const CUSTOM_ONLY_SRC = "<(a)?:([\\w~]+):(\\d+)>";
+
+/** Split Discord custom-emoji markup only. Unicode stays in the text so the emoji font draws it. */
+export function segmentCustomEmoji(input: string): TextSegment[] {
+  const raw = input ?? "";
+  if (!raw) return [];
+  const out: TextSegment[] = [];
+  let last = 0;
+  for (const m of raw.matchAll(new RegExp(CUSTOM_ONLY_SRC, "g"))) {
+    const start = m.index ?? 0;
+    if (start > last) out.push({ kind: "text", value: raw.slice(last, start) });
+    out.push({ kind: "emoji", value: m[0]! });
+    last = start + m[0]!.length;
+  }
+  if (last < raw.length) out.push({ kind: "text", value: raw.slice(last) });
+  return out.filter(s => s.value.length > 0);
+}
+
+export function hasCustomEmoji(input: string): boolean {
+  return new RegExp(CUSTOM_ONLY_SRC).test(input ?? "");
+}
+
+function customEmojiLabel(markup: string): string {
+  const m = markup.match(/^<(a)?:([\w~]+):(\d+)>$/);
+  const name = m?.[2] ?? "";
+  if (!name || name === "_" || name.length < 2) return "";
+  return name;
+}
+
+/** Fetch every custom emoji image referenced in `texts` into the sync cache. */
+export async function warmCanvasText(
+  mod: CanvasMod,
+  texts: Array<string | null | undefined>,
+): Promise<void> {
+  const customs = new Set<string>();
+  for (const text of texts) {
+    if (!text) continue;
+    for (const seg of segmentCustomEmoji(text)) {
+      if (seg.kind === "emoji") customs.add(seg.value);
+    }
+  }
+  await Promise.all([...customs].map(symbol => loadCurrencyImage(mod, symbol).catch(() => null)));
+}
+
+export function measureCustomEmojiText(ctx: { font: string; measureText(text: string): { width: number } }, text: string): number {
+  const emojiSize = Math.max(12, Math.floor(parseFontSize(ctx.font) * 1.05));
+  let width = 0;
+  for (const seg of segmentCustomEmoji(text)) {
+    if (seg.kind === "text") width += ctx.measureText(seg.value).width;
+    else if (peekCurrencyImage(seg.value)) width += emojiSize + 1;
+    else {
+      const label = customEmojiLabel(seg.value);
+      if (label) width += ctx.measureText(label).width;
+    }
+  }
+  return width;
+}
+
+/**
+ * Draw `<:name:id>` as a cached image inside an existing fillText/strokeText.
+ * Unicode emoji is left in the text runs for the emoji font. Returns false when
+ * the string has no custom emoji so the caller uses the original method.
+ */
+export function paintCustomEmojiText(
+  ctx: EmojiPaintCtx,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number | undefined,
+  mode: EmojiPaintMode,
+  originals: EmojiPaintOriginals,
+): boolean {
+  if (!hasCustomEmoji(text)) return false;
+  const segs = segmentCustomEmoji(text);
+  if (!segs.some(s => s.kind === "emoji")) return false;
+
+  const paintRun = (value: string, at: number) => {
+    if (mode === "stroke") originals.strokeText.call(ctx, value, at, y);
+    else originals.fillText.call(ctx, value, at, y);
+  };
+
+  if (maxWidth != null) {
+    const plain = segs.map(s => s.kind === "text" ? s.value : customEmojiLabel(s.value)).join("");
+    if (mode === "stroke") originals.strokeText.call(ctx, plain, x, y, maxWidth);
+    else originals.fillText.call(ctx, plain, x, y, maxWidth);
+    return true;
+  }
+
+  const emojiSize = Math.max(12, Math.floor(parseFontSize(ctx.font) * 1.05));
+  const baseline = ctx.textBaseline || "alphabetic";
+  const align = ctx.textAlign || "left";
+  const widthOf = (seg: TextSegment) => {
+    if (seg.kind === "text") return ctx.measureText(seg.value).width;
+    if (peekCurrencyImage(seg.value)) return emojiSize + 1;
+    const label = customEmojiLabel(seg.value);
+    return label ? ctx.measureText(label).width : 0;
+  };
+  const total = segs.reduce((w, seg) => w + widthOf(seg), 0);
+  let cursor = x;
+  if (align === "center") cursor = x - total / 2;
+  else if (align === "right" || align === "end") cursor = x - total;
+
+  const prevAlign = ctx.textAlign;
+  ctx.textAlign = "left";
+  try {
+    for (const seg of segs) {
+      if (seg.kind === "text") {
+        paintRun(seg.value, cursor);
+        cursor += ctx.measureText(seg.value).width;
+        continue;
+      }
+      const img = peekCurrencyImage(seg.value);
+      if (mode === "fill" && img) {
+        const iy = baseline === "middle" ? y - emojiSize / 2
+          : baseline === "top" || baseline === "hanging" ? y
+          : y - emojiSize * 0.85;
+        ctx.drawImage(img, cursor, iy, emojiSize, emojiSize);
+        cursor += emojiSize + 1;
+        continue;
+      }
+      const label = customEmojiLabel(seg.value);
+      if (!label) continue;
+      paintRun(label, cursor);
+      cursor += ctx.measureText(label).width;
+    }
+  } finally {
+    ctx.textAlign = prevAlign;
+  }
+  return true;
+}
+
+setCanvasEmojiPainter(paintCustomEmojiText);
 
 function parseFontSize(font: string): number {
   const m = font.match(/(\d+(?:\.\d+)?)px/);

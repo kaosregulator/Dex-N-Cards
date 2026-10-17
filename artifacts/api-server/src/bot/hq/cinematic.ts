@@ -854,14 +854,19 @@ function drawLetterbox(ctx: Ctx, t: number): void {
   ctx.restore();
 }
 
-// Strip Discord markdown + emoji so a line renders cleanly in the canvas font
-// (which has no emoji glyphs — an emoji would show as a tofu box).
+// Strip Discord markdown. Unicode emoji and custom emoji markup stay so the
+// canvas font and the emoji painter can draw them.
 function stripCaption(s: string): string {
-  return s
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, "")
+  const marks: string[] = [];
+  const held = s.replace(/<(a)?:[\w~]+:\d+>/g, (m) => {
+    marks.push(m);
+    return `\u0000${marks.length - 1}\u0000`;
+  });
+  return held
     .replace(/\*\*|\*|__|_|`|~~/g, "")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .replace(/\u0000(\d+)\u0000/g, (_all, i: string) => marks[Number(i)] ?? "");
 }
 
 // Greedy word-wrap to a pixel width. Caller sets ctx.font first.
