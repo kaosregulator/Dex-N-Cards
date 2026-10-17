@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { encodeAnimation } from "./engine.js";
+import { entranceTimeline, CARD_EXIT_MS } from "./card-entrance.js";
+
+describe("entrance timing", () => {
+  it("holds the spawned card for a second before the loop replays", () => {
+    for (const speed of ["slow", "normal", "fast"] as const) {
+      const t = entranceTimeline(speed);
+      expect(t.holdMs).toBe(1000);
+      expect(t.durationMs - Math.round(t.motionEnd * t.durationMs)).toBeGreaterThanOrEqual(900);
+    }
+    expect(entranceTimeline("slow").durationMs).toBeGreaterThan(entranceTimeline("fast").durationMs);
+    expect(CARD_EXIT_MS).toBeGreaterThan(1000);
+  });
+});
 
 describe("encodeAnimation", () => {
   it("coalesces identical frames and still writes a GIF", async () => {

@@ -1048,8 +1048,9 @@ function buildEntranceEmbed(s: GuildSettings): EmbedBuilder {
     .setTitle("🎬 Card Entrance Animation")
     .setColor(0x00b894)
     .setDescription(
-      "A short intro that plays as a card **arrives**, then settles onto the card image — " +
-      "separate from the reveal styles and mini-games.\n\n" +
+      "A short intro that **stays on the spawn and loops** — the card arrives, pauses, then the motion plays again. " +
+      "Catching it or letting it escape plays that motion in reverse with a smoke vanish. " +
+      "Separate from the reveal styles and mini-games. **Off** leaves a truly static image.\n\n" +
       "⚠️ **Only plays when Spawn Reveal is set to _Off_ (plain image).** The Blur / Puzzle / " +
       "Silhouette reveals already have their own presentation.\n\n" +
       "**Skin** is the look drawn behind the card: **Rarity-colored** tints it by the card's " +

@@ -7,7 +7,7 @@ import { getScaledStats } from "./battle/stat-engine.js";
 import { effectiveRarityKey, rarityLadderRank } from "./rarity-runtime.js";
 import { getCardProgress } from "./cards/leveling.js";
 import { getBattleSettings } from "./battle/config-engine.js";
-import { renderCardReveal, createSpawnRevealSession, renderShinyReveal, renderCardEntrance, resolveEntranceType, resolveShinyStyle, type RevealStats, type RevealMode, type SpawnRevealSession, type EntranceSkin } from "./animations/index.js";
+import { renderCardReveal, createSpawnRevealSession, renderShinyReveal, renderCardEntrance, renderCardExit, resolveEntranceType, resolveShinyStyle, CARD_EXIT_MS, type RevealStats, type RevealMode, type SpawnRevealSession, type EntranceSkin, type CardEntranceInput } from "./animations/index.js";
 import { withGuildFrames } from "./animations/card-frames.js";
 import type { AnimationSpeed } from "./animations/types.js";
 import type { RenderCard } from "./battle/image/render.js";
@@ -88,16 +88,17 @@ interface ActiveSpawn {
   // The randomly-chosen "a card appeared" headline, fixed for the lifetime of
   // this spawn so every re-render (hint bump, reveal frame) keeps the same line.
   appearMessage: string;
+  // Entrance that is looping on this spawn, so catch/escape can play it backwards.
+  entrance: CardEntranceInput | null;
 }
 
 // Attachment name for the progressive spawn reveal frame.
 const SPAWN_REVEAL_FILE = "spawn-reveal.png";
-// Attachment name for the card-entrance pre-intro GIF (image-only spawns).
+// Attachment name for the card-entrance GIF. It stays on the spawn and loops
+// (motion, a one-second pause, then replay). Catch and escape swap it for the
+// reverse vanish, then for the final embed.
 const SPAWN_ENTRANCE_FILE = "spawn-entrance.gif";
-// How long the entrance GIF plays before the spawn message settles onto the
-// plain card image (a GIF card settles onto its own live animation). Matches the
-// entrance's motion+hold length with a little slack.
-const ENTRANCE_HOLD_MS = 2000;
+const SPAWN_EXIT_FILE = "spawn-exit.gif";
 // Minimum spacing between reveal edits (keeps well under Discord's edit rate
 // limits) and the cap on how many reveal steps a single spawn plays.
 const REVEAL_MIN_INTERVAL_MS = 3000;
@@ -494,23 +495,25 @@ async function doSingleSpawn(guildId: string, forcedCardId?: number, isForced = 
     if (!revealBuffer) revealSession = null;
   }
 
-  // ── Card entrance pre-intro ─────────────────────────────────────────────────
-  // Only for image-only spawns (reveal "off"): a short "the card enters" GIF
-  // (fly/teleport/bounce/warp/flip) plays first, then the message settles onto
-  // the plain card image. Also covers spawns that lead into a wild mini-game
-  // (the game triggers on the catch, after this intro has shown). Best-effort.
+  // ── Card entrance ───────────────────────────────────────────────────────────
+  // Only for image-only spawns (reveal "off"): the entrance GIF stays on the
+  // message and loops for the whole catch window. Off keeps the plain image.
+  // Best-effort — a failed encode just shows the static card.
   let entranceBuffer: Buffer | null = null;
+  let entrance: CardEntranceInput | null = null;
   if (revealMode === "off") {
     const entranceType = resolveEntranceType(settings.spawnEntranceAnimation);
     if (entranceType) {
-      entranceBuffer = await withGuildFrames(settings, () => renderCardEntrance({
+      entrance = {
         artUrl: toAbsoluteImageUrl(card.imageUrl),
         rarity: card.rarity as Rarity,
         rarityColor: spawnDisplayRarity.color,
         type: entranceType,
         skin: (settings.spawnEntranceSkin as EntranceSkin) ?? "rarity",
         speed: (settings.packAnimationSpeed as "slow" | "normal" | "fast") ?? "normal",
-      })).catch(() => null);
+      };
+      entranceBuffer = await withGuildFrames(settings, () => renderCardEntrance(entrance!)).catch(() => null);
+      if (!entranceBuffer) entrance = null;
     }
   }
 
@@ -570,6 +573,7 @@ async function doSingleSpawn(guildId: string, forcedCardId?: number, isForced = 
     source: isForced ? "drop" : "spawn",
     forcedProgression: opts?.progression ?? null,
     appearMessage,
+    entrance,
   };
 
   let guildSpawns = activeSpawns.get(guildId);
@@ -587,24 +591,24 @@ async function doSingleSpawn(guildId: string, forcedCardId?: number, isForced = 
       if (gs && gs.size === 0) activeSpawns.delete(guildId);
       try {
         const quip = ESCAPE_QUIPS[Math.floor(Math.random() * ESCAPE_QUIPS.length)]!;
+        const escaped = new EmbedBuilder()
+          .setTitle(`\ud83d\udca8 ${cardRef.name} escaped!`)
+          .setDescription(
+            `${quip}\n\n` +
+            `**Rarity:** ${spawnDisplayRarity.emoji} ${spawnDisplayRarity.label}\n` +
+            `**Caught by:** *nobody — too slow!*`,
+          )
+          .setColor(0x636e72)
+          .setFooter({ text: "Better luck on the next spawn \u2728" })
+          .setTimestamp();
+        await playCardExit(guildId, message, entrance, escaped);
         await message.edit({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle(`\ud83d\udca8 ${cardRef.name} escaped!`)
-              .setDescription(
-                `${quip}\n\n` +
-                `**Rarity:** ${spawnDisplayRarity.emoji} ${spawnDisplayRarity.label}\n` +
-                `**Caught by:** *nobody — too slow!*`,
-              )
-              .setColor(0x636e72)
-              .setFooter({ text: "Better luck on the next spawn \u2728" })
-              .setTimestamp(),
-          ],
-          // Clear the stale Claim button row and the reveal GIF attachment so
-          // the message reads cleanly (a retained attachment would show as a
-          // stray image under the "escaped" embed).
+          embeds: [escaped],
+          // Drop the looping entrance (and the exit GIF) so the escape text
+          // stays. A retained GIF would keep replaying the vanish.
           components: [],
           attachments: [],
+          files: [],
         });
       } catch { /* deleted */ }
     }
@@ -614,20 +618,33 @@ async function doSingleSpawn(guildId: string, forcedCardId?: number, isForced = 
   if (revealSession) {
     startProgressiveReveal(guildId, spawnId, revealSession, card, settings.catchWindowSeconds);
   }
+}
 
-  // ── Settle the entrance intro onto the plain card image ─────────────────────
-  // After the entrance GIF has played, edit the spawn to the plain image (a GIF
-  // card settles onto its own live animation). Skipped if already caught.
-  if (entranceBuffer) {
-    setTimeout(async () => {
-      const s = activeSpawns.get(guildId)?.get(spawnId);
-      if (!s || s.caught || Date.now() >= s.expiresAt.getTime()) return;
-      try {
-        const settled = await buildSpawnEmbed(card, settings.catchWindowSeconds, s.catchMode, guildId, s.hintLevel, null, s.appearMessage);
-        await s.message.edit({ embeds: [settled], attachments: [], files: [] });
-        s.revealFile = null; // later hint edits keep the plain image, not the intro attachment
-      } catch { /* deleted / no perms — leave the intro up */ }
-    }, ENTRANCE_HOLD_MS);
+// Play the entrance backwards with a smoke vanish. No-op when this spawn is a
+// static image (entrance off) or the encode fails — the caller still posts the
+// final caught/escaped embed.
+async function playCardExit(
+  guildId: string, message: Message, entrance: CardEntranceInput | null, overlay?: EmbedBuilder,
+): Promise<void> {
+  if (!entrance) return;
+  try {
+    const settings = await getOrCreateGuildSettings(guildId);
+    const gif = await withGuildFrames(settings, () => renderCardExit(entrance));
+    if (!gif) return;
+    const current = message.embeds[0];
+    const embed = overlay
+      ? EmbedBuilder.from(overlay)
+      : (current ? EmbedBuilder.from(current) : new EmbedBuilder());
+    embed.setImage(`attachment://${SPAWN_EXIT_FILE}`);
+    await message.edit({
+      embeds: [embed],
+      components: [],
+      attachments: [],
+      files: [new AttachmentBuilder(gif, { name: SPAWN_EXIT_FILE })],
+    });
+    await new Promise(resolve => setTimeout(resolve, CARD_EXIT_MS));
+  } catch (err) {
+    logger.debug({ err }, "card exit animation skipped");
   }
 }
 
@@ -962,7 +979,7 @@ async function launchMiniGameForCatch(guildId: string, spawn: ActiveSpawn, userI
     spawnMessage: spawn.message,
     animate: (settings as unknown as { miniGameAnimationEnabled?: boolean }).miniGameAnimationEnabled ?? true,
     selection: (settings as unknown as { miniGameSelection?: string }).miniGameSelection ?? "shuffle",
-    onWin: () => grantCatch(guildId, spawn, userId),
+    onWin: () => grantCatch(guildId, spawn, userId, undefined, { skipExit: true }),
     onLose: () => escapeAfterMiniGame(spawn),
   });
 }
@@ -977,7 +994,9 @@ async function escapeAfterMiniGame(spawn: ActiveSpawn): Promise<void> {
 // run best-effort side effects (wishlist/HQ/quests/XP), and edit the spawn
 // message into the catch preview. Extracted from awardSpawn so a wild mini-game
 // can wedge between "winner determined" and "card granted" (win → this runs).
-async function grantCatch(guildId: string, spawn: ActiveSpawn, userId: string, delivery?: CatchDelivery): Promise<void> {
+async function grantCatch(
+  guildId: string, spawn: ActiveSpawn, userId: string, delivery?: CatchDelivery, opts?: { skipExit?: boolean },
+): Promise<void> {
   // Parallel: write collection row + mark spawn log. Both independent DB calls.
   // The catch also rolls variable acquisition progression (Star/Level) for this
   // spawn's source — or applies an admin-forced Star/Level — through the shared
@@ -1069,11 +1088,12 @@ async function grantCatch(guildId: string, spawn: ActiveSpawn, userId: string, d
       publicEmbed.setImage(`attachment://${catchFile}`);
     }
 
+    if (!opts?.skipExit) await playCardExit(guildId, spawn.message, spawn.entrance);
     await spawn.message.edit({
       embeds: [publicEmbed],
       components: [],
-      // Drop the spawn-reveal GIF (attachments: []) before attaching the catch
-      // canvas so the caught message never shows a leftover reveal image.
+      // Drop the exit GIF before attaching the catch canvas so the caught
+      // message never keeps replaying the vanish.
       attachments: [],
       files: (!canEphemeral && preview?.canvas)
         ? [new AttachmentBuilder(preview.canvas, { name: catchFile })]

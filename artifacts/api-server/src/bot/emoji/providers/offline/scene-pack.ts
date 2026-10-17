@@ -9,10 +9,10 @@
 // the whole scene plays.
 //
 // Pipeline per frame:
-//   1) decode the source frame (gifuct)
+//   1) decode the source frame (sharp)
 //   2) key the chroma to transparent  → that's the foreground chrome
-//   3) fit the target into the chroma region's per-frame bbox (tracks zoom/pan)
-//   4) draw target behind, foreground on top, plus the style's effect
+//   3) fit the target into the largest chroma blob (whole image, slight crop only)
+//   4) draw target behind, clip to that blob, foreground on top, plus the effect
 //
 // Effects layer extra motion on the TARGET: explode, shake, cut, rip, punch
 // (+ fake blood), channel (TV-static reveal), fuzzytv (static overlay).
@@ -123,7 +123,8 @@ const isGreen = (r: number, g: number, b: number) => g > 90 && g - r > 40 && g -
 const isBlue = (r: number, g: number, b: number) => b > 110 && r < 120 && g < 130 && b - r > 60 && b - g > 55;
 
 interface Ctx2D {
-  fillStyle: string; globalAlpha: number; font: string; textAlign: string; textBaseline: string;
+  fillStyle: string; globalAlpha: number; globalCompositeOperation: string;
+  font: string; textAlign: string; textBaseline: string;
   clearRect(x: number, y: number, w: number, h: number): void;
   fillRect(x: number, y: number, w: number, h: number): void;
   createImageData(w: number, h: number): { data: Uint8ClampedArray };
@@ -138,11 +139,9 @@ interface Ctx2D {
   resetTransform(): void;
 }
 
-interface Pt { x: number; y: number }
-/** Four tracked corners of the chroma region (clockwise from top-left). */
-interface Quad { tl: Pt; tr: Pt; br: Pt; bl: Pt; absent: boolean }
-
 interface Frame { data: Uint8ClampedArray; delay: number }
+
+interface ChromaRegion { box: Box; mask: Uint8Array }
 
 interface Box { x: number; y: number; w: number; h: number; absent: boolean }
 
@@ -269,33 +268,11 @@ export async function renderScene(
   });
   const H2 = pageH; // actual per-page height sharp produced
 
-  // Per-frame chroma bbox AND the four extreme corners of the region. The green
-  // screen is directly detectable every frame (it is literally coloured), so we
-  // read its exact quad rather than tracking it with a template — no drift, no
-  // lag. The corners let a flat/tilted screen carry the image in perspective.
-  const boxes: (Box | null)[] = [];
-  const quads: (Quad | null)[] = [];
-  for (const f of frames) {
-    const d = f.data;
-    let minX = W, minY = H2, maxX = -1, maxY = -1, cnt = 0;
-    // Extreme points: tl=min(x+y), br=max(x+y), tr=max(x-y), bl=min(x-y).
-    let tlS = Infinity, brS = -Infinity, trS = -Infinity, blS = Infinity;
-    let tl: Pt = { x: 0, y: 0 }, tr: Pt = { x: 0, y: 0 }, br: Pt = { x: 0, y: 0 }, bl: Pt = { x: 0, y: 0 };
-    for (let y = 0; y < H2; y++) for (let x = 0; x < W; x++) {
-      const i = (y * W + x) * 4;
-      if (!key(d[i]!, d[i + 1]!, d[i + 2]!)) continue;
-      cnt++;
-      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
-      const sum = x + y, diff = x - y;
-      if (sum < tlS) { tlS = sum; tl = { x, y }; }
-      if (sum > brS) { brS = sum; br = { x, y }; }
-      if (diff > trS) { trS = diff; tr = { x, y }; }
-      if (diff < blS) { blS = diff; bl = { x, y }; }
-    }
-    if (cnt < W * H2 * 0.004) { boxes.push(null); quads.push(null); continue; }
-    boxes.push({ x: minX, y: minY, w: maxX - minX, h: maxY - minY, absent: false });
-    quads.push({ tl, tr, br, bl, absent: false });
-  }
+  // Largest chroma blob per frame — the screen — not every green pixel. Stray
+  // green in the scene used to inflate the box and zoom the upload until only
+  // a corner of the photo survived.
+  const regions: (ChromaRegion | null)[] = frames.map(f => largestChroma(f.data, W, H2, key));
+  const boxes: (Box | null)[] = regions.map(r => r ? r.box : null);
   const smooth: (Box | null)[] = [];
   let last: Box | null = null;
   for (const b of boxes) {
@@ -308,32 +285,6 @@ export async function renderScene(
     };
     smooth.push({ ...last });
   }
-
-  // Smooth the corner quad the same way, and decide whether this scene's chroma
-  // region is rectangular enough to carry a perspective warp. A real screen or
-  // card fills most of its bounding box (ratio → 1); a round portal or an
-  // irregular splat leaves a low ratio, and warping a rectangle onto that looks
-  // worse than a plain centred fill — so those fall back to the box cover.
-  const smoothQuads: (Quad | null)[] = [];
-  let lastQ: Quad | null = null;
-  let fillSum = 0, fillCnt = 0;
-  for (let i = 0; i < quads.length; i++) {
-    const q = quads[i];
-    if (!q) { smoothQuads.push(lastQ ? { ...lastQ, absent: true } : null); continue; }
-    if (!lastQ) lastQ = q;
-    const a = 0.5;
-    lastQ = {
-      tl: lerpPt(lastQ.tl, q.tl, a), tr: lerpPt(lastQ.tr, q.tr, a),
-      br: lerpPt(lastQ.br, q.br, a), bl: lerpPt(lastQ.bl, q.bl, a), absent: false,
-    };
-    smoothQuads.push({ ...lastQ });
-    const box = boxes[i];
-    if (box && box.w > 2 && box.h > 2) { fillSum += quadArea(q) / (box.w * box.h); fillCnt++; }
-  }
-  const rectangular = fillCnt > 0 && fillSum / fillCnt >= 0.72;
-  // Perspective is only meaningful on a static screen/card. Effects move or scale
-  // the target off its box, so those keep the axis-aligned cover path.
-  const useWarp = rectangular && cfg.effect === "none" && cfg.fit !== "stretch";
 
   let explodeStart: number | null = null;
   if (cfg.effect === "explode") {
@@ -353,6 +304,8 @@ export async function renderScene(
   const ctx = canvas.getContext("2d") as unknown as Ctx2D;
   const fgCanvas = mod.createCanvas(W, H2);
   const fgctx = fgCanvas.getContext("2d") as unknown as Ctx2D;
+  const maskCanvas = mod.createCanvas(W, H2);
+  const maskCtx = maskCanvas.getContext("2d") as unknown as Ctx2D;
 
   for (let f = 0; f < frames.length; f++) {
     const frame = frames[f]!;
@@ -368,9 +321,12 @@ export async function renderScene(
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H2);
 
     const box = smooth[f];
-    const quad = smoothQuads[f];
-    if (useWarp && quad && !quad.absent) {
-      warpTargetToQuad(ctx, target, quad);
+    const region = regions[f];
+    if (box && !box.absent && region && cfg.effect === "none") {
+      // Flat fill clipped to the real screen pixels. A two-triangle perspective
+      // warp left a dark slash from corner to corner through the upload.
+      drawFittedSubject(ctx, target, box, cfg.fit);
+      clipToMask(maskCanvas, maskCtx, ctx, region.mask, W, H2);
     } else if (box && !box.absent) {
       drawTarget(mod, ctx, target, box, cfg, f, frames.length, explodeStart, revealAt);
     }
@@ -388,72 +344,102 @@ export async function renderScene(
   return encoder.out.getData();
 }
 
-function lerpPt(a: Pt, b: Pt, t: number): Pt {
-  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-}
-
-/** Shoelace area of a quad (corner order tl→tr→br→bl). */
-function quadArea(q: Quad): number {
-  const p = [q.tl, q.tr, q.br, q.bl];
-  let s = 0;
-  for (let i = 0; i < 4; i++) {
-    const a = p[i]!, b = p[(i + 1) % 4]!;
-    s += a.x * b.y - b.x * a.y;
-  }
-  return Math.abs(s) / 2;
-}
-
-/** Affine that maps source triangle `s` onto destination triangle `d`. */
-function affineFromTri(s: Pt[], d: Pt[]): [number, number, number, number, number, number] {
-  const [s0, s1, s2] = s as [Pt, Pt, Pt];
-  const [d0, d1, d2] = d as [Pt, Pt, Pt];
-  const det = (s1.x - s0.x) * (s2.y - s0.y) - (s2.x - s0.x) * (s1.y - s0.y);
-  if (Math.abs(det) < 1e-6) return [1, 0, 0, 1, 0, 0];
-  const a = ((d1.x - d0.x) * (s2.y - s0.y) - (d2.x - d0.x) * (s1.y - s0.y)) / det;
-  const c = ((s1.x - s0.x) * (d2.x - d0.x) - (s2.x - s0.x) * (d1.x - d0.x)) / det;
-  const b = ((d1.y - d0.y) * (s2.y - s0.y) - (d2.y - d0.y) * (s1.y - s0.y)) / det;
-  const dd = ((s1.x - s0.x) * (d2.y - d0.y) - (s2.x - s0.x) * (d1.y - d0.y)) / det;
-  const e = d0.x - a * s0.x - c * s0.y;
-  const f = d0.y - b * s0.x - dd * s0.y;
-  return [a, b, c, dd, e, f];
-}
-
 /**
- * Draw the target onto the tracked chroma quad in perspective, so it sits on the
- * screen/card like it belongs there. The upload is cover-cropped to the quad's
- * aspect (no distortion, no bars) and the crop is mapped onto the quad as two
- * clipped affine triangles — a piecewise-affine perspective that reads true for
- * the moderate tilts these clips have, with no native dependency.
+ * How the upload is drawn into a screen.
+ * `stretch` distorts it to the box. `cover` fills the box only when that hides
+ * at most a sliver; a portrait on a wide screen stays whole so the subject
+ * (hat, body, feet) is not zoomed away.
  */
-function warpTargetToQuad(ctx: Ctx2D, target: { width: number; height: number }, q: Quad): void {
-  const topW = Math.hypot(q.tr.x - q.tl.x, q.tr.y - q.tl.y);
-  const botW = Math.hypot(q.br.x - q.bl.x, q.br.y - q.bl.y);
-  const leftH = Math.hypot(q.bl.x - q.tl.x, q.bl.y - q.tl.y);
-  const rightH = Math.hypot(q.br.x - q.tr.x, q.br.y - q.tr.y);
-  const quadAspect = ((topW + botW) / 2) / Math.max(1, (leftH + rightH) / 2);
+export function subjectDrawSize(
+  boxW: number, boxH: number, imgW: number, imgH: number, fit: SceneFit,
+): { w: number; h: number } {
+  if (fit === "stretch") return { w: boxW, h: boxH };
+  const iw = Math.max(1, imgW);
+  const ih = Math.max(1, imgH);
+  const contain = Math.min(boxW / iw, boxH / ih);
+  const cover = Math.max(boxW / iw, boxH / ih);
+  const cropped = 1 - contain / cover;
+  const scale = cropped <= 0.12 ? cover : contain;
+  return { w: iw * scale, h: ih * scale };
+}
 
-  // Cover-crop the source to the quad's aspect, centred.
-  const iw = target.width, ih = target.height;
-  let sw = iw, sh = ih;
-  if (iw / ih > quadAspect) sw = ih * quadAspect; else sh = iw / quadAspect;
-  const sx = (iw - sw) / 2, sy = (ih - sh) / 2;
-  const s: Pt[] = [
-    { x: sx, y: sy }, { x: sx + sw, y: sy }, { x: sx + sw, y: sy + sh }, { x: sx, y: sy + sh },
-  ];
-  const d = [q.tl, q.tr, q.br, q.bl];
-
-  // Two triangles: (tl,tr,br) and (tl,br,bl).
-  for (const [i, j, k] of [[0, 1, 2], [0, 2, 3]] as const) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(d[i]!.x, d[i]!.y); ctx.lineTo(d[j]!.x, d[j]!.y); ctx.lineTo(d[k]!.x, d[k]!.y); ctx.closePath();
-    ctx.clip();
-    const [a, b, c, dd, e, ff] = affineFromTri([s[i]!, s[j]!, s[k]!], [d[i]!, d[j]!, d[k]!]);
-    ctx.setTransform(a, b, c, dd, e, ff);
-    ctx.drawImage(target as unknown, 0, 0);
-    ctx.resetTransform();
-    ctx.restore();
+function largestChroma(
+  data: Uint8ClampedArray, W: number, H: number,
+  key: (r: number, g: number, b: number) => boolean,
+): ChromaRegion | null {
+  const seen = new Uint8Array(W * H);
+  const minCount = Math.max(16, Math.floor(W * H * 0.004));
+  let bestCount = 0;
+  let best: Uint8Array | null = null;
+  let bestBox: Box | null = null;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const start = y * W + x;
+      if (seen[start]) continue;
+      const si = start * 4;
+      if (!key(data[si]!, data[si + 1]!, data[si + 2]!)) { seen[start] = 1; continue; }
+      const stack = [start];
+      seen[start] = 1;
+      const pixels: number[] = [];
+      let minX = x, minY = y, maxX = x, maxY = y;
+      while (stack.length) {
+        const i = stack.pop()!;
+        pixels.push(i);
+        const cx = i % W;
+        const cy = (i / W) | 0;
+        if (cx < minX) minX = cx;
+        if (cy < minY) minY = cy;
+        if (cx > maxX) maxX = cx;
+        if (cy > maxY) maxY = cy;
+        for (const n of [i - 1, i + 1, i - W, i + W]) {
+          if (n < 0 || n >= seen.length) continue;
+          if (n === i - 1 && cx === 0) continue;
+          if (n === i + 1 && cx === W - 1) continue;
+          if (seen[n]) continue;
+          const o = n * 4;
+          if (!key(data[o]!, data[o + 1]!, data[o + 2]!)) { seen[n] = 1; continue; }
+          seen[n] = 1;
+          stack.push(n);
+        }
+      }
+      if (pixels.length > bestCount) {
+        bestCount = pixels.length;
+        const mask = new Uint8Array(W * H);
+        for (const p of pixels) mask[p] = 1;
+        best = mask;
+        bestBox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY, absent: false };
+      }
+    }
   }
+  if (!best || !bestBox || bestCount < minCount) return null;
+  return { box: bestBox, mask: best };
+}
+
+function drawFittedSubject(
+  ctx: Ctx2D, target: { width: number; height: number }, box: Box, fit: SceneFit,
+): void {
+  const fitted = subjectDrawSize(box.w, box.h, target.width, target.height, fit);
+  const dx = box.x + (box.w - fitted.w) / 2;
+  const dy = box.y + (box.h - fitted.h) / 2;
+  ctx.drawImage(target as unknown, dx, dy, fitted.w, fitted.h);
+}
+
+/** Keep the upload only where this frame's screen pixels are. */
+function clipToMask(
+  maskCanvas: unknown, maskCtx: Ctx2D, ctx: Ctx2D, mask: Uint8Array, W: number, H: number,
+): void {
+  const img = maskCtx.createImageData(W, H);
+  img.data.fill(0);
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    const o = i * 4;
+    img.data[o] = 255; img.data[o + 1] = 255; img.data[o + 2] = 255; img.data[o + 3] = 255;
+  }
+  maskCtx.putImageData(img, 0, 0);
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.drawImage(maskCanvas, 0, 0);
+  ctx.restore();
 }
 
 /** Draw the target into the chroma box with the scene's fit + effect. */
@@ -466,12 +452,8 @@ function drawTarget(
   if (cfg.fit === "stretch") {
     tw = box.w; th = box.h; tx = box.x; ty = box.y;
   } else {
-    // Cover: re-cut the upload to the green screen's own shape, filling it edge
-    // to edge and centred — no letterbox bars, no backdrop. The overflow (the
-    // part of the image the screen's aspect can't show) is clipped to the screen
-    // below, so the target reads as if it were always on that screen.
-    const s = Math.max(box.w / target.width, box.h / target.height);
-    tw = target.width * s; th = target.height * s;
+    const fitted = subjectDrawSize(box.w, box.h, target.width, target.height, "cover");
+    tw = fitted.w; th = fitted.h;
     tx = box.x + (box.w - tw) / 2; ty = box.y + (box.h - th) / 2;
   }
   let alpha = 1, ox = 0, oy = 0, sc = 1;
