@@ -26,9 +26,11 @@ import { getBattleSettings, updateBattleSettings, RARITY_ORDER } from "../battle
 import { statusThemeLabel, statusThemeOf, type StatusTheme } from "../battle/status-hud.js";
 import { aiMoveAllowed, sideCombatRules, sideRuleLabel } from "../battle/side-rules.js";
 import {
-  COLOR_FAMILIES, frameColorModeLabel, frameColorModeOf, hexOf, locateColor, parseHexColor,
-  renderFramePreview, stepColor, familyById, type FrameColorMode,
+  COLOR_FAMILIES, frameColorModeLabel, hexOf, locateColor, parseHexColor,
+  renderFramePreview, resolveFrameAccent, stepColor, familyById, type FrameColorMode,
 } from "../battle/frame-color.js";
+import { builtinRarityFrame, isBuiltinRarity, putRarityFrame, resolveRarityFrame } from "../battle/rarity-frame.js";
+import { readAssignedFrames, readFramePng } from "../animations/card-frames.js";
 import { buttonEmoji } from "../discord-emoji.js";
 import { resetSeason } from "../battle/season-engine.js";
 import { upsertBattleCardConfig, getBattleCardConfig, resetBattleCardConfig } from "../battle/db.js";
@@ -250,43 +252,69 @@ export async function handleBattleAdminButton(interaction: ButtonInteraction): P
       return;
     }
     case "framecolor": {
-      await interaction.editReply(await buildFramePanel(guildId, "a"));
+      await interaction.editReply(await buildFramePanel(guildId, "common", "a"));
       return;
     }
     case "framemode": {
-      const mode = interaction.customId.split(":")[2];
+      const parts = interaction.customId.split(":");
+      const mode = parts[2];
+      const rarity = isBuiltinRarity(parts[3]) ? parts[3] : "common";
+      const slot = (isBuiltinRarity(parts[3]) ? parts[4] : parts[3]) === "b" ? "b" : "a";
       if (mode === "image" || mode === "emoji" || mode === "custom" || mode === "rainbow") {
-        await updateBattleSettings(guildId, { battleFrameColorMode: mode });
+        const s = await getBattleSettings(guildId);
+        const shown = shownFrameRecipe(s, rarity);
+        await saveRarityFrame(guildId, rarity, { mode, a: shown.a, b: shown.b });
       }
-      const slot = interaction.customId.split(":")[3] === "b" ? "b" : "a";
-      await interaction.editReply(await buildFramePanel(guildId, slot));
+      await interaction.editReply(await buildFramePanel(guildId, rarity, slot));
+      return;
+    }
+    case "framedefault": {
+      const parts = interaction.customId.split(":");
+      const rarity = isBuiltinRarity(parts[2]) ? parts[2] : "common";
+      const slot = parts[3] === "b" ? "b" : "a";
+      await saveRarityFrame(guildId, rarity, builtinRarityFrame(rarity));
+      await interaction.editReply(await buildFramePanel(guildId, rarity, slot));
       return;
     }
     case "frameslot": {
-      const slot = interaction.customId.split(":")[2] === "b" ? "b" : "a";
-      await interaction.editReply(await buildFramePanel(guildId, slot));
+      const parts = interaction.customId.split(":");
+      const rarity = isBuiltinRarity(parts[2]) ? parts[2] : "common";
+      const slot = (isBuiltinRarity(parts[2]) ? parts[3] : parts[2]) === "b" ? "b" : "a";
+      await interaction.editReply(await buildFramePanel(guildId, rarity, slot));
       return;
     }
     case "frameswap": {
+      const parts = interaction.customId.split(":");
+      const rarity = isBuiltinRarity(parts[2]) ? parts[2] : null;
+      if (rarity) {
+        const s = await getBattleSettings(guildId);
+        const shown = shownFrameRecipe(s, rarity);
+        await saveRarityFrame(guildId, rarity, { mode: "custom", a: shown.b, b: shown.a });
+        await interaction.editReply(await buildFramePanel(guildId, rarity, "a"));
+        return;
+      }
       const s = await getBattleSettings(guildId);
       await updateBattleSettings(guildId, {
         battleFrameColorMode: "custom",
         battleFrameColorA: s.battleFrameColorB,
         battleFrameColorB: s.battleFrameColorA,
       });
-      await interaction.editReply(await buildFramePanel(guildId, "a"));
+      await interaction.editReply(await buildFramePanel(guildId, "common", "a"));
       return;
     }
     case "framewalk": {
-      const slot = interaction.customId.split(":")[2] === "b" ? "b" : "a";
-      const dir = interaction.customId.split(":")[3] === "-1" ? -1 : 1;
+      const parts = interaction.customId.split(":");
+      const rarity = isBuiltinRarity(parts[2]) ? parts[2] : "common";
+      const slot = (isBuiltinRarity(parts[2]) ? parts[3] : parts[2]) === "b" ? "b" : "a";
+      const dir = parts[parts.length - 1] === "-1" ? -1 : 1;
       const s = await getBattleSettings(guildId);
-      const current = parseHexColor(slot === "b" ? s.battleFrameColorB : s.battleFrameColorA);
+      const shown = shownFrameRecipe(s, rarity);
+      const current = parseHexColor(slot === "b" ? shown.b : shown.a);
       const next = hexOf(stepColor(current, dir));
-      await updateBattleSettings(guildId, slot === "b"
-        ? { battleFrameColorMode: "custom", battleFrameColorB: next }
-        : { battleFrameColorMode: "custom", battleFrameColorA: next });
-      await interaction.editReply(await buildFramePanel(guildId, slot));
+      await saveRarityFrame(guildId, rarity, slot === "b"
+        ? { mode: "custom", a: shown.a, b: next }
+        : { mode: "custom", a: next, b: shown.b });
+      await interaction.editReply(await buildFramePanel(guildId, rarity, slot));
       return;
     }
     case "layout": {
@@ -491,8 +519,15 @@ export async function handleBattleAdminSelect(interaction: StringSelectMenuInter
     await interaction.editReply({ embeds: [await buildHubEmbed(guildId)], components: buildHubComponents(await getBattleSettings(guildId)) }).catch(() => {});
     return;
   }
-  if (action === "framefamily" || action === "frameshade") {
+  if (action === "framerarity") {
+    const rarity = isBuiltinRarity(interaction.values[0]) ? interaction.values[0] : "common";
     const slot = parts[2] === "b" ? "b" : "a";
+    await interaction.editReply(await buildFramePanel(guildId, rarity, slot)).catch(() => {});
+    return;
+  }
+  if (action === "framefamily" || action === "frameshade") {
+    const rarity = isBuiltinRarity(parts[2]) ? parts[2] : "common";
+    const slot = (isBuiltinRarity(parts[2]) ? parts[3] : parts[2]) === "b" ? "b" : "a";
     const picked = interaction.values[0] ?? "";
     let color: number | null = null;
     if (action === "framefamily") {
@@ -502,12 +537,14 @@ export async function handleBattleAdminSelect(interaction: StringSelectMenuInter
       color = fam?.shades.find(s => s.id === picked)?.n ?? null;
     }
     if (color != null) {
+      const s = await getBattleSettings(guildId);
+      const shown = shownFrameRecipe(s, rarity);
       const hex = hexOf(color);
-      await updateBattleSettings(guildId, slot === "b"
-        ? { battleFrameColorMode: "custom", battleFrameColorB: hex }
-        : { battleFrameColorMode: "custom", battleFrameColorA: hex });
+      await saveRarityFrame(guildId, rarity, slot === "b"
+        ? { mode: "custom", a: shown.a, b: hex }
+        : { mode: "custom", a: hex, b: shown.b });
     }
-    await interaction.editReply(await buildFramePanel(guildId, slot)).catch(() => {});
+    await interaction.editReply(await buildFramePanel(guildId, rarity, slot)).catch(() => {});
     return;
   }
   if (action === "animspeed") {
@@ -1496,44 +1533,124 @@ async function buildSidesPanel(guildId: string) {
   return { embeds: [embed], components: [row1, row2] };
 }
 
-async function buildFramePanel(guildId: string, slot: "a" | "b") {
+function shownFrameRecipe(
+  s: Awaited<ReturnType<typeof getBattleSettings>>,
+  rarity: Rarity,
+): { mode: FrameColorMode; a: string | null; b: string | null } {
+  const spec = resolveRarityFrame(s, rarity);
+  const builtin = builtinRarityFrame(rarity);
+  const colorA = spec.origin === "rarity" ? spec.colorA : (spec.colorA ?? parseHexColor(builtin.a));
+  const colorB = spec.origin === "rarity" ? spec.colorB : (spec.colorB ?? parseHexColor(builtin.b));
+  return {
+    mode: spec.mode,
+    a: colorA == null ? null : hexOf(colorA),
+    b: colorB == null ? null : hexOf(colorB),
+  };
+}
+
+async function saveRarityFrame(
+  guildId: string,
+  rarity: Rarity,
+  next: { mode: FrameColorMode; a: string | null; b: string | null },
+): Promise<void> {
   const s = await getBattleSettings(guildId);
-  const mode = frameColorModeOf(s.battleFrameColorMode);
-  const colorA = parseHexColor(s.battleFrameColorA);
-  const colorB = parseHexColor(s.battleFrameColorB);
+  await updateBattleSettings(guildId, { battleFrameByRarity: putRarityFrame(s.battleFrameByRarity, rarity, next) });
+}
+
+function usingBuiltinFrame(s: Awaited<ReturnType<typeof getBattleSettings>>, rarity: Rarity): boolean {
+  const spec = resolveRarityFrame(s, rarity);
+  const builtin = builtinRarityFrame(rarity);
+  return spec.origin === "rarity"
+    && spec.mode === builtin.mode
+    && (spec.colorA == null ? null : hexOf(spec.colorA)) === builtin.a
+    && (spec.colorB == null ? null : hexOf(spec.colorB)) === builtin.b;
+}
+
+async function buildFramePanel(guildId: string, rarity: Rarity, slot: "a" | "b") {
+  const [s, rd, gs] = await Promise.all([
+    getBattleSettings(guildId),
+    rarityDisplay(guildId),
+    getOrCreateGuildSettings(guildId),
+  ]);
+  const spec = resolveRarityFrame(s, rarity);
+  const builtin = builtinRarityFrame(rarity);
+  const shown = shownFrameRecipe(s, rarity);
+  const mode = shown.mode;
+  const colorA = parseHexColor(shown.a);
+  const colorB = parseHexColor(shown.b);
   const active = slot === "b" ? colorB : colorA;
   const at = locateColor(active);
   const family = COLOR_FAMILIES[at.family]!;
-  const png = await renderFramePreview({ mode, colorA, colorB });
+  const assigned = gs.cardFramesEnabled ? (readAssignedFrames(gs as unknown as Record<string, unknown>)[rarity] ?? null) : null;
+  const accent = await resolveFrameAccent({
+    mode,
+    colorA,
+    colorB,
+    rarityEmoji: rd.emoji(rarity),
+    rarityColor: parseHexColor(builtin.a),
+    frameImage: assigned,
+    frameBuffer: assigned ? readFramePng(assigned) : null,
+  });
+  const png = await renderFramePreview({ mode, colorA, colorB, title: rd.label(rarity) });
+  const lines = RARITY_ORDER.map(r => {
+    const row = resolveRarityFrame(s, r);
+    const mark = r === rarity ? "▸" : "•";
+    const where = row.origin === "rarity" ? "set here" : "shared";
+    return `${mark} ${rd.emoji(r)} **${rd.label(r)}** — ${frameColorModeLabel(row.mode)} · ${where}`;
+  });
+  const frameNote = assigned
+    ? `Ornate frame on this rarity: **${assigned}**. The match color is sampled from that frame.`
+    : `Default frame for ${rd.label(rarity)} is **${builtin.a}** → **${builtin.b}**.`;
   const embed = new EmbedBuilder()
-    .setColor(active ?? 0x5865f2)
-    .setTitle("🎨 Battle frame color")
+    .setColor(accent.color ?? active ?? 0x5865f2)
+    .setTitle(`🎨 ${rd.label(rarity)} frame`)
     .setDescription(
-      `**${frameColorModeLabel(mode)}**\n` +
-      "Whole picture reads the entire card, vehicle included. Rarity emoji reads the emoji that rarity already uses. " +
-      "Custom blends Color A and Color B into the frame. Rainbow paints the frame in a spectrum.\n\n" +
+      `Pick the rarity, then set its frame. Saving writes **only that rarity**. Card battles, victory screens, sieges, and raids read it back.\n\n` +
+      `${lines.join("\n")}\n\n` +
+      `**${frameColorModeLabel(mode)}** · ${spec.origin === "rarity" ? "saved on this rarity" : "still using the shared setting"}\n` +
+      `${frameNote}\n` +
+      (mode === "image" && !assigned
+        ? "Picture mode samples each card. These swatches are the rarity default, ready when you switch to Custom.\n"
+        : `Match color **${accent.color == null ? "rarity" : hexOf(accent.color)}** — sampled from the frame this rarity is wearing now. A rainbow frame and a red frame use that same sample.\n`) +
       `Editing **Color ${slot.toUpperCase()}** · A ${colorA == null ? "unset" : hexOf(colorA)} · B ${colorB == null ? "unset" : hexOf(colorB)}`,
     );
   if (png) embed.setImage("attachment://frame-preview.png");
+  const builtinOn = usingBuiltinFrame(s, rarity);
   const modeBtn = (id: FrameColorMode, label: string) =>
-    new ButtonBuilder().setCustomId(`battleadmin:framemode:${id}:${slot}`).setLabel(label)
-      .setStyle(mode === id ? ButtonStyle.Success : ButtonStyle.Secondary);
+    new ButtonBuilder().setCustomId(`battleadmin:framemode:${id}:${rarity}:${slot}`).setLabel(label)
+      .setStyle(mode === id && !builtinOn ? ButtonStyle.Success : ButtonStyle.Secondary);
+  const safeEmoji = (emoji: string) => emoji && !emoji.includes(":") ? emoji : undefined;
   const rows = [
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder().setCustomId(`battleadmin:framerarity:${slot}`).setPlaceholder("Rarity this frame goes to")
+        .addOptions(RARITY_ORDER.map(r => {
+          const emoji = safeEmoji(rd.emoji(r));
+          return {
+            label: rd.label(r),
+            value: r,
+            description: resolveRarityFrame(s, r).origin === "rarity" ? "Own frame colors" : "Shared frame setting",
+            default: r === rarity,
+            ...(emoji ? { emoji } : {}),
+          };
+        })),
+    ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       modeBtn("image", "Picture"),
       modeBtn("emoji", "Emoji"),
       modeBtn("custom", "Custom"),
       modeBtn("rainbow", "Rainbow"),
+      new ButtonBuilder().setCustomId(`battleadmin:framedefault:${rarity}:${slot}`).setLabel("Default")
+        .setStyle(builtinOn ? ButtonStyle.Success : ButtonStyle.Secondary),
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("battleadmin:frameslot:a").setLabel("Color A").setStyle(slot === "a" ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("battleadmin:frameslot:b").setLabel("Color B").setStyle(slot === "b" ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("battleadmin:frameswap").setLabel("Swap").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`battleadmin:framewalk:${slot}:-1`).setLabel("Previous").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`battleadmin:framewalk:${slot}:1`).setLabel("Next").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`battleadmin:frameslot:${rarity}:a`).setLabel("Color A").setStyle(slot === "a" ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`battleadmin:frameslot:${rarity}:b`).setLabel("Color B").setStyle(slot === "b" ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`battleadmin:framewalk:${rarity}:${slot}:-1`).setLabel("Previous").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`battleadmin:framewalk:${rarity}:${slot}:1`).setLabel("Next").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("battleadmin:display").setLabel("Back").setStyle(ButtonStyle.Secondary),
     ),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-      new StringSelectMenuBuilder().setCustomId(`battleadmin:framefamily:${slot}`).setPlaceholder("Color family")
+      new StringSelectMenuBuilder().setCustomId(`battleadmin:framefamily:${rarity}:${slot}`).setPlaceholder("Color family")
         .addOptions(COLOR_FAMILIES.map((fam, i) => ({
           label: fam.label,
           value: fam.id,
@@ -1542,16 +1659,13 @@ async function buildFramePanel(guildId: string, slot: "a" | "b") {
         }))),
     ),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-      new StringSelectMenuBuilder().setCustomId(`battleadmin:frameshade:${slot}`).setPlaceholder(`${family.label} shades`)
+      new StringSelectMenuBuilder().setCustomId(`battleadmin:frameshade:${rarity}:${slot}`).setPlaceholder(`${family.label} shades`)
         .addOptions(family.shades.map((shade, i) => ({
           label: `${family.label} ${shade.label}`,
           value: shade.id,
           description: shade.hex,
           default: i === at.shade,
         }))),
-    ),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("battleadmin:display").setLabel("Back").setStyle(ButtonStyle.Secondary),
     ),
   ];
   return {

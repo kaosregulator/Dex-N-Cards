@@ -63,6 +63,9 @@ export const battleSettingsTable = pgTable("battle_settings", {
   battleFrameColorMode: text("battle_frame_color_mode").notNull().default("image"),
   battleFrameColorA: text("battle_frame_color_a"),
   battleFrameColorB: text("battle_frame_color_b"),
+  // Per-rarity frame colour recipes. Missing rarity = the shared mode above.
+  // Shape: { rare: { mode: "custom", a: "#e23b3b", b: "#ff8a80" }, ... }
+  battleFrameByRarity: jsonb("battle_frame_by_rarity").$type<Record<string, { mode?: string; a?: string | null; b?: string | null }> | null>(),
   // Per-side combat rules. Null means "use the shared rule" so existing servers
   // keep one number for both fighters until an admin sets a side.
   userMissChancePct: integer("user_miss_chance_pct"),

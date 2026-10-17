@@ -18,6 +18,7 @@ import { drawArenaBackground, drawImageBackground } from "./arena-bg.js";
 import { drawImpactDebris, physicsShake } from "./physics.js";
 import { extractArtColor } from "../battle/image/vibrant-color.js";
 import { stampCardAccent } from "../battle/frame-color.js";
+import { applyRarityAccent } from "./card-frames.js";
 
 // ── Encode tuning (ANIMATED arena mode) ──────────────────────────────────────
 // GIF encoding dominates the cost of an animated turn, and it scales with the
@@ -51,7 +52,8 @@ async function resolveColor(card: RenderCard): Promise<number> {
 }
 
 async function stampPair(a: RenderCard, b: RenderCard): Promise<[RenderCard, RenderCard]> {
-  return Promise.all([stampCardAccent(a), stampCardAccent(b)]);
+  const [left, right] = await Promise.all([stampCardAccent(a), stampCardAccent(b)]);
+  return [applyRarityAccent(left), applyRarityAccent(right)];
 }
 
 export async function renderBattleTurn(

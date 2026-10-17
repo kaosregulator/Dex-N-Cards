@@ -5,6 +5,7 @@
 // custom  blends two colours an admin scrolled to.
 // rainbow paints a rainbow frame.
 
+import sharp from "sharp";
 import { getCanvas, type Ctx } from "../animations/engine.js";
 import { loadCurrencyImage } from "../unbelievaboat/currency-canvas.js";
 import { dominantColorFromBuffer } from "../images/raster.js";
@@ -12,6 +13,10 @@ import { extractArtColor } from "./image/vibrant-color.js";
 
 export const FRAME_COLOR_MODES = ["image", "emoji", "custom", "rainbow"] as const;
 export type FrameColorMode = (typeof FRAME_COLOR_MODES)[number];
+
+/** Ornate card-frame files. The same sampler reads whichever file is assigned. */
+export const FRAME_IMAGE_COLORS = ["grey", "blue", "red", "gold", "rainbow"] as const;
+export type FrameImageColor = (typeof FRAME_IMAGE_COLORS)[number];
 
 export function frameColorModeOf(value: string | null | undefined): FrameColorMode {
   return value === "emoji" || value === "custom" || value === "rainbow" ? value : "image";
@@ -129,6 +134,7 @@ export async function renderFramePreview(opts: {
   mode: FrameColorMode;
   colorA: number | null;
   colorB: number | null;
+  title?: string | null;
 }): Promise<Buffer | null> {
   const mod = await getCanvas();
   if (!mod) return null;
@@ -166,7 +172,7 @@ export async function renderFramePreview(opts: {
   ctx.font = "700 13px DNSans, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(frameColorModeLabel(opts.mode), cardX + cardW / 2, cardY + 28);
+  ctx.fillText(opts.title?.slice(0, 22) || frameColorModeLabel(opts.mode), cardX + cardW / 2, cardY + 28);
   ctx.font = "500 11px DNSans, sans-serif";
   ctx.fillStyle = "#b5bac1";
   const caption = opts.mode === "image"
@@ -227,6 +233,7 @@ export async function colorFromEmoji(emoji: string | null | undefined): Promise<
 }
 
 export async function stampCardAccent<T extends {
+  rarity?: string | null;
   artUrl?: string | null;
   rarityColor?: number | null;
   accentEmoji?: string | null;
@@ -234,19 +241,23 @@ export async function stampCardAccent<T extends {
   frameColorA?: number | null;
   frameColorB?: number | null;
   frameSlot?: "a" | "b";
+  frameImage?: FrameImageColor | null;
+  frameBuffer?: Buffer | null;
   framePaint?: "solid" | "rainbow" | "blend";
   blendA?: number;
   blendB?: number;
 }>(card: T): Promise<T> {
-  if (!card.frameMode) return card;
+  if (!card.frameMode && !card.frameImage && !card.frameBuffer) return card;
   const accent = await resolveFrameAccent({
-    mode: card.frameMode,
+    mode: card.frameMode ?? "image",
     artUrl: card.artUrl,
     rarityEmoji: card.accentEmoji,
     rarityColor: card.rarityColor,
     colorA: card.frameColorA,
     colorB: card.frameColorB,
     slot: card.frameSlot,
+    frameImage: card.frameImage,
+    frameBuffer: card.frameBuffer,
   });
   return {
     ...card,
@@ -262,6 +273,174 @@ export interface FrameAccent {
   paint: "solid" | "rainbow" | "blend";
   blendA?: number;
   blendB?: number;
+  /** Staff chose this tier, or a frame image is on it. Shared picture mode does not. */
+  ownsColor: boolean;
+}
+
+const sampleCache = new Map<string, number>();
+
+function rememberSample(key: string, color: number | null): number | null {
+  if (color == null) return null;
+  sampleCache.set(key, color);
+  if (sampleCache.size > 128) {
+    const oldest = sampleCache.keys().next().value;
+    if (oldest !== undefined) sampleCache.delete(oldest);
+  }
+  return color;
+}
+
+/** One sampler for every frame source. The key is the frame that is on the card now. */
+export async function sampleFrameBuffer(key: string, input: Buffer): Promise<number | null> {
+  const cached = sampleCache.get(key);
+  if (cached !== undefined) return cached;
+  const color = await dominantColorFromBuffer(input);
+  return rememberSample(key, color);
+}
+
+const frameImageCache = new Map<string, { color: number; rainbow: boolean }>();
+
+function hsvOf(r: number, g: number, b: number): { h: number; s: number; v: number } {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === rn) h = ((gn - bn) / d) % 6;
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s: max === 0 ? 0 : d / max, v: max };
+}
+
+/**
+ * Colour of an ornate frame image.
+ * Every frame shares the same bronze inner trim, so that trim is skipped and the
+ * coloured edge is what gets sampled. A rainbow edge and a red edge take this
+ * same path; a wide spread of hues is the rainbow.
+ */
+export async function sampleFrameImage(key: string, input: Buffer): Promise<{ color: number; rainbow: boolean } | null> {
+  const cached = frameImageCache.get(key);
+  if (cached) return cached;
+  try {
+    const size = 96;
+    const { data, info } = await sharp(input, { animated: false, pages: 1 })
+      .ensureAlpha()
+      .resize(size, size, { fit: "fill" })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const scored = scoreFramePixels(data, info.width || size, info.height || size, info.channels || 4);
+    if (!scored) return null;
+    frameImageCache.set(key, scored);
+    if (frameImageCache.size > 32) {
+      const oldest = frameImageCache.keys().next().value;
+      if (oldest !== undefined) frameImageCache.delete(oldest);
+    }
+    return scored;
+  } catch {
+    return null;
+  }
+}
+
+function scoreFramePixels(data: Buffer, cols: number, rows: number, channels: number): { color: number; rainbow: boolean } | null {
+  const distinctive = collectFramePixels(data, cols, rows, channels, true);
+  if (distinctive.kept >= 40) return finishFrameScore(distinctive);
+  const includingTrim = collectFramePixels(data, cols, rows, channels, false);
+  if (includingTrim.kept >= 20) return { color: includingTrim.color, rainbow: false };
+  return null;
+}
+
+function collectFramePixels(data: Buffer, cols: number, rows: number, channels: number, skipSharedTrim: boolean): {
+  kept: number;
+  color: number;
+  rainbow: boolean;
+} {
+  const buckets = new Map<number, { r: number; g: number; b: number; w: number }>();
+  const hues = new Array<number>(12).fill(0);
+  let kept = 0;
+  let vivid = 0;
+  let vividColor = 0;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const i = (y * cols + x) * channels;
+      const r = data[i] ?? 0;
+      const g = data[i + 1] ?? 0;
+      const b = data[i + 2] ?? 0;
+      const a = channels > 3 ? (data[i + 3] ?? 255) : 255;
+      if (a < 100) continue;
+      const { h, s, v } = hsvOf(r, g, b);
+      if (v < 0.18 || s < 0.35) continue;
+      if (skipSharedTrim && h >= 25 && h <= 58) continue;
+      kept++;
+      hues[Math.floor(h / 30) % 12]!++;
+      const strength = s * v;
+      if (strength > vivid) {
+        vivid = strength;
+        vividColor = (r << 16) | (g << 8) | b;
+      }
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+      const weight = s * (0.4 + v);
+      const bucket = buckets.get(key) ?? { r: 0, g: 0, b: 0, w: 0 };
+      bucket.r += r * weight;
+      bucket.g += g * weight;
+      bucket.b += b * weight;
+      bucket.w += weight;
+      buckets.set(key, bucket);
+    }
+  }
+  let best: { r: number; g: number; b: number; w: number } | null = null;
+  for (const bucket of buckets.values()) {
+    if (!best || bucket.w > best.w) best = bucket;
+  }
+  const averaged = best && best.w > 0
+    ? (Math.round(best.r / best.w) << 16) | (Math.round(best.g / best.w) << 8) | Math.round(best.b / best.w)
+    : vividColor;
+  const spread = hues.filter(n => n > kept * 0.08).length;
+  const rainbow = spread >= 5;
+  return { kept, color: rainbow ? vividColor : averaged, rainbow };
+}
+
+function finishFrameScore(scored: { color: number; rainbow: boolean; kept: number }): { color: number; rainbow: boolean } {
+  return { color: scored.color, rainbow: scored.rainbow };
+}
+
+function mixChannels(a: number, b: number, t: number): number {
+  const channel = (shift: number) => Math.round((((a >> shift) & 255) * (1 - t)) + (((b >> shift) & 255) * t));
+  return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+}
+
+function rainbowAt(t: number): number {
+  const scaled = Math.max(0, Math.min(0.9999, t)) * (RAINBOW.length - 1);
+  const i = Math.floor(scaled);
+  const from = parseHexColor(RAINBOW[i]!) ?? 0xff4d4d;
+  const to = parseHexColor(RAINBOW[Math.min(RAINBOW.length - 1, i + 1)]!) ?? from;
+  return mixChannels(from, to, scaled - i);
+}
+
+/** Paint a rainbow or a two-colour frame into a picture, then sample it like any other image. */
+export async function samplePaintedFrame(kind: "rainbow" | "swatch", a: number, b: number): Promise<number | null> {
+  const key = kind === "rainbow" ? "paint:rainbow" : `paint:${hexOf(a)}:${hexOf(b)}`;
+  const cached = sampleCache.get(key);
+  if (cached !== undefined) return cached;
+  const width = 24;
+  const height = 24;
+  const data = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const t = (x + y) / (width + height - 2);
+      const color = kind === "rainbow" ? rainbowAt(t) : mixChannels(a, b, t);
+      const i = (y * width + x) * 3;
+      data[i] = (color >> 16) & 255;
+      data[i + 1] = (color >> 8) & 255;
+      data[i + 2] = color & 255;
+    }
+  }
+  const png = await sharp(data, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  return sampleFrameBuffer(key, png);
 }
 
 export async function resolveFrameAccent(opts: {
@@ -273,20 +452,42 @@ export async function resolveFrameAccent(opts: {
   colorB?: number | null;
   /** Which custom colour this card wears when only one of the two is set. */
   slot?: "a" | "b";
+  /** Ornate frame currently assigned to this rarity, when frames are on. */
+  frameImage?: FrameImageColor | null;
+  frameBuffer?: Buffer | null;
 }): Promise<FrameAccent> {
-  if (opts.mode === "rainbow") return { color: opts.rarityColor ?? 0xff4fd8, paint: "rainbow" };
+  if (opts.mode === "rainbow") {
+    const sampled = await samplePaintedFrame("rainbow", 0, 0);
+    return { color: sampled ?? opts.rarityColor ?? 0xff4fd8, paint: "rainbow", ownsColor: true };
+  }
   if (opts.mode === "custom") {
     const a = opts.colorA ?? null;
     const b = opts.colorB ?? null;
-    if (a != null && b != null) return { color: opts.slot === "b" ? b : a, paint: "blend", blendA: a, blendB: b };
+    if (a != null && b != null) {
+      const sampled = await samplePaintedFrame("swatch", a, b);
+      return { color: sampled ?? (opts.slot === "b" ? b : a), paint: "blend", blendA: a, blendB: b, ownsColor: true };
+    }
     const one = a ?? b;
-    if (one != null) return { color: one, paint: "solid" };
+    if (one != null) {
+      const sampled = await samplePaintedFrame("swatch", one, one);
+      return { color: sampled ?? one, paint: "solid", ownsColor: true };
+    }
   }
   if (opts.mode === "emoji") {
     const fromEmoji = await colorFromEmoji(opts.rarityEmoji);
-    if (fromEmoji != null) return { color: fromEmoji, paint: "solid" };
+    if (fromEmoji != null) return { color: fromEmoji, paint: "solid", ownsColor: true };
+  }
+  if (opts.frameImage && opts.frameBuffer) {
+    const sampled = await sampleFrameImage(`png:${opts.frameImage}`, opts.frameBuffer);
+    if (sampled) {
+      return {
+        color: sampled.color,
+        paint: sampled.rainbow ? "rainbow" : "solid",
+        ownsColor: true,
+      };
+    }
   }
   const fromArt = await extractArtColor(opts.artUrl);
-  if (fromArt != null) return { color: fromArt, paint: "solid" };
-  return { color: opts.rarityColor ?? null, paint: "solid" };
+  if (fromArt != null) return { color: fromArt, paint: "solid", ownsColor: false };
+  return { color: opts.rarityColor ?? null, paint: "solid", ownsColor: false };
 }

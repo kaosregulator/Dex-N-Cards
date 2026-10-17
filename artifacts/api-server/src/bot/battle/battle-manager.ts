@@ -67,7 +67,8 @@ import {
 } from "./status-hud.js";
 import { formatAchievementLine } from "./achievement-engine.js";
 import { rarityLabel, rarityEmoji, rarityColor, type RarityDisplayMap } from "../cards-data.js";
-import { frameColorModeOf, parseHexColor } from "./frame-color.js";
+import { resolveRarityFrame, isBuiltinRarity } from "./rarity-frame.js";
+import { assignedFrameColors, readFramePng } from "../animations/card-frames.js";
 import { buttonEmoji } from "../discord-emoji.js";
 import { getRarityContext, getRarityDisplayOverrides } from "../db.js";
 import { getCardDisplayRarity, BUILTIN_POSITIONS, effectiveRarityKey, rarityLadderRank, type RarityContext } from "../rarity-runtime.js";
@@ -141,8 +142,9 @@ interface BattleRuntime {
   turnNumber: number;
   currentSide: 0 | 1;
   staked: boolean;
-  displayMap: RarityDisplayMap | null;   // source-of-truth rarity display overrides
+    displayMap: RarityDisplayMap | null;   // source-of-truth rarity display overrides
   ctx: RarityContext;                    // source-of-truth rarity context (profiles + custom tiers)
+  cardFrames: ReturnType<typeof assignedFrameColors>;
   // When a staked PvP battle starts, one copy of each fighter's card is removed
   // from their collection and held here (escrow). This makes it impossible to
   // burn/trade a staked card mid-battle to dodge a loss; the copies are settled
@@ -337,7 +339,11 @@ export async function startChallenge(
   if (!guild) { await interaction.reply({ content: "Battles can only be started in a server.", flags: MessageFlags.Ephemeral }); return; }
   const guildId = guild.id;
   const settings = await getBattleSettings(guildId);
-  const [displayMap, ctx] = await Promise.all([getRarityDisplayOverrides(guildId), getRarityContext(guildId)]);
+  const [displayMap, ctx, guildSettings] = await Promise.all([
+    getRarityDisplayOverrides(guildId),
+    getRarityContext(guildId),
+    getOrCreateGuildSettings(guildId).catch(() => null),
+  ]);
 
   if (!settings.enabled) {
     await interaction.reply({ content: "⚔️ The battle system is currently disabled on this server.", flags: MessageFlags.Ephemeral });
@@ -394,6 +400,7 @@ export async function startChallenge(
     turnTimer: null, aiOfferTimer: null, ttlTimer: null, processing: false, createdAt: Date.now(),
     displayMap,
     ctx,
+    cardFrames: guildSettings ? assignedFrameColors(guildSettings as unknown as Record<string, unknown>) : {},
     vsImage: null, battleBgUrl: null, sceneArenaKey: null, vsImageIsGif: false, fatality: null,
     hudShown: null, hudGen: 0, hudSettle: null, hudSnapshot: null,
   };
@@ -1405,6 +1412,20 @@ const VS_IMAGE_NAME = "battle-vs.png";
 // only a frozen first frame — the extension, not the bytes, drives animation.
 const VS_IMAGE_NAME_GIF = "battle-vs.gif";
 
+function frameLook(rt: BattleRuntime, rarity: Rarity, slot: "a" | "b") {
+  const key = isBuiltinRarity(rarity) ? rarity : "common";
+  const spec = resolveRarityFrame(rt.settings, key);
+  const frameImage = rt.cardFrames[key] ?? null;
+  return {
+    frameMode: spec.mode,
+    frameColorA: spec.colorA,
+    frameColorB: spec.colorB,
+    frameSlot: slot,
+    frameImage,
+    frameBuffer: frameImage ? readFramePng(frameImage) : null,
+  };
+}
+
 // Map a live Combatant to the renderer's card description.
 function combatantToRenderCard(rt: BattleRuntime, c: Combatant, slot: "a" | "b" = c.side === 1 ? "b" : "a"): RenderCard {
   const display = c.cardRarityDisplay;
@@ -1414,10 +1435,7 @@ function combatantToRenderCard(rt: BattleRuntime, c: Combatant, slot: "a" | "b" 
     rarityLabel: display?.label ?? (rarityLabel(c.cardRarity, null, rt.displayMap) ?? c.cardRarity),
     rarityColor: display?.color ?? rarityColor(c.cardRarity, null, rt.displayMap),
     accentEmoji: display?.emoji ?? rarityEmoji(c.cardRarity, null, rt.displayMap),
-    frameMode: frameColorModeOf(rt.settings.battleFrameColorMode),
-    frameColorA: parseHexColor(rt.settings.battleFrameColorA),
-    frameColorB: parseHexColor(rt.settings.battleFrameColorB),
-    frameSlot: slot,
+    ...frameLook(rt, c.cardRarity, slot),
     cardId: c.cardId,
     cardType: c.cardType,
     artUrl: c.cardImageUrl,
