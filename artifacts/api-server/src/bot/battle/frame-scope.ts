@@ -25,7 +25,7 @@ export async function loadRarityAccents(
     const spec = resolveRarityFrame(settings, rarity);
     const fallback = parseHexColor(builtinRarityFrame(rarity).a);
     const frameImage = frames[rarity] ?? null;
-    out[rarity] = await resolveFrameAccent({
+    const accent = await resolveFrameAccent({
       mode: spec.mode,
       colorA: spec.colorA,
       colorB: spec.colorB,
@@ -33,6 +33,7 @@ export async function loadRarityAccents(
       frameImage,
       frameBuffer: frameImage ? buffers[frameImage] ?? null : null,
     });
+    out[rarity] = { ...accent, style: spec.style };
   }
   return out;
 }

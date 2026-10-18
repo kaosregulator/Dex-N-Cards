@@ -22,7 +22,8 @@ import { queueRender } from "./render-queue.js";
 import { getRarityEffectColor, loadArt as loadArtShared, createBurst, drawParticles, drawDamageNumber, drawScreenFlash } from "./effects.js";
 import { drawAtmosphere, atmospherePreset } from "./atmosphere.js";
 import { drawImpactDebris, physicsShake } from "./physics.js";
-import { FRAME_INSET, accentForRarity } from "./card-frames.js";
+import { accentForRarity, styleForRarity } from "./card-frames.js";
+import { drawStyledFrame, styleArtWindow } from "../battle/frame-styles.js";
 import { extractArtColor } from "../battle/image/vibrant-color.js";
 import { encodeAnimation, getCanvas, TITLE_FONT_FAMILY, easeInOutCubic, easeOutBack, type CanvasMod, type Ctx } from "./engine.js";
 import type { Rarity } from "../cards-data.js";
@@ -753,13 +754,14 @@ function drawFlatCard(ctx: Ctx, o: FlatCardOpts): void {
     ctx.restore();
   }
 
-  // Dark backing + art (aspect preserved via cover into the frame window).
+  // Dark backing + art. The window matches the card's aspect, so the picture
+  // is not cropped by an uneven frame inset.
   fillRoundRect(ctx, x, y, w, h, 12, "#0b1220");
-  const inset = FRAME_INSET;
-  const ax = x + w * inset.left;
-  const ay = y + h * inset.top;
-  const aw = w * (1 - inset.left - inset.right);
-  const ah = h * (1 - inset.top - inset.bottom);
+  const win = styleArtWindow(x, y, w, h);
+  const ax = win.x;
+  const ay = win.y;
+  const aw = win.w;
+  const ah = win.h;
   ctx.save();
   roundRectPath(ctx, ax, ay, aw, ah, 8);
   ctx.clip();
@@ -779,15 +781,16 @@ function drawFlatCard(ctx: Ctx, o: FlatCardOpts): void {
   if (o.flashWhite > 0.01) { ctx.globalAlpha = 0.55 * o.flashWhite; ctx.fillStyle = "#ffffff"; ctx.fillRect(ax, ay, aw, ah); }
   ctx.restore();
 
-  // 9-slice-style frame overlay (DN Card Frame) — corners preserved by the PNG.
-  if (o.frame) {
-    if (fallen) ctx.save(), ctx.globalAlpha = 0.75;
-    ctx.drawImage(o.frame as never, x, y, w, h);
-    if (fallen) ctx.restore();
-  } else {
-    strokeRoundRect(ctx, x, y, w, h, 12, hex(o.color), 3);
-    strokeRoundRect(ctx, x + 4, y + 4, w - 8, h - 8, 9, "rgba(255,255,255,0.2)", 1.2);
-  }
+  const accent = accentForRarity(o.card.rarity);
+  if (fallen) ctx.save(), ctx.globalAlpha = 0.75;
+  drawStyledFrame(ctx, x, y, w, h, {
+    style: styleForRarity(o.card.rarity),
+    color: accent?.color ?? o.color,
+    paint: accent?.paint,
+    blendA: accent?.blendA,
+    blendB: accent?.blendB,
+  });
+  if (fallen) ctx.restore();
 
   if (fallen) {
     const mx = cx, my = y + h * 0.45, r = 18;

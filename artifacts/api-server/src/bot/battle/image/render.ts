@@ -18,7 +18,7 @@
 import type { Rarity } from "../../cards-data.js";
 import {
   CANVAS, CARD_BOX, VS_BADGE, resolveBackground, rarityHex,
-  RARITY_BADGE_BG, RARITY_BADGE_FG, resolveElement, resolveFrameAsset, FONTS, FONT_FILES,
+  RARITY_BADGE_BG, RARITY_BADGE_FG, resolveElement, FONTS, FONT_FILES,
 } from "./theme.js";
 import { logger } from "../../../lib/logger.js";
 import { queueRender } from "../../animations/render-queue.js";
@@ -30,7 +30,8 @@ import { applyRarityAccent } from "../../animations/card-frames.js";
 import { canvasPaintableText } from "../../discord-emoji.js";
 import { registerCanvasSans, CANVAS_SANS_STACK } from "../../canvas-fonts.js";
 import { measureCustomEmojiText, segmentCustomEmoji, warmCanvasText } from "../../unbelievaboat/canvas-emoji-text.js";
-import { loadArt as loadSharedArt, BACKDROP_MAX_EDGE, CARD_ART_MAX_EDGE } from "../../animations/effects.js";
+import { loadArt as loadSharedArt, drawCardFrame, BACKDROP_MAX_EDGE, CARD_ART_MAX_EDGE } from "../../animations/effects.js";
+import { styleArtWindow, type FrameStyle } from "../frame-styles.js";
 
 // The minimal card description the renderer needs. Decoupled from Combatant so
 // the renderer can draw prep screens, previews, or anything else.
@@ -54,6 +55,7 @@ export interface RenderCard {
   framePaint?: "solid" | "rainbow" | "blend";
   blendA?: number;
   blendB?: number;
+  frameStyle?: FrameStyle;
   attack?: number | null;      // shown under the name
   special?: string | null;     // signature move name, shown under the name
   // Equipped progression (level) frame tier — overrides the rarity frame when set.
@@ -143,23 +145,6 @@ function cardGlyphs(card: RenderCard): Array<string | null | undefined> {
   return [card.name, card.series, card.rarityLabel, card.special, card.accentEmoji];
 }
 
-const RAINBOW_STOPS = ["#ff4d4d", "#ff9f1a", "#ffe14d", "#3ddc6a", "#3dc6ff", "#7a5cff", "#ff4fd8"];
-
-function frameStroke(ctx: Ctx, x: number, y: number, w: number, h: number, color: string, card: RenderCard) {
-  if (card.framePaint === "rainbow") {
-    const g = ctx.createLinearGradient(x, y, x + w, y + h);
-    RAINBOW_STOPS.forEach((hex, i) => g.addColorStop(i / (RAINBOW_STOPS.length - 1), hex));
-    return g;
-  }
-  if (card.framePaint === "blend" && card.blendA != null && card.blendB != null) {
-    const g = ctx.createLinearGradient(x, y, x + w, y + h);
-    g.addColorStop(0, `#${card.blendA.toString(16).padStart(6, "0")}`);
-    g.addColorStop(1, `#${card.blendB.toString(16).padStart(6, "0")}`);
-    return g;
-  }
-  return color;
-}
-
 // ── Shared drawing helpers ───────────────────────────────────────────────────
 type Ctx = import("@napi-rs/canvas").SKRSContext2D;
 
@@ -239,9 +224,8 @@ function layerGlow(ctx: Ctx, x: number, color: string) {
 
 // Card art clipped inside the frame, with a base fill behind it.
 async function layerArt(ctx: Ctx, mod: CanvasMod, x: number, card: RenderCard) {
-  const inset = CARD_BOX.borderWidth + CARD_BOX.artInset;
-  const ax = x + inset, ay = CARD_BOX.y + inset;
-  const aw = CARD_BOX.width - inset * 2, ah = CARD_BOX.height - inset * 2;
+  const win = styleArtWindow(x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height);
+  const ax = win.x, ay = win.y, aw = win.w, ah = win.h;
   ctx.save();
   roundRectPath(ctx, ax, ay, aw, ah, CARD_BOX.radius - 6);
   ctx.clip();
@@ -262,33 +246,19 @@ async function layerArt(ctx: Ctx, mod: CanvasMod, x: number, card: RenderCard) {
   ctx.restore();
 }
 
-// Frame-image overlay: draws your own frame PNG over the card box (stretched to
-// fit). Returns true if a frame was drawn, so the caller can skip the plain
-// drawn border. Any load failure silently returns false (border used instead).
-async function layerFrameImage(
-  ctx: Ctx, mod: CanvasMod, rarity: Rarity, x: number, y: number, w: number, h: number,
-): Promise<boolean> {
-  const asset = resolveFrameAsset(rarity);
-  if (!asset) return false;
-  const img = await loadArt(mod, asset.src);
-  if (!img) return false;
-  ctx.drawImage(img, x, y, w, h);
-  return true;
-}
-
-// Rarity-coloured frame border.
-function layerFrame(ctx: Ctx, x: number, color: string, card: RenderCard) {
-  ctx.save();
-  ctx.lineWidth = CARD_BOX.borderWidth;
-  ctx.strokeStyle = frameStroke(ctx, x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height, color, card);
-  roundRectPath(ctx, x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height, CARD_BOX.radius);
-  ctx.stroke();
-  // inner hairline
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = "rgba(255,255,255,0.25)";
-  roundRectPath(ctx, x + CARD_BOX.borderWidth, CARD_BOX.y + CARD_BOX.borderWidth, CARD_BOX.width - CARD_BOX.borderWidth * 2, CARD_BOX.height - CARD_BOX.borderWidth * 2, CARD_BOX.radius - 4);
-  ctx.stroke();
-  ctx.restore();
+function paintBattleFrame(ctx: Ctx, x: number, y: number, w: number, h: number, card: RenderCard): void {
+  drawCardFrame(
+    ctx as unknown as AnimCtx,
+    x, y, w, h,
+    card.rarityColor ?? 0xf1c40f,
+    CARD_BOX.borderWidth,
+    card.rarity,
+    card.progTier,
+    card.framePaint,
+    card.blendA,
+    card.blendB,
+    card.frameStyle,
+  );
 }
 
 // Top-left chips: level + element icon.
@@ -409,9 +379,7 @@ async function drawCard(ctx: Ctx, mod: CanvasMod, x: number, card: RenderCard) {
   const color = rarityHex(card.rarity, card.rarityColor);
   layerGlow(ctx, x, color);
   await layerArt(ctx, mod, x, card);
-  // Your frame PNG (if configured) replaces the drawn border.
-  const framed = await layerFrameImage(ctx, mod, card.rarity, x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height);
-  if (!framed) layerFrame(ctx, x, color, card);
+  paintBattleFrame(ctx, x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height, card);
   layerChips(ctx, x, card);
   layerRarityBadge(ctx, x, card, color);
   layerNameplate(ctx, x, card, color);
@@ -575,7 +543,8 @@ async function drawBigCard(
   ctx: Ctx, mod: CanvasMod, gx: number, gy: number, gw: number, gh: number, card: RenderCard,
 ) {
   const color = rarityHex(card.rarity, card.rarityColor);
-  const border = 7, radius = 20, inset = border + 10;
+  const border = 7, radius = 20, pad = border + 10;
+  const win = styleArtWindow(gx, gy, gw, gh);
 
   // rarity glow
   ctx.save();
@@ -584,7 +553,7 @@ async function drawBigCard(
   ctx.restore();
 
   // art (clipped, cover-fit) + readability gradient
-  const ax = gx + inset, ay = gy + inset, aw = gw - inset * 2, ah = gh - inset * 2;
+  const ax = win.x, ay = win.y, aw = win.w, ah = win.h;
   ctx.save();
   roundRectPath(ctx, ax, ay, aw, ah, radius - 6); ctx.clip();
   ctx.fillStyle = "#0e0e12"; ctx.fillRect(ax, ay, aw, ah);
@@ -599,16 +568,7 @@ async function drawBigCard(
   ctx.fillStyle = grad; ctx.fillRect(ax, ay + ah - 150, aw, 150);
   ctx.restore();
 
-  // frame — your PNG overlay if configured, else the drawn border.
-  const framed = await layerFrameImage(ctx, mod, card.rarity, gx, gy, gw, gh);
-  if (!framed) {
-    ctx.save();
-    ctx.lineWidth = border; ctx.strokeStyle = frameStroke(ctx, gx, gy, gw, gh, color, card);
-    roundRectPath(ctx, gx, gy, gw, gh, radius); ctx.stroke();
-    ctx.lineWidth = 1.5; ctx.strokeStyle = "rgba(255,255,255,0.25)";
-    roundRectPath(ctx, gx + border, gy + border, gw - border * 2, gh - border * 2, radius - 4); ctx.stroke();
-    ctx.restore();
-  }
+  paintBattleFrame(ctx, gx, gy, gw, gh, card);
 
   // rarity badge top-right
   const rx = gx + gw - border - 10, ry = gy + border + 10;
@@ -633,24 +593,24 @@ async function drawBigCard(
 
   // nameplate + stat line
   const cxc = gx + gw / 2;
-  const nameY = gy + gh - inset - 34;
+  const nameY = gy + gh - pad - 34;
   ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
   if (card.series) {
     ctx.font = font(14, FONTS.body, "700"); ctx.fillStyle = "rgba(220,220,225,0.85)";
     ctx.fillText(card.series.toUpperCase().slice(0, 40), cxc, nameY - 28);
   }
-  const namePx = fitText(ctx, card.name, gw - inset * 2 - 10, 30, FONTS.display, "800");
+  const namePx = fitText(ctx, card.name, gw - pad * 2 - 10, 30, FONTS.display, "800");
   ctx.font = font(namePx, FONTS.display, "800"); ctx.fillStyle = "#ffffff";
   ctx.shadowColor = "rgba(0,0,0,0.85)"; ctx.shadowBlur = 6; ctx.fillText(card.name, cxc, nameY);
   ctx.shadowBlur = 0;
-  const uw = Math.min(gw - inset * 2 - 20, ctx.measureText(card.name).width);
+  const uw = Math.min(gw - pad * 2 - 20, ctx.measureText(card.name).width);
   ctx.fillStyle = color; ctx.fillRect(cxc - uw / 2, nameY + 7, uw, 3);
   if (card.attack != null || card.special) {
     const parts: string[] = [];
     if (card.attack != null) parts.push(`ATK ${card.attack.toLocaleString()}`);
     if (card.special) parts.push(card.special);
     const text = parts.join("  ·  ");
-    const spx = fitText(ctx, text, gw - inset * 2 - 6, 15, FONTS.body, "700");
+    const spx = fitText(ctx, text, gw - pad * 2 - 6, 15, FONTS.body, "700");
     ctx.font = font(spx, FONTS.body, "700"); ctx.fillStyle = "rgba(235,235,240,0.9)";
     ctx.shadowColor = "rgba(0,0,0,0.85)"; ctx.shadowBlur = 4;
     ctx.fillText(text, cxc, nameY + 26); ctx.shadowBlur = 0;

@@ -12,7 +12,6 @@ import { RARITY_WEIGHTS, RARITY_LABELS, RARITY_EMOJI, rarityLabel, rarityEmoji, 
 import type { CustomPack, GuildSettings } from "@workspace/db";
 import { PACK_TIERS, PACK_TIER_META, PACK_DEFAULTS, resolveTierConfig, tierLabel, type PackTier } from "./pack.js";
 import { packRarityPanelPayload, resetPackRarityAllow, savePackRarityAllow } from "./pack-rarity-panel.js";
-import { FRAME_COLORS } from "../animations/card-frames.js";
 import {
   EXPERIENCES, MODE_LABELS, experienceByKey, getPrimary, getFallback, activityConfigured,
   type PresentationMode,
@@ -92,21 +91,6 @@ export async function handleConfigSelect(interaction: StringSelectMenuInteractio
   const guildId = interaction.guild.id;
   const action = interaction.customId;
   const value = interaction.values[0];
-
-  // ── Card Frames selects (own sub-panel, per-rarity state) ──────────────────
-  if (action === "config_frame_rarity") {
-    const [settings, displayMap] = await Promise.all([getOrCreateGuildSettings(guildId), getRarityDisplayOverrides(guildId)]);
-    await interaction.editReply({ embeds: [buildFramesEmbed(settings, value!, displayMap)], components: buildFramesComponents(settings, value!, displayMap) });
-    return;
-  }
-  if (action.startsWith("config_frame_color:")) {
-    const rarity = action.slice("config_frame_color:".length);
-    const col = frameColumnFor(rarity);
-    if (col) await updateGuildSettings(guildId, { [col]: value === "none" ? null : value } as Partial<GuildSettings>);
-    const [settings, displayMap] = await Promise.all([getOrCreateGuildSettings(guildId), getRarityDisplayOverrides(guildId)]);
-    await interaction.editReply({ embeds: [buildFramesEmbed(settings, rarity, displayMap)], components: buildFramesComponents(settings, rarity, displayMap) });
-    return;
-  }
 
   const patch: Partial<GuildSettings> = {};
   if (action === "config_mode") {
@@ -467,19 +451,6 @@ export async function handleConfigButton(interaction: ButtonInteraction): Promis
       await interaction.editReply({ embeds: [buildAnimationEmbed(settings)], components: buildAnimationComponents(settings) });
     } else {
       await interaction.editReply({ embeds: [buildShinyEmbed(settings)], components: buildShinyComponents(settings) });
-    }
-    return;
-  } else if (action === "frames") {
-    if (arg === "toggle") {
-      const s = await getOrCreateGuildSettings(guildId);
-      await updateGuildSettings(guildId, { cardFramesEnabled: !((s as unknown as { cardFramesEnabled?: boolean }).cardFramesEnabled ?? false) } as Partial<GuildSettings>);
-    }
-    const settings = await getOrCreateGuildSettings(guildId);
-    if (arg === "back") {
-      await interaction.editReply({ embeds: [buildAnimationEmbed(settings)], components: buildAnimationComponents(settings) });
-    } else {
-      const displayMap = await getRarityDisplayOverrides(guildId);
-      await interaction.editReply({ embeds: [buildFramesEmbed(settings, "common", displayMap)], components: buildFramesComponents(settings, "common", displayMap) });
     }
     return;
   } else if (action === "exp") {
@@ -1030,7 +1001,6 @@ function buildAnimationComponents(s: GuildSettings) {
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("config:entrance:open").setLabel("🎬 Card Entrance").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("config:shiny:open").setLabel("✨ Shiny Hub").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("config:frames:open").setLabel("🖼️ Card Frames").setStyle(ButtonStyle.Primary),
   );
   const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("config:anim:back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
@@ -1185,86 +1155,6 @@ export async function handleShinyNameModal(interaction: ModalSubmitInteraction):
   await updateGuildSettings(guildId, { shinyName: raw || null } as Partial<GuildSettings>);
   const fresh = await getOrCreateGuildSettings(guildId);
   await interaction.editReply({ embeds: [buildShinyEmbed(fresh)], components: buildShinyComponents(fresh) });
-}
-
-// ── Card Frames sub-panel ────────────────────────────────────────────────────
-const FRAME_COLUMN: Record<string, keyof GuildSettings> = {
-  common: "cardFrameCommon" as keyof GuildSettings,
-  uncommon: "cardFrameUncommon" as keyof GuildSettings,
-  rare: "cardFrameRare" as keyof GuildSettings,
-  epic: "cardFrameEpic" as keyof GuildSettings,
-  legendary: "cardFrameLegendary" as keyof GuildSettings,
-  mythic: "cardFrameMythic" as keyof GuildSettings,
-};
-function frameColumnFor(rarity: string): keyof GuildSettings | undefined {
-  return FRAME_COLUMN[rarity];
-}
-const FRAME_COLOR_META: Record<string, { label: string; emoji: string }> = {
-  grey: { label: "Grey", emoji: "🩶" },
-  blue: { label: "Blue", emoji: "🟦" },
-  red: { label: "Red", emoji: "🟥" },
-  gold: { label: "Gold", emoji: "🟨" },
-  rainbow: { label: "Rainbow", emoji: "🌈" },
-};
-function framesEnabledOf(s: GuildSettings): boolean {
-  return (s as unknown as { cardFramesEnabled?: boolean }).cardFramesEnabled ?? false;
-}
-function frameOf(s: GuildSettings, rarity: string): string | null {
-  const col = frameColumnFor(rarity);
-  const v = col ? (s[col] as unknown) : null;
-  return typeof v === "string" && v ? v : null;
-}
-
-function buildFramesEmbed(s: GuildSettings, active: string, displayMap?: RarityDisplayMap | null): EmbedBuilder {
-  const enabled = framesEnabledOf(s);
-  const rows = getRarityOrder(s).map((r) => {
-    const fc = frameOf(s, r);
-    const cur = fc ? `${FRAME_COLOR_META[fc]?.emoji ?? ""} ${FRAME_COLOR_META[fc]?.label ?? fc}` : "— drawn border";
-    const arrow = r === active ? "▸ " : "  ";
-    return `${arrow}${rarityEmoji(r, s, displayMap)} **${rarityLabel(r, s, displayMap)}** → ${cur}`;
-  });
-  return new EmbedBuilder()
-    .setTitle("🖼️ Card Frames")
-    .setColor(enabled ? 0xffd54a : 0x808790)
-    .setDescription(
-      (enabled ? "🟢 **Frames ON** — mapped rarities use their image frame everywhere a card renders."
-               : "🔴 **Frames OFF** — every card uses the current drawn border (nothing changes).") +
-      "\n\nPick a rarity, then choose its frame. **— drawn border** keeps the classic thin border for that rarity. " +
-      "Frames auto-scale to any card size.\n\n" + rows.join("\n"),
-    );
-}
-
-function buildFramesComponents(s: GuildSettings, active: string, displayMap?: RarityDisplayMap | null) {
-  const enabled = framesEnabledOf(s);
-  const order = getRarityOrder(s);
-  const rarityRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId("config_frame_rarity")
-      .setPlaceholder("🎯 Rarity to configure")
-      .addOptions(order.map(r => ({
-        label: rarityLabel(r, s, displayMap), emoji: rarityEmoji(r, s, displayMap), value: r, default: r === active,
-      }))),
-  );
-  const cur = frameOf(s, active);
-  const colorRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(`config_frame_color:${active}`)
-      .setPlaceholder(`🖼️ Frame for ${rarityLabel(active as Rarity, s, displayMap)}`)
-      .addOptions([
-        { label: "— Drawn border (default)", value: "none", emoji: "➖", default: cur === null },
-        ...FRAME_COLORS.map(c => ({
-          label: FRAME_COLOR_META[c]!.label, emoji: FRAME_COLOR_META[c]!.emoji, value: c, default: cur === c,
-        })),
-      ]),
-  );
-  const btnRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("config:frames:toggle")
-      .setLabel(enabled ? "🟢 Frames ON" : "🔴 Frames OFF")
-      .setStyle(enabled ? ButtonStyle.Success : ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("config:frames:back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
-  );
-  return [rarityRow, colorRow, btnRow];
 }
 
 // ── Experiences sub-panel (per-guild presentation modes) ─────────────────────

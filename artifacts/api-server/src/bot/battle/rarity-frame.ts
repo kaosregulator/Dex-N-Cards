@@ -9,11 +9,13 @@ import type { Rarity } from "../cards-data.js";
 import { RARITY_ORDER } from "../cards-data.js";
 import { defaultFrameForRarity } from "../cards/frames.js";
 import { frameColorModeOf, hexOf, parseHexColor, type FrameColorMode } from "./frame-color.js";
+import { defaultFrameStyle, isFrameStyle, type FrameStyle } from "./frame-styles.js";
 
 export interface RarityFrameRecipe {
   mode: FrameColorMode;
   a: string | null;
   b: string | null;
+  style: FrameStyle;
 }
 
 export type RarityFrameMap = Partial<Record<Rarity, RarityFrameRecipe>>;
@@ -30,6 +32,7 @@ export interface ResolvedRarityFrame {
   mode: FrameColorMode;
   colorA: number | null;
   colorB: number | null;
+  style: FrameStyle;
   /** rarity = staff saved this tier; shared = the guild-wide frame setting. */
   origin: "rarity" | "shared";
 }
@@ -46,10 +49,10 @@ function lighten(n: number): number {
   return (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }
 
-/** The colour pair this rarity's own default frame already uses. */
+/** The colour pair and border style this rarity starts with. Default restores both. */
 export function builtinRarityFrame(rarity: Rarity): RarityFrameRecipe {
   const frame = defaultFrameForRarity(rarity);
-  return { mode: "custom", a: hexOf(frame.color), b: hexOf(lighten(frame.color)) };
+  return { mode: "custom", a: hexOf(frame.color), b: hexOf(lighten(frame.color)), style: defaultFrameStyle(rarity) };
 }
 
 export function parseRarityFrameMap(value: unknown): RarityFrameMap {
@@ -58,17 +61,33 @@ export function parseRarityFrameMap(value: unknown): RarityFrameMap {
   for (const rarity of RARITY_ORDER) {
     const raw = (value as Record<string, unknown>)[rarity];
     if (!raw || typeof raw !== "object") continue;
-    const row = raw as { mode?: unknown; a?: unknown; b?: unknown };
+    const row = raw as { mode?: unknown; a?: unknown; b?: unknown; style?: unknown };
     const mode = frameColorModeOf(typeof row.mode === "string" ? row.mode : null);
     const a = typeof row.a === "string" && parseHexColor(row.a) != null ? row.a : null;
     const b = typeof row.b === "string" && parseHexColor(row.b) != null ? row.b : null;
-    out[rarity] = { mode, a, b };
+    const rawStyle = typeof row.style === "string" ? row.style : null;
+    const style = isFrameStyle(rawStyle) ? rawStyle : defaultFrameStyle(rarity);
+    out[rarity] = { mode, a, b, style };
   }
   return out;
 }
 
-export function putRarityFrame(current: unknown, rarity: Rarity, next: RarityFrameRecipe): RarityFrameMap {
-  return { ...parseRarityFrameMap(current), [rarity]: { mode: next.mode, a: next.a, b: next.b } };
+export function putRarityFrame(
+  current: unknown,
+  rarity: Rarity,
+  next: { mode: FrameColorMode; a: string | null; b: string | null; style?: FrameStyle },
+): RarityFrameMap {
+  const parsed = parseRarityFrameMap(current);
+  const prev = parsed[rarity];
+  return {
+    ...parsed,
+    [rarity]: {
+      mode: next.mode,
+      a: next.a,
+      b: next.b,
+      style: next.style ?? prev?.style ?? defaultFrameStyle(rarity),
+    },
+  };
 }
 
 export function resolveRarityFrame(settings: RarityFrameSettings, rarity: Rarity): ResolvedRarityFrame {
@@ -79,14 +98,31 @@ export function resolveRarityFrame(settings: RarityFrameSettings, rarity: Rarity
       mode: saved.mode,
       colorA: parseHexColor(saved.a),
       colorB: parseHexColor(saved.b),
+      style: saved.style,
       origin: "rarity",
     };
   }
+  const sharedA = parseHexColor(settings.battleFrameColorA);
+  const sharedB = parseHexColor(settings.battleFrameColorB);
+  const sharedMode = settings.battleFrameColorMode;
+  const sharedTouched = (sharedMode != null && sharedMode !== "image") || sharedA != null || sharedB != null;
+  if (sharedTouched) {
+    return {
+      rarity,
+      mode: frameColorModeOf(sharedMode),
+      colorA: sharedA,
+      colorB: sharedB,
+      style: defaultFrameStyle(rarity),
+      origin: "shared",
+    };
+  }
+  const builtin = builtinRarityFrame(rarity);
   return {
     rarity,
-    mode: frameColorModeOf(settings.battleFrameColorMode),
-    colorA: parseHexColor(settings.battleFrameColorA),
-    colorB: parseHexColor(settings.battleFrameColorB),
+    mode: builtin.mode,
+    colorA: parseHexColor(builtin.a),
+    colorB: parseHexColor(builtin.b),
+    style: builtin.style,
     origin: "shared",
   };
 }

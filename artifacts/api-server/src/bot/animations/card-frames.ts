@@ -1,19 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// DN Cards — Image card frames
+// DN Cards — card frame scope
 //
-// Opt-in ornate PNG frames drawn around card art wherever a card renders. When a
-// guild enables frames and maps a rarity to a colour, the card's drawn border is
-// replaced by the matching frame image, auto-scaled to whatever rect the card is
-// drawn at (any size / aspect). When frames are off — the default — nothing
-// changes: the existing thin drawn border is used.
-//
-// Integration is deliberately low-touch. A render entry point wraps its work in
-// `withGuildFrames(guildId, () => …)`, which resolves the guild's frame map and
-// preloads the needed images, then runs the render inside an AsyncLocalStorage
-// scope. The two shared card helpers (drawCardArt / drawCardFrame in effects.ts)
-// consult that scope synchronously: art is inset into the frame's window, and the
-// frame image is drawn over the card rect. No scope (frames off / unmapped
-// rarity / unwired call site) → both fall back to their original behaviour.
+// The border drawn on a card comes from the rarity frame recipe (style + color).
+// A render entry point wraps its work in `withGuildFrames`, which loads that
+// recipe into an AsyncLocalStorage scope. drawCardArt insets the picture by a
+// uniform percent so the art keeps the card's aspect. drawCardFrame paints the
+// 9-slice style in the rarity's colors. Progression (level) PNG overlays still
+// win when a card has one equipped.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -23,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import type { Rarity } from "../cards-data.js";
 import { getCanvas, type CanvasMod, type Ctx } from "./engine.js";
 import { logger } from "../../lib/logger.js";
+import { defaultFrameStyle, styleArtWindow, type FrameStyle } from "../battle/frame-styles.js";
 
 export interface RarityAccent {
   color: number | null;
@@ -30,6 +24,7 @@ export interface RarityAccent {
   blendA?: number;
   blendB?: number;
   ownsColor: boolean;
+  style?: FrameStyle;
 }
 
 type LoadedImage = import("@napi-rs/canvas").Image;
@@ -255,25 +250,17 @@ export async function resolveGuildFrames(settings: Record<string, unknown>): Pro
 // original behaviour). `settings` is the guild's GuildSettings row.
 export async function withGuildFrames<T>(settings: Record<string, unknown> | null | undefined, fn: () => Promise<T>): Promise<T> {
   if (!settings) return fn();
-  const map = await resolveGuildFrames(settings).catch(() => null);
-  let accents: Partial<Record<Rarity, RarityAccent>> | null = null;
   const guildId = typeof settings["guildId"] === "string" ? settings["guildId"] : null;
-  if (guildId) {
-    try {
-      const { loadRarityAccents } = await import("../battle/frame-scope.js");
-      const buffers: Partial<Record<FrameColor, Buffer>> = {};
-      const assigned = map ?? {};
-      for (const color of new Set(Object.values(assigned))) {
-        const buf = readFramePng(color);
-        if (buf) buffers[color] = buf;
-      }
-      accents = await loadRarityAccents(guildId, assigned, buffers);
-    } catch (err) {
-      logger.debug({ err }, "card-frames: rarity frame colours skipped");
-    }
+  if (!guildId) return fn();
+  let accents: Partial<Record<Rarity, RarityAccent>> | null = null;
+  try {
+    const { loadRarityAccents } = await import("../battle/frame-scope.js");
+    accents = await loadRarityAccents(guildId, {}, {});
+  } catch (err) {
+    logger.debug({ err }, "card-frames: rarity frame colours skipped");
   }
-  if (!map && !accents) return fn();
-  return frameStore.run({ images: map, accents }, fn);
+  if (!accents) return fn();
+  return frameStore.run({ images: null, accents }, fn);
 }
 
 // ── Synchronous hooks used by effects.ts drawCardArt / drawCardFrame ──────────
@@ -290,6 +277,12 @@ export function accentForRarity(rarity: Rarity | string | null | undefined): Rar
   const accent = frameStore.getStore()?.accents?.[rarity as Rarity];
   if (!accent?.ownsColor || accent.color == null) return null;
   return accent;
+}
+
+/** Border style for this rarity. Falls back to the built-in style outside a guild scope. */
+export function styleForRarity(rarity: Rarity | string | null | undefined): FrameStyle {
+  if (rarity == null) return defaultFrameStyle(null);
+  return frameStore.getStore()?.accents?.[rarity as Rarity]?.style ?? defaultFrameStyle(rarity);
 }
 
 export function applyRarityAccent<T extends {
@@ -314,14 +307,8 @@ export function applyRarityAccent<T extends {
 
 // The art window inside the card rect when a frame is active — else the rect
 // unchanged. Lets drawCardArt inset the art so the ornate border frames it.
-export function frameArtWindow(x: number, y: number, w: number, h: number, rarity: Rarity | string | null | undefined): { x: number; y: number; w: number; h: number } {
-  if (!frameColorForRarity(rarity)) return { x, y, w, h };
-  return {
-    x: x + w * FRAME_INSET.left,
-    y: y + h * FRAME_INSET.top,
-    w: w * (1 - FRAME_INSET.left - FRAME_INSET.right),
-    h: h * (1 - FRAME_INSET.top - FRAME_INSET.bottom),
-  };
+export function frameArtWindow(x: number, y: number, w: number, h: number, _rarity: Rarity | string | null | undefined): { x: number; y: number; w: number; h: number } {
+  return styleArtWindow(x, y, w, h);
 }
 
 // Draw the mapped frame over the card rect. Returns true if a frame was drawn
