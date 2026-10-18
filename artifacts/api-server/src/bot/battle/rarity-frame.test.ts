@@ -31,7 +31,7 @@ describe("per-rarity frame colours", () => {
     expect(rare.mode).toBe("custom");
     expect(hexOf(rare.colorA!)).toBe(builtin.a);
     expect(rare.style).toBe(builtin.style);
-    expect(resolveRarityFrame(shared, "mythic").style).toBe("relic");
+    expect(resolveRarityFrame(shared, "mythic").style).toBe("classic");
   });
 
   it("keeps a guild-wide frame on rarities that have no row of their own", () => {
@@ -50,7 +50,7 @@ describe("per-rarity frame colours", () => {
     expect(hexOf(rare.colorA!)).toBe("#e23b3b");
     expect(common.origin).toBe("shared");
     expect(hexOf(common.colorA!)).toBe(builtinRarityFrame("common").a);
-    expect(common.style).toBe("crest");
+    expect(common.style).toBe("classic");
   });
 
   it("uses the rarity's existing default frame as its default colours", () => {
@@ -63,10 +63,10 @@ describe("per-rarity frame colours", () => {
   });
 
   it("keeps each rarity on its built-in style until one is saved", () => {
-    expect(resolveRarityFrame(shared, "common").style).toBe("crest");
-    expect(resolveRarityFrame(shared, "uncommon").style).toBe("laurel");
-    expect(builtinRarityFrame("epic").style).toBe("relic");
-    expect(builtinRarityFrame("legendary").style).toBe("aegis");
+    expect(resolveRarityFrame(shared, "common").style).toBe("classic");
+    expect(resolveRarityFrame(shared, "uncommon").style).toBe("classic");
+    expect(builtinRarityFrame("epic").style).toBe("classic");
+    expect(builtinRarityFrame("legendary").style).toBe("classic");
   });
 
   it("keeps the style when a later edit only changes the color", () => {
@@ -79,7 +79,7 @@ describe("per-rarity frame colours", () => {
 
   it("fills a saved row that has no style with that rarity's default", () => {
     const raw = { rare: { mode: "custom", a: "#3498db", b: "#5dade2" } };
-    expect(resolveRarityFrame({ ...shared, battleFrameByRarity: raw }, "rare").style).toBe("aegis");
+    expect(resolveRarityFrame({ ...shared, battleFrameByRarity: raw }, "rare").style).toBe("classic");
   });
 
   it("keeps the art window in the same shape as the card", () => {

@@ -22,8 +22,8 @@ import { queueRender } from "./render-queue.js";
 import { getRarityEffectColor, loadArt as loadArtShared, createBurst, drawParticles, drawDamageNumber, drawScreenFlash } from "./effects.js";
 import { drawAtmosphere, atmospherePreset } from "./atmosphere.js";
 import { drawImpactDebris, physicsShake } from "./physics.js";
-import { accentForRarity, styleForRarity } from "./card-frames.js";
-import { drawStyledFrame, styleArtWindow } from "../battle/frame-styles.js";
+import { accentForRarity, frameArtWindow, styleForRarity } from "./card-frames.js";
+import { drawStyledFrame } from "../battle/frame-styles.js";
 import { extractArtColor } from "../battle/image/vibrant-color.js";
 import { encodeAnimation, getCanvas, TITLE_FONT_FAMILY, easeInOutCubic, easeOutBack, type CanvasMod, type Ctx } from "./engine.js";
 import type { Rarity } from "../cards-data.js";
@@ -757,7 +757,7 @@ function drawFlatCard(ctx: Ctx, o: FlatCardOpts): void {
   // Dark backing + art. The window matches the card's aspect, so the picture
   // is not cropped by an uneven frame inset.
   fillRoundRect(ctx, x, y, w, h, 12, "#0b1220");
-  const win = styleArtWindow(x, y, w, h);
+  const win = frameArtWindow(x, y, w, h, o.card.rarity);
   const ax = win.x;
   const ay = win.y;
   const aw = win.w;

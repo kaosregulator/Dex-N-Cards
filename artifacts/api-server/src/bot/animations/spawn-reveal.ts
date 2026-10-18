@@ -30,6 +30,7 @@ import {
   fitText, TITLE_FONT, getRarityEffectColor,
 } from "./effects.js";
 import { logger } from "../../lib/logger.js";
+import type { FrameStyle } from "../battle/frame-styles.js";
 
 export type RevealMode = "blur" | "puzzle" | "silhouette";
 
@@ -58,6 +59,10 @@ export interface SpawnRevealInput {
   rarityColor?: number | null;
   mode?: RevealMode;      // overrides the rarity-derived default
   appearMessage?: string; // headline drawn at the top (matches the embed title)
+  frameStyle?: FrameStyle;
+  framePaint?: "solid" | "rainbow" | "blend";
+  blendA?: number;
+  blendB?: number;
 }
 
 // Canvas geometry — a compact framed portrait. The spawn embed already carries
@@ -265,7 +270,7 @@ export async function createSpawnRevealSession(input: SpawnRevealInput): Promise
     }
     ctx.restore();
 
-    drawCardFrame(ctx, PANEL.x, PANEL.y, PANEL.w, PANEL.h, color, 6, input.rarity);
+    drawCardFrame(ctx, PANEL.x, PANEL.y, PANEL.w, PANEL.h, color, 6, input.rarity, null, input.framePaint, input.blendA, input.blendB, input.frameStyle);
     drawRarityBadge(ctx, PANEL.x + PANEL.w - 12, PANEL.y + 12, input.rarityLabel, color);
   };
 
