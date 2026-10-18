@@ -8,7 +8,8 @@ import {
   clamp01, type CanvasMod, type Ctx, type TextAlign,
 } from "./engine.js";
 import { ObjectStorageService } from "../../lib/objectStorage.js";
-import { frameArtWindow, drawFrameOverlay, progressionArtWindow, drawProgressionOverlay, accentForRarity, type ProgTier } from "./card-frames.js";
+import { frameArtWindow, progressionArtWindow, drawProgressionOverlay, accentForRarity, styleForRarity, type ProgTier } from "./card-frames.js";
+import { drawStyledFrame, type FrameStyle } from "../battle/frame-styles.js";
 import { logger } from "../../lib/logger.js";
 import { shrinkArtBuffer, CARD_ART_MAX_EDGE } from "../images/raster.js";
 import { canvasPaintableText } from "../discord-emoji.js";
@@ -497,55 +498,30 @@ export async function drawCardArt(
   ctx.restore();
 }
 
-const RAINBOW_STOPS = ["#ff4d4d", "#ff9f1a", "#ffe14d", "#3ddc6a", "#3dc6ff", "#7a5cff", "#ff4fd8"];
-
-function frameStrokeStyle(
-  ctx: Ctx, x: number, y: number, w: number, h: number, color: number,
-  paint?: "solid" | "rainbow" | "blend", blendA?: number, blendB?: number,
-) {
-  if (paint === "rainbow") {
-    const g = ctx.createLinearGradient(x, y, x + w, y + h);
-    RAINBOW_STOPS.forEach((hex, i) => g.addColorStop(i / (RAINBOW_STOPS.length - 1), hex));
-    return g;
-  }
-  if (paint === "blend" && blendA != null && blendB != null) {
-    const g = ctx.createLinearGradient(x, y, x + w, y + h);
-    g.addColorStop(0, hexToRgba(blendA, 1));
-    g.addColorStop(1, hexToRgba(blendB, 1));
-    return g;
-  }
-  return hexToRgba(color, 1);
-}
-
 export function drawCardFrame(
   ctx: Ctx,
   x: number, y: number, w: number, h: number,
-  color: number, thickness = 6,
+  color: number, _thickness = 6,
   rarity?: Rarity | string | null,
   progTier?: ProgTier | null,
   paint?: "solid" | "rainbow" | "blend",
   blendA?: number,
   blendB?: number,
+  style?: FrameStyle,
 ): void {
-  // A card's equipped progression (level) frame wins; then the rarity image
-  // frame; otherwise fall through to the drawn border (frames off/unmapped).
   const accent = accentForRarity(rarity);
   const frameColor = accent?.color ?? color;
   const framePaint = accent?.paint ?? paint;
   const frameA = accent?.blendA ?? blendA;
   const frameB = accent?.blendB ?? blendB;
   if (progTier && drawProgressionOverlay(ctx, x, y, w, h, progTier)) return;
-  if (drawFrameOverlay(ctx, x, y, w, h, rarity)) return;
-  ctx.save();
-  ctx.lineWidth = thickness;
-  ctx.strokeStyle = frameStrokeStyle(ctx, x, y, w, h, frameColor, framePaint, frameA, frameB);
-  roundRectPath(ctx, x, y, w, h, 18);
-  ctx.stroke();
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = "rgba(255,255,255,0.25)";
-  roundRectPath(ctx, x + thickness, y + thickness, w - thickness * 2, h - thickness * 2, 14);
-  ctx.stroke();
-  ctx.restore();
+  drawStyledFrame(ctx, x, y, w, h, {
+    style: style ?? styleForRarity(rarity),
+    color: frameColor,
+    paint: framePaint,
+    blendA: frameA,
+    blendB: frameB,
+  });
 }
 
 export function drawRarityBadge(

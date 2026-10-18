@@ -7,6 +7,7 @@
 
 import sharp from "sharp";
 import { getCanvas, type Ctx } from "../animations/engine.js";
+import { drawStyledFrame, styleArtWindow, type FrameStyle } from "./frame-styles.js";
 import { loadCurrencyImage } from "../unbelievaboat/currency-canvas.js";
 import { dominantColorFromBuffer } from "../images/raster.js";
 import { extractArtColor } from "./image/vibrant-color.js";
@@ -135,6 +136,7 @@ export async function renderFramePreview(opts: {
   colorA: number | null;
   colorB: number | null;
   title?: string | null;
+  style?: FrameStyle;
 }): Promise<Buffer | null> {
   const mod = await getCanvas();
   if (!mod) return null;
@@ -148,41 +150,36 @@ export async function renderFramePreview(opts: {
   const a = opts.colorA ?? 0xf1c40f;
   const b = opts.colorB ?? 0x3d8bfd;
   const cardX = 150;
-  const cardY = 36;
+  const cardY = 28;
   const cardW = 140;
   const cardH = 196;
-  round(ctx, cardX - 8, cardY - 8, cardW + 16, cardH + 16, 22);
-  if (opts.mode === "rainbow") {
-    ctx.strokeStyle = rainbowGradient(ctx, cardX, cardY, cardW, cardH);
-  } else if (opts.mode === "custom") {
-    const g = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
-    g.addColorStop(0, hexOf(a));
-    g.addColorStop(1, hexOf(b));
-    ctx.strokeStyle = g;
-  } else {
-    ctx.strokeStyle = "#8b95a1";
-  }
-  ctx.lineWidth = 10;
-  ctx.stroke();
-
-  round(ctx, cardX, cardY, cardW, cardH, 16);
+  const win = styleArtWindow(cardX, cardY, cardW, cardH);
+  round(ctx, win.x, win.y, win.w, win.h, 10);
   ctx.fillStyle = "#111214";
   ctx.fill();
   ctx.fillStyle = "#f2f3f5";
   ctx.font = "700 13px DNSans, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(opts.title?.slice(0, 22) || frameColorModeLabel(opts.mode), cardX + cardW / 2, cardY + 28);
+  ctx.fillText(opts.title?.slice(0, 18) || frameColorModeLabel(opts.mode), win.x + win.w / 2, win.y + 28);
   ctx.font = "500 11px DNSans, sans-serif";
   ctx.fillStyle = "#b5bac1";
   const caption = opts.mode === "image"
-    ? "Samples the whole picture"
+    ? "Samples the picture"
     : opts.mode === "emoji"
-      ? "Samples the rarity emoji"
+      ? "Samples the emoji"
       : opts.mode === "rainbow"
         ? "Rainbow frame"
-        : "Two colors, one frame";
-  ctx.fillText(caption, cardX + cardW / 2, cardY + cardH - 24);
+        : "Two colors";
+  ctx.fillText(caption, win.x + win.w / 2, win.y + win.h - 18);
+  const paint = opts.mode === "rainbow" ? "rainbow" : opts.mode === "custom" ? "blend" : "solid";
+  drawStyledFrame(ctx, cardX, cardY, cardW, cardH, {
+    style: opts.style ?? "crest",
+    color: opts.mode === "custom" ? a : (opts.colorA ?? 0x8b95a1),
+    paint,
+    blendA: a,
+    blendB: b,
+  });
 
   drawSwatch(ctx, 28, 78, a, "A");
   drawSwatch(ctx, 348, 78, b, "B");

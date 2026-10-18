@@ -7,6 +7,7 @@ import {
   putRarityFrame,
   resolveRarityFrame,
 } from "./rarity-frame.js";
+import { defaultFrameStyle, styleArtWindow } from "./frame-styles.js";
 import { hexOf, resolveFrameAccent, sampleFrameImage, samplePaintedFrame } from "./frame-color.js";
 
 const shared = {
@@ -23,12 +24,24 @@ async function solidPng(r: number, g: number, b: number): Promise<Buffer> {
 }
 
 describe("per-rarity frame colours", () => {
-  it("keeps every rarity on the shared frame until one is saved", () => {
-    expect(resolveRarityFrame(shared, "rare")).toMatchObject({ mode: "image", origin: "shared" });
-    expect(resolveRarityFrame(shared, "mythic").origin).toBe("shared");
+  it("uses the built-in frame when the guild has not set one", () => {
+    const rare = resolveRarityFrame(shared, "rare");
+    const builtin = builtinRarityFrame("rare");
+    expect(rare.origin).toBe("shared");
+    expect(rare.mode).toBe("custom");
+    expect(hexOf(rare.colorA!)).toBe(builtin.a);
+    expect(rare.style).toBe(builtin.style);
+    expect(resolveRarityFrame(shared, "mythic").style).toBe("relic");
   });
 
-  it("saves a colour on one rarity and leaves the others shared", () => {
+  it("keeps a guild-wide frame on rarities that have no row of their own", () => {
+    const rare = resolveRarityFrame({ ...shared, battleFrameColorMode: "rainbow" }, "rare");
+    expect(rare.origin).toBe("shared");
+    expect(rare.mode).toBe("rainbow");
+    expect(rare.style).toBe(defaultFrameStyle("rare"));
+  });
+
+  it("saves a colour on one rarity and leaves the others on their built-in frame", () => {
     const map = putRarityFrame(null, "rare", { mode: "custom", a: "#e23b3b", b: "#7a1420" });
     const rare = resolveRarityFrame({ ...shared, battleFrameByRarity: map }, "rare");
     const common = resolveRarityFrame({ ...shared, battleFrameByRarity: map }, "common");
@@ -36,7 +49,8 @@ describe("per-rarity frame colours", () => {
     expect(rare.mode).toBe("custom");
     expect(hexOf(rare.colorA!)).toBe("#e23b3b");
     expect(common.origin).toBe("shared");
-    expect(common.mode).toBe("image");
+    expect(hexOf(common.colorA!)).toBe(builtinRarityFrame("common").a);
+    expect(common.style).toBe("crest");
   });
 
   it("uses the rarity's existing default frame as its default colours", () => {
@@ -45,6 +59,36 @@ describe("per-rarity frame colours", () => {
     expect(recipe.mode).toBe("custom");
     expect(recipe.a).toBe(hexOf(frame.color));
     expect(recipe.b).not.toBe(recipe.a);
+    expect(recipe.style).toBe(defaultFrameStyle("rare"));
+  });
+
+  it("keeps each rarity on its built-in style until one is saved", () => {
+    expect(resolveRarityFrame(shared, "common").style).toBe("crest");
+    expect(resolveRarityFrame(shared, "uncommon").style).toBe("laurel");
+    expect(builtinRarityFrame("epic").style).toBe("relic");
+    expect(builtinRarityFrame("legendary").style).toBe("aegis");
+  });
+
+  it("keeps the style when a later edit only changes the color", () => {
+    const first = putRarityFrame(null, "rare", { mode: "custom", a: "#e23b3b", b: "#7a1420", style: "relic" });
+    const next = putRarityFrame(first, "rare", { mode: "rainbow", a: "#e23b3b", b: "#7a1420" });
+    const rare = resolveRarityFrame({ ...shared, battleFrameByRarity: next }, "rare");
+    expect(rare.style).toBe("relic");
+    expect(rare.mode).toBe("rainbow");
+  });
+
+  it("fills a saved row that has no style with that rarity's default", () => {
+    const raw = { rare: { mode: "custom", a: "#3498db", b: "#5dade2" } };
+    expect(resolveRarityFrame({ ...shared, battleFrameByRarity: raw }, "rare").style).toBe("aegis");
+  });
+
+  it("keeps the art window in the same shape as the card", () => {
+    const tall = styleArtWindow(0, 0, 200, 280);
+    const wide = styleArtWindow(10, 20, 420, 210);
+    expect(tall.w / tall.h).toBeCloseTo(200 / 280, 5);
+    expect(wide.w / wide.h).toBeCloseTo(420 / 210, 5);
+    expect(tall.x).toBeGreaterThan(0);
+    expect(wide.y).toBeGreaterThan(20);
   });
 });
 
