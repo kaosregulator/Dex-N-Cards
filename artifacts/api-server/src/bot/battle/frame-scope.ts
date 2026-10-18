@@ -8,6 +8,7 @@ import type { RarityAccent } from "../animations/card-frames.js";
 import { peekBattleSettings } from "./config-engine.js";
 import { parseHexColor, resolveFrameAccent, type FrameImageColor } from "./frame-color.js";
 import { builtinRarityFrame, resolveRarityFrame } from "./rarity-frame.js";
+import type { FrameDraw } from "./frame-styles.js";
 
 export async function loadRarityAccents(
   guildId: string,
@@ -36,4 +37,35 @@ export async function loadRarityAccents(
     out[rarity] = { ...accent, style: spec.style };
   }
   return out;
+}
+
+/** The frame a card should wear right now, including outside a render scope. */
+export async function loadCardFrameDraw(
+  guildId: string,
+  rarity: Rarity,
+  opts?: { artUrl?: string | null; rarityEmoji?: string | null },
+): Promise<FrameDraw> {
+  const settings = await peekBattleSettings(guildId) ?? {
+    battleFrameColorMode: "image",
+    battleFrameColorA: null,
+    battleFrameColorB: null,
+    battleFrameByRarity: null,
+  };
+  const spec = resolveRarityFrame(settings, rarity);
+  const fallback = parseHexColor(builtinRarityFrame(rarity).a) ?? 0x95a5a6;
+  const accent = await resolveFrameAccent({
+    mode: spec.mode,
+    colorA: spec.colorA,
+    colorB: spec.colorB,
+    rarityColor: fallback,
+    artUrl: opts?.artUrl,
+    rarityEmoji: opts?.rarityEmoji,
+  });
+  return {
+    style: spec.style,
+    color: accent.color ?? fallback,
+    paint: accent.paint,
+    blendA: accent.blendA,
+    blendB: accent.blendB,
+  };
 }

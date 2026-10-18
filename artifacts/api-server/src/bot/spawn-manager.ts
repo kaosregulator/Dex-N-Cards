@@ -9,6 +9,7 @@ import { getCardProgress } from "./cards/leveling.js";
 import { getBattleSettings } from "./battle/config-engine.js";
 import { renderCardReveal, createSpawnRevealSession, renderShinyReveal, renderCardEntrance, renderCardExit, resolveEntranceType, resolveShinyStyle, CARD_EXIT_MS, type RevealStats, type RevealMode, type SpawnRevealSession, type EntranceSkin, type CardEntranceInput } from "./animations/index.js";
 import { withGuildFrames } from "./animations/card-frames.js";
+import { loadCardFrameDraw } from "./battle/frame-scope.js";
 import type { AnimationSpeed } from "./animations/types.js";
 import type { RenderCard } from "./battle/image/render.js";
 import {
@@ -482,11 +483,19 @@ async function doSingleSpawn(guildId: string, forcedCardId?: number, isForced = 
   let revealSession: SpawnRevealSession | null = null;
   let revealBuffer: Buffer | null = null;
   if (revealMode !== "off") {
+    const liveFrame = await loadCardFrameDraw(guildId, card.rarity as Rarity, {
+      artUrl: toAbsoluteImageUrl(card.imageUrl),
+      rarityEmoji: spawnDisplayRarity.emoji,
+    }).catch(() => null);
     revealSession = await createSpawnRevealSession({
       artUrl: toAbsoluteImageUrl(card.imageUrl),
       rarity: card.rarity as Rarity,
       rarityLabel: spawnDisplayRarity.label,
-      rarityColor: spawnDisplayRarity.color,
+      rarityColor: liveFrame?.color ?? spawnDisplayRarity.color,
+      frameStyle: liveFrame?.style,
+      framePaint: liveFrame?.paint,
+      blendA: liveFrame?.blendA,
+      blendB: liveFrame?.blendB,
       mode: revealMode === "auto" ? undefined : (revealMode as RevealMode),
       appearMessage,
     });

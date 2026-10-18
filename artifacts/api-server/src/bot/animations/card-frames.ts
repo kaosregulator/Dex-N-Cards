@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import type { Rarity } from "../cards-data.js";
 import { getCanvas, type CanvasMod, type Ctx } from "./engine.js";
 import { logger } from "../../lib/logger.js";
-import { defaultFrameStyle, styleArtWindow, type FrameStyle } from "../battle/frame-styles.js";
+import { artWindowFor, defaultFrameStyle, type FrameStyle } from "../battle/frame-styles.js";
 
 export interface RarityAccent {
   color: number | null;
@@ -307,8 +307,8 @@ export function applyRarityAccent<T extends {
 
 // The art window inside the card rect when a frame is active — else the rect
 // unchanged. Lets drawCardArt inset the art so the ornate border frames it.
-export function frameArtWindow(x: number, y: number, w: number, h: number, _rarity: Rarity | string | null | undefined): { x: number; y: number; w: number; h: number } {
-  return styleArtWindow(x, y, w, h);
+export function frameArtWindow(x: number, y: number, w: number, h: number, rarity: Rarity | string | null | undefined): { x: number; y: number; w: number; h: number } {
+  return artWindowFor(styleForRarity(rarity), x, y, w, h);
 }
 
 // Draw the mapped frame over the card rect. Returns true if a frame was drawn

@@ -1639,7 +1639,7 @@ async function buildFramePanel(guildId: string, rarity: Rarity, slot: "a" | "b")
       `Style is **${FRAME_STYLE_META[shown.style].label}**. Saving writes only this rarity.\n\n` +
       `${lines.join("\n")}\n\n` +
       `**${frameColorModeLabel(mode)}** · ${spec.origin === "rarity" ? "saved on this rarity" : "built in for this rarity"}\n` +
-      `Default restores **${FRAME_STYLE_META[builtin.style].label}** and **${builtin.a}** → **${builtin.b}**.\n` +
+      `Default restores the original plain border and **${builtin.a}**.\n` +
       (mode === "image"
         ? "Picture mode samples each card. These swatches are ready when you switch to Custom.\n"
         : `Match color **${accent.color == null ? "rarity" : hexOf(accent.color)}**.\n`) +
@@ -1728,10 +1728,10 @@ async function buildFrameStylePanel(guildId: string, rarity: Rarity, slot: "a" |
     .setTitle(`🖼️ ${rd.label(rarity)} frame style`)
     .setDescription(
       `**${meta.emoji} ${meta.label}** — ${meta.blurb}.\n` +
-      `The same style and colors are drawn on spawns, battles, info cards, sieges, and raids. ` +
-      `Corners stay put when the card is wide or tall, so the picture keeps its shape.\n\n` +
+      `The same style and colors are drawn on spawns, battles, info cards, sieges, and raids, including puzzle, blur, and silhouette reveals. ` +
+      `Gems and rivets stay on the metal, so the picture stays clear.\n\n` +
       `${lines.join("\n")}\n\n` +
-      `**Default** puts ${rd.label(rarity)} back to **${FRAME_STYLE_META[builtin.style].label}** and its built-in colors.`,
+      `**Default** puts ${rd.label(rarity)} back to the original plain border and **${builtin.a}**.`,
     );
   if (png) embed.setImage("attachment://frame-preview.png");
   const builtinOn = usingBuiltinFrame(s, rarity);

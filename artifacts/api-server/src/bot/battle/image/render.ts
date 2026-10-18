@@ -26,12 +26,12 @@ import { drawAtmosphere, atmosphereForBackground } from "../../animations/atmosp
 import type { Ctx as AnimCtx } from "../../animations/engine.js";
 import { extractArtColor, blendColors } from "./vibrant-color.js";
 import { stampCardAccent } from "../frame-color.js";
-import { applyRarityAccent } from "../../animations/card-frames.js";
+import { applyRarityAccent, styleForRarity } from "../../animations/card-frames.js";
 import { canvasPaintableText } from "../../discord-emoji.js";
 import { registerCanvasSans, CANVAS_SANS_STACK } from "../../canvas-fonts.js";
 import { measureCustomEmojiText, segmentCustomEmoji, warmCanvasText } from "../../unbelievaboat/canvas-emoji-text.js";
 import { loadArt as loadSharedArt, drawCardFrame, BACKDROP_MAX_EDGE, CARD_ART_MAX_EDGE } from "../../animations/effects.js";
-import { styleArtWindow, type FrameStyle } from "../frame-styles.js";
+import { artWindowFor, type FrameStyle } from "../frame-styles.js";
 
 // The minimal card description the renderer needs. Decoupled from Combatant so
 // the renderer can draw prep screens, previews, or anything else.
@@ -224,7 +224,7 @@ function layerGlow(ctx: Ctx, x: number, color: string) {
 
 // Card art clipped inside the frame, with a base fill behind it.
 async function layerArt(ctx: Ctx, mod: CanvasMod, x: number, card: RenderCard) {
-  const win = styleArtWindow(x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height);
+  const win = artWindowFor(card.frameStyle ?? styleForRarity(card.rarity), x, CARD_BOX.y, CARD_BOX.width, CARD_BOX.height);
   const ax = win.x, ay = win.y, aw = win.w, ah = win.h;
   ctx.save();
   roundRectPath(ctx, ax, ay, aw, ah, CARD_BOX.radius - 6);
@@ -544,7 +544,7 @@ async function drawBigCard(
 ) {
   const color = rarityHex(card.rarity, card.rarityColor);
   const border = 7, radius = 20, pad = border + 10;
-  const win = styleArtWindow(gx, gy, gw, gh);
+  const win = artWindowFor(card.frameStyle ?? styleForRarity(card.rarity), gx, gy, gw, gh);
 
   // rarity glow
   ctx.save();
