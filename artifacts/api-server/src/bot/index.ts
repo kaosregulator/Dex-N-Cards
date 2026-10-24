@@ -1558,6 +1558,15 @@ async function registerCommands(appId: string, token: string, client: Client) {
         chatCount: chatNames.length,
         hubs: hubsPresent,
       }, "Guild slash commands registered"))
-      .catch(err => logger.error({ err, guildId: guild.id }, "Guild command registration failed"));
+      // Log Discord's error detail, not `err` itself: its requestBody is the
+      // whole command set, which floods the host's log rate limit and drops
+      // the line that says which option was rejected.
+      .catch(err => logger.error({
+        guildId: guild.id,
+        code: err?.code,
+        status: err?.status,
+        message: err?.message,
+        errors: JSON.stringify(err?.rawError?.errors ?? null),
+      }, "Guild command registration failed"));
   }
 }
