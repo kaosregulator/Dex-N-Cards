@@ -298,10 +298,12 @@ function buildLegacyCommands() {
       .addStringOption(o => o.setName("rarity").setDescription("DN rarity for new cards — default auto from each item's Vault rarity").setAutocomplete(true))
       .addStringOption(o => o.setName("set").setDescription("Optional set to add every created card to").setAutocomplete(true))),
 
+    // Discord rejects the whole guild PUT if a required option follows an
+    // optional one, so `rarity` must stay first.
     adminCmd("createcardfromroblox", "Create a card from a Roblox username or a Bloxlink role", s => s
+      .addStringOption(o => o.setName("rarity").setDescription("DN rarity — type to search").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("username").setDescription("Roblox username — type to search").setRequired(false).setAutocomplete(true))
       .addRoleOption(o => o.setName("role").setDescription("Discord role — nicknames stay ready as Roblox searches until you pick someone").setRequired(false))
-      .addStringOption(o => o.setName("rarity").setDescription("DN rarity — type to search").setRequired(true).setAutocomplete(true))
       .addStringOption(o => o.setName("type").setDescription("Card type/tag — blank uses roblox").setAutocomplete(true))
       .addAttachmentOption(o => o.setName("image").setDescription("Upload an image (overrides the Roblox full-body avatar)"))
       .addStringOption(o => o.setName("set").setDescription("Optional set to add this card to immediately").setAutocomplete(true))
