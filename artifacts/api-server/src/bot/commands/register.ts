@@ -322,6 +322,19 @@ function buildLegacyCommands() {
     adminCmd("collectorrole", "Set the wishlist ping role — pinged when a wishlisted card spawns", s => s
       .addRoleOption(o => o.setName("role").setDescription("Role to ping (leave empty to clear)"))),
 
+    // ── /mass_role (admin, bulk role assignment) ──────────────────────────────
+    adminCmd("massrole", "Give or remove a role from everyone who has a specific role", s => s
+      .addSubcommand(sc => sc
+        .setName("give")
+        .setDescription("Give a role to all members who have a specific role")
+        .addRoleOption(o => o.setName("role").setDescription("The role to give").setRequired(true))
+        .addRoleOption(o => o.setName("target_role").setDescription("Only affect members who have this role").setRequired(true)))
+      .addSubcommand(sc => sc
+        .setName("remove")
+        .setDescription("Remove a role from all members who have a specific role")
+        .addRoleOption(o => o.setName("role").setDescription("The role to remove").setRequired(true))
+        .addRoleOption(o => o.setName("target_role").setDescription("Only affect members who have this role").setRequired(true)))),
+
     // ── Card Events (limited-time spawn boosts) ──────────────────────────────
     adminCmd("event", "Run limited-time card events — boost a card's spawn rate", s => s
       .addSubcommand(sc => sc.setName("start").setDescription("Start a limited-time card event")
